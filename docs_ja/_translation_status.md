@@ -9,28 +9,24 @@ English inventory for the local Japanese learning overlay.
 > `DONE` は対象ファイルがそろい、`PARTIAL` は未対応が残っている状態です。完了時に `PARTIAL` を残さないよう確認します。
 
 - Status: PARTIAL
-- Updated: 2026-06-09 23:34:30 UTC
+- Updated: 2026-06-09 23:40:43 UTC
 - Branch: `ja-study/local-annotations`
 - Base commit: `b7c5481c556c3fe98db060207ecaa41a4b9a9abc`
-- Current commit: `b7c5481c556c3fe98db060207ecaa41a4b9a9abc`
+- Current commit: `b4b163aa4485662da2099506ea691e9bbb1a5f4a`
 
 ## Counts
 
 - source_docs: 557
-- doc_companions_done: 0
+- doc_companions_done: 4
 - sample_dirs: 255
 - sample_readme_ja_done: 0
 - annotation_files: 920
 - annotation_files_done: 1
-- japanese_files: 3
+- japanese_files: 29
 
 ## Missing Items
 
 ### doc_companions
-- `CHANGELOG.md`
-- `CMakeLists.txt`
-- `CONTRIBUTING.md`
-- `README.md`
 - `cpp/0_Introduction/CMakeLists.txt`
 - `cpp/0_Introduction/README.md`
 - `cpp/0_Introduction/UnifiedMemoryStreams/CMakeLists.txt`
@@ -227,7 +223,11 @@ English inventory for the local Japanese learning overlay.
 - `cpp/3_CUDA_Features/bindlessTexture/README.md`
 - `cpp/3_CUDA_Features/cdpAdvancedQuicksort/CMakeLists.txt`
 - `cpp/3_CUDA_Features/cdpAdvancedQuicksort/README.md`
-- ... plus 357 more
+- `cpp/3_CUDA_Features/cdpBezierTessellation/CMakeLists.txt`
+- `cpp/3_CUDA_Features/cdpBezierTessellation/README.md`
+- `cpp/3_CUDA_Features/cdpQuadtree/CMakeLists.txt`
+- `cpp/3_CUDA_Features/cdpQuadtree/README.md`
+- ... plus 353 more
 
 ### sample_readme_ja
 - `cpp/0_Introduction`
