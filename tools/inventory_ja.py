@@ -53,6 +53,8 @@ def source_docs() -> list[Path]:
     for path in ROOT.rglob("*"):
         if not path.is_file() or has_vendor_part(path):
             continue
+        if path.name.endswith(".ja.md"):
+            continue
         if path.suffix.lower() in DOC_EXTS:
             docs.append(path)
     return sorted(docs, key=rel)

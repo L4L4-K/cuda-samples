@@ -1,50 +1,36 @@
 # Cooperative Groups
 
-English anchor: cooperative groups provide explicit thread-group objects and synchronization scopes.
+English anchor: cooperative groups make participating thread sets explicit.
 
-> **???**
-> cooperative groups ???? thread ???????????????????????????warp?block?grid ???????? object ????????
+> **日本語**
+> cooperative groups は、協調する thread 集合と同期範囲を object として明示します。
 >
-> **????**
-> `thread_block`, `grid_group`, `coalesced_group` ?????????? collective ?????????
+> **学習メモ**
+> group に参加する thread と collective を呼ぶ thread が一致するかを確認します。
 
-## Why Samples Use It
+## What To Look For
 
-- To make block-level cooperation clearer than raw `__syncthreads()` alone.
-- To perform warp-level or tile-level collectives.
-- To demonstrate grid-wide synchronization with cooperative launch support.
-- To aggregate atomics or reductions at the right scope.
+- `thread_block`、`grid_group`、`coalesced_group` の scope を読み分けます。
+- grid-wide sync には cooperative launch の条件があります。
+- warp aggregation や reduction の範囲を code 上で追います。
 
-> **???**
-> cooperative groups ???????????????????????????????
+> **日本語**
+> code を読むときは、API 名を英語のまま保ち、その API が何を所有し、何を待ち、何を計測しているかを日本語で補います。
 >
-> **????**
-> grid-wide synchronization ????????? cooperative launch ????????
-
-## Reading Checklist
-
-- Identify the group object creation.
-- Check which threads participate.
-- Find `sync()` or collective operations.
-- Confirm launch constraints if grid-level cooperation is used.
-
-> **???**
-> group ???????? thread ? collective ??????????? thread ????????????????
->
-> **????**
-> mask ? group size ? warp-level API ???????????
+> **学習メモ**
+> 同じ theme を持つ複数 sample を比較すると、基本 pattern と例外が見えます。
 
 
 ## Reading Checklist
 
-- Identify which side owns each allocation: host, device, managed, pinned, mapped, or external.
-- Find the first transfer or mapping that makes data visible to the GPU.
-- Find the kernel launch or library call that performs device work.
-- Find the synchronization point that makes results safe to read on the host.
-- Ask whether the sample is teaching correctness, interoperability, or performance.
+- Identify who owns each allocation and which API releases it.
+- Find the host-to-device or mapping point that makes input visible to GPU work.
+- Find the kernel launch, library call, graph launch, or Python framework call that performs device work.
+- Find the synchronization boundary before host-side validation or output.
+- Decide whether the sample is mainly about correctness, interoperability, or performance.
 
-> **???**
-> CUDA ??????????????????????????????????????????
+> **日本語**
+> CUDA サンプルは、所有権、転送、起動、同期、検証、後片付けの順に読むと構造が見えます。
 >
-> **????**
-> `cudaMemcpy` ? `cudaDeviceSynchronize` ??????????????????????????????????????????
+> **学習メモ**
+> 速さを読む前に、まず「どの memory を誰がいつ読むか」を確認します。
