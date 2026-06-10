@@ -13,10 +13,10 @@ English completion report for the local Japanese learning overlay and the requir
 - Branch: `ja-study/local-annotations`
 - Base commit saved in `.ja_translation_base`: `b7c5481c556c3fe98db060207ecaa41a4b9a9abc`
 - One-by-one review pass base: `8ccd87823bea840e52bd75051a6163fc827cd758`
-- Source remediation/review content commit before this report update: `c69bb98fa5b9bc959c7f7b0b77bc70a6a7540aa7`
-- Final report commit: the commit containing this file. A Git commit cannot embed its own SHA; the exact pushed HEAD is reported by `git rev-parse HEAD` after committing and in the final response.
-- Local commits in this one-by-one review pass before this report update: 2
-- Expected local commits in this pass after this report update: 3
+- Source remediation/review content commit before final reporting updates: `c69bb98fa5b9bc959c7f7b0b77bc70a6a7540aa7`
+- Final report/status commits: the commits containing this file and the refreshed inventory status. A Git commit cannot embed its own SHA; the exact pushed HEAD is reported by `git rev-parse HEAD` after committing and in the final response.
+- Local commits in this one-by-one review pass before final reporting/status updates: 2
+- Expected local commits in this pass after final inventory refresh: 4
 - PARTIAL items: none
 - BLOCKED items: none
 
