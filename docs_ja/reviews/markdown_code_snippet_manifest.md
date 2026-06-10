@@ -5,9 +5,9 @@ English manifest for verified Markdown code snippets embedded in Japanese learni
 > JP: `Source: path:start-end` の直後に置いた fenced code block を、現在の source line と照合します。Markdown だけを読んでも実コードの流れを学べる状態を確認します。
 
 - Status: DONE
-- Updated: 2026-06-10T08:01:00Z
+- Updated: 2026-06-10T08:13:45Z
 - Branch: `ja-study/local-annotations`
-- Source state checked: `a34395f42e181140fda8b971916e54b13e0acef3`
+- Source state checked: `b7db33299d3303855027b7c7098bc3a3796c02a9`
 
 ## Counts
 

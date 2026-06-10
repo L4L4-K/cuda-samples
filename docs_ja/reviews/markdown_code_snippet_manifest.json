@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "generated_at_utc": "2026-06-10T08:01:00Z",
+  "generated_at_utc": "2026-06-10T08:13:45Z",
   "status": "DONE",
   "branch": "ja-study/local-annotations",
-  "head": "a34395f42e181140fda8b971916e54b13e0acef3",
+  "head": "b7db33299d3303855027b7c7098bc3a3796c02a9",
   "counts": {
     "markdown_files_scanned": 1094,
     "markdown_files_with_snippets": 276,
