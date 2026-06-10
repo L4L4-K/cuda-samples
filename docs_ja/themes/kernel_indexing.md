@@ -1,36 +1,94 @@
 # Kernel Launch And Indexing
 
-English anchor: kernels map launch geometry to array, image, matrix, or volume indices.
+English anchor: CUDA kernels map grid, block, and thread coordinates to data indexes.
 
 > **日本語**
-> kernel の index 計算は、各 GPU thread がどの data element を担当するかを決めます。
+> kernel indexing は、CUDA の並列実行を data layout に結び付ける場所です。1D vector、2D image、matrix tile、3D volume では index 式が変わりますが、目的は「この thread がどの要素を読む/書くか」を明確にすることです。
 >
 > **学習メモ**
-> `threadIdx.x` は block 内でしか一意ではありません。global index は `blockIdx` と組み合わせます。
+> この guide は code を開く前に読む前提知識です。API 名、sample 名、command、出力文字列は英語のまま保持し、意味と読み方を日本語で補います。
 
-## What To Look For
+## Concept
 
-- 1D vector は `blockIdx.x * blockDim.x + threadIdx.x` が典型形です。
-- 2D image/matrix は `x`、`y` と pitch/width の関係を確認します。
-- grid-stride loop は 1 thread が複数 element を処理する形です。
+kernel indexing は、CUDA の並列実行を data layout に結び付ける場所です。1D vector、2D image、matrix tile、3D volume では index 式が変わりますが、目的は「この thread がどの要素を読む/書くか」を明確にすることです。
 
 > **日本語**
-> code を読むときは、API 名を英語のまま保ち、その API が何を所有し、何を待ち、何を計測しているかを日本語で補います。
+> まず「どの resource があり、誰が所有し、いつ同期されるか」を説明できる状態にしてから source を読みます。
 >
 > **学習メモ**
-> 同じ theme を持つ複数 sample を比較すると、基本 pattern と例外が見えます。
+> sample は production code ではなく、1 つの CUDA concept を切り出した教材です。簡潔さのために省かれた汎用化や error path も意識します。
 
+## Why It Matters
 
-## Reading Checklist
+- Kernel Launch And Indexing は correctness、resource lifetime、performance の読み方に直接関係します。
+- API の戻り値、非同期 ordering、validation の位置を分けることで、sample の意図が見えます。
+- 同じ concept でも Runtime API、Driver API、library、Python wrapper で責任分担が変わります。
 
-- Identify who owns each allocation and which API releases it.
-- Find the host-to-device or mapping point that makes input visible to GPU work.
-- Find the kernel launch, library call, graph launch, or Python framework call that performs device work.
-- Find the synchronization boundary before host-side validation or output.
-- Decide whether the sample is mainly about correctness, interoperability, or performance.
+## Mental Model
+
+- `threadIdx` は block 内 coordinate、`blockIdx` は grid 内 block coordinate です。
+- `blockDim` と `gridDim` は shape で、data size そのものではありません。
+- global index は coordinate 変換であり、memory address とは stride や pitch を通して対応します。
+
+## API Map
+
+| API or concept | Meaning | What to check |
+| - | - | - |
+| `blockIdx / threadIdx / blockDim / gridDim` | thread coordinate から global data index を作ります。 | 1D/2D/3D の式と boundary check を一緒に読みます。 |
+| `dim3` | grid/block を multi-dimensional shape として表します。 | x/y/z の意味が data layout と一致しているか確認します。 |
+| `cudaMallocPitch / cudaMemcpy2D` | pitch を持つ 2D memory を扱います。 | width と pitch の単位が byte か element かを分けます。 |
+| `__launch_bounds__` | compiler に launch 上限や occupancy hint を与えます。 | performance hint であり correctness とは分けます。 |
 
 > **日本語**
-> CUDA サンプルは、所有権、転送、起動、同期、検証、後片付けの順に読むと構造が見えます。
+> table の API 名は翻訳せず、ownership、ordering、visibility、validation、cleanup のどれに関係するかを確認します。
 >
 > **学習メモ**
-> 速さを読む前に、まず「どの memory を誰がいつ読むか」を確認します。
+> helper macro や wrapper の中にも CUDA API が隠れていることがあります。source annotation の `JP:` と照合しながら読みます。
+
+## Sample References
+
+- [vectorAdd](../../cpp/0_Introduction/vectorAdd/README.ja.md): 1D indexing の基本です。
+- [matrixMul](../../cpp/0_Introduction/matrixMul/README.ja.md): 2D matrix coordinate を読みます。
+- [transpose](../../cpp/6_Performance/transpose/README.ja.md): coalescing と tile indexing を読みます。
+- [reduction](../../cpp/2_Concepts_and_Techniques/reduction/README.ja.md): multiple elements per thread を読みます。
+- [volumeFiltering](../../cpp/5_Domain_Specific/volumeFiltering/README.ja.md): 3D volume coordinate を読みます。
+
+## Reading Steps
+
+1. kernel の最初にある index 計算式を見つけます。
+2. data shape、stride、pitch、leading dimension と index 式を対応させます。
+3. write address が thread ごとに一意か、atomic が必要かを確認します。
+4. boundary check が read と write の両方を守るか確認します。
+5. CPU reference が同じ layout 前提か確認します。
+
+## Common Mistakes
+
+- 1D 式を 2D data にそのまま使う。
+- pitch が byte 単位なのに element 単位で足す。
+- read は guard しているが write の guard を忘れる。
+- grid size を切り下げて末尾 data を処理しない。
+
+## Performance Notes
+
+- adjacent threads が adjacent addresses を読むと coalescing しやすくなります。
+- 2D tile では x/y の割り当てが bank conflict に影響します。
+- boundary branch は必要ですが、全 thread が複雑に分岐する設計は見直します。
+
+## Exercises
+
+- vectorAdd の global index を別 block size で手計算する。
+- transpose の read/write address を thread 4 個分追う。
+- matrixMul の row/col と A/B/C address 式を図にする。
+
+## Cross-Theme Links
+
+- [Execution Model](execution_model.md): grid/block/thread の実行単位を確認します。
+- [Shared Memory](shared_memory.md): tile indexing と barrier を確認します。
+- [Performance](performance.md): coalescing と occupancy を確認します。
+
+## Review Checklist
+
+- Can you name the owner and lifetime of each CUDA resource used by the theme?
+- Can you point to the synchronization boundary before validation?
+- Can you explain which work is measured and which setup/cleanup is outside the measurement?
+- Can you compare one C++ sample and one Python or library sample that use the same theme?

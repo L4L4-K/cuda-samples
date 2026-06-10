@@ -9,12 +9,13 @@ English inventory for the local Japanese learning overlay.
 > `DONE` は対象ファイルがそろい、重要な CUDA/API アンカーの近くに具体的な `JP:` 注釈がある状態です。`PARTIAL` は、トップだけの一般コメントやアンカー不足が残っている状態です。
 
 - Status: DONE
-- Updated: 2026-06-10 03:01:32 UTC
+- Updated: 2026-06-10 03:15:20 UTC
 - Branch: `ja-study/local-annotations`
 - Base commit: `b7c5481c556c3fe98db060207ecaa41a4b9a9abc`
-- Current commit: `bb83bc9793905e60b9ff00d5aeefd0ff9706abfd`
+- Current commit: `f1c7bc7290d6b1b1694f8ed1b4b9e7d15cffc080`
 - Detailed annotation record: `docs_ja/_annotation_inventory.json`
 - Detailed sample README record: `docs_ja/_sample_readme_inventory.json`
+- Detailed theme guide record: `docs_ja/_theme_inventory.json`
 
 ## Counts
 
@@ -23,8 +24,11 @@ English inventory for the local Japanese learning overlay.
 - sample_dirs: 255
 - sample_readme_ja_done: 255
 - sample_readme_ja_partial: 0
-- annotation_files: 923
-- annotation_files_done: 923
+- theme_guides: 16
+- theme_guides_done: 16
+- theme_guides_partial: 0
+- annotation_files: 924
+- annotation_files_done: 924
 - annotation_files_partial: 0
 - annotation_anchor_files: 708
 - annotation_anchor_instances: 13750
@@ -38,12 +42,15 @@ English inventory for the local Japanese learning overlay.
 ### sample_readme_ja
 - None
 
+### theme_guides
+- None
+
 ### annotations
 - None
 
 ## Annotation Quality
 
-- DONE files: 923
+- DONE files: 924
 - PARTIAL files: 0
 - Anchor search window: 4 lines before to 2 lines after each anchor.
 
@@ -52,6 +59,12 @@ English inventory for the local Japanese learning overlay.
 - DONE guides: 255
 - PARTIAL guides: 0
 - Required sections: `## Purpose`, `## Prerequisites`, `## Files`, `## Execution Flow`, `## Concrete Reading Path`, `## Key APIs And Concepts`, `## Memory, Synchronization, And Performance Notes`, `## Build And Run`, `## Expected Behavior`, `## Common Mistakes`, `## Exercises`, `## Related Themes`
+
+## Theme Guide Quality
+
+- DONE guides: 16
+- PARTIAL guides: 0
+- Required sections: `## Concept`, `## Why It Matters`, `## Mental Model`, `## API Map`, `## Sample References`, `## Reading Steps`, `## Common Mistakes`, `## Performance Notes`, `## Exercises`, `## Cross-Theme Links`, `## Review Checklist`
 
 ## Policy Notes
 

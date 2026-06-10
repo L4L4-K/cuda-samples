@@ -1,36 +1,94 @@
 # Python CUDA
 
-English anchor: Python samples use CUDA through cuda-python, CuPy, frameworks, and JIT helpers.
+English anchor: Python CUDA samples use CUDA Python, CuPy, framework interop, DLPack, streams, memory resources, and distributed tools.
 
 > **日本語**
-> Python CUDA でも host/device memory、転送、kernel/library work、同期、validation の考え方は同じです。
+> Python CUDA sample では、Python object が CUDA device、context、stream、module、memory buffer、framework tensor を包みます。見た目は Python でも、非同期実行、lifetime、hidden transfer/sync は CUDA の規則に従います。
 >
 > **学習メモ**
-> 短い Python code の中でも、内部で device allocation、JIT、implicit synchronization が起きます。
+> この guide は code を開く前に読む前提知識です。API 名、sample 名、command、出力文字列は英語のまま保持し、意味と読み方を日本語で補います。
 
-## What To Look For
+## Concept
 
-- NumPy array と GPU array/tensor の所有者を区別します。
-- `.get()`、`asnumpy`、framework tensor copy は host-device transfer です。
-- 初回 JIT と通常実行の timing を分けて測ります。
+Python CUDA sample では、Python object が CUDA device、context、stream、module、memory buffer、framework tensor を包みます。見た目は Python でも、非同期実行、lifetime、hidden transfer/sync は CUDA の規則に従います。
 
 > **日本語**
-> code を読むときは、API 名を英語のまま保ち、その API が何を所有し、何を待ち、何を計測しているかを日本語で補います。
+> まず「どの resource があり、誰が所有し、いつ同期されるか」を説明できる状態にしてから source を読みます。
 >
 > **学習メモ**
-> 同じ theme を持つ複数 sample を比較すると、基本 pattern と例外が見えます。
+> sample は production code ではなく、1 つの CUDA concept を切り出した教材です。簡潔さのために省かれた汎用化や error path も意識します。
 
+## Why It Matters
 
-## Reading Checklist
+- Python CUDA は correctness、resource lifetime、performance の読み方に直接関係します。
+- API の戻り値、非同期 ordering、validation の位置を分けることで、sample の意図が見えます。
+- 同じ concept でも Runtime API、Driver API、library、Python wrapper で責任分担が変わります。
 
-- Identify who owns each allocation and which API releases it.
-- Find the host-to-device or mapping point that makes input visible to GPU work.
-- Find the kernel launch, library call, graph launch, or Python framework call that performs device work.
-- Find the synchronization boundary before host-side validation or output.
-- Decide whether the sample is mainly about correctness, interoperability, or performance.
+## Mental Model
+
+- Python CUDA では、どの thread/process/API が resource を所有するかを先に分けます。
+- Python CUDA の API は便利な wrapper に見えても、lifetime、ordering、visibility の境界を持ちます。
+- English API names and output strings remain authoritative; Japanese notes explain the reading strategy.
+
+## API Map
+
+| API or concept | Meaning | What to check |
+| - | - | - |
+| `cuda.core.Device / Stream / Event` | Python object で CUDA resource を扱います。 | object lifetime と current device を確認します。 |
+| `Program / ProgramOptions / Linker` | Python から device code を compile/link します。 | architecture、log、kernel name を確認します。 |
+| `LaunchConfig / launch` | Python から kernel を起動します。 | grid/block/shared memory/stream と argument lifetime を確認します。 |
+| `CuPy / DLPack / torch / tensorflow` | framework interop の境界です。 | view か copy か、owner と lifetime を確認します。 |
 
 > **日本語**
-> CUDA サンプルは、所有権、転送、起動、同期、検証、後片付けの順に読むと構造が見えます。
+> table の API 名は翻訳せず、ownership、ordering、visibility、validation、cleanup のどれに関係するかを確認します。
 >
 > **学習メモ**
-> 速さを読む前に、まず「どの memory を誰がいつ読むか」を確認します。
+> helper macro や wrapper の中にも CUDA API が隠れていることがあります。source annotation の `JP:` と照合しながら読みます。
+
+## Sample References
+
+- [vectorAdd](../../python/1_GettingStarted/vectorAdd/README.ja.md): basic Python launch を読みます。
+- [memoryResources](../../python/2_CoreConcepts/memoryResources/README.ja.md): MemoryResource を読みます。
+- [cudaGraphs](../../python/2_CoreConcepts/cudaGraphs/README.ja.md): Python graphs を読みます。
+- [customPyTorchKernel](../../python/3_FrameworkInterop/customPyTorchKernel/README.ja.md): PyTorch interop を読みます。
+- [multiGPUGradientAverage](../../python/4_DistributedComputing/multiGPUGradientAverage/README.ja.md): distributed multi-GPU を読みます。
+
+## Reading Steps
+
+1. Python CUDA に関係する API call を探し、作成、設定、利用、破棄を対応させます。
+2. 入力 data が GPU work から見える状態になる場所を探します。
+3. 非同期 work と host-side validation の間にある synchronization boundary を確認します。
+4. error check、reference comparison、timing range を分けて読みます。
+5. 関連 sample と比較して、同じ概念が別 API family でどう変わるか確認します。
+
+## Common Mistakes
+
+- Python CUDA の scope を大きく見積もり、実際には保証されない ordering を期待する。
+- helper/wrapper が内部で CUDA resource を所有していることを見落とす。
+- validation 前の同期や data visibility を確認しない。
+- performance number だけを見て、測定範囲と setup cost を確認しない。
+
+## Performance Notes
+
+- Python CUDA は correctness の仕組みであると同時に overhead や bottleneck になり得ます。
+- timing では setup、GPU work、transfer、sync、validation を分けます。
+- architecture、driver、problem size に依存するため、sample の数値は相対比較として読みます。
+
+## Exercises
+
+- Python CUDA に関係する API を 5 つ選び、owner、input、output、cleanup を表にする。
+- sample の timeline を setup、GPU work、sync、validation、cleanup に分ける。
+- 関連 theme を 1 つ読み、同じ API pattern がどこで再利用されているか探す。
+
+## Cross-Theme Links
+
+- [Runtime, Driver, And NVRTC](runtime_driver_nvrtc.md): Python からの JIT/launch を読みます。
+- [Memory](memory.md): Buffer と framework tensor owner を読みます。
+- [Streams And Events](streams_events.md): stream.sync と event ordering を読みます。
+
+## Review Checklist
+
+- Can you name the owner and lifetime of each CUDA resource used by the theme?
+- Can you point to the synchronization boundary before validation?
+- Can you explain which work is measured and which setup/cleanup is outside the measurement?
+- Can you compare one C++ sample and one Python or library sample that use the same theme?

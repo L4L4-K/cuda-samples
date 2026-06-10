@@ -19,6 +19,7 @@ TRANSLATED = DOCS_JA / "translated"
 STATUS = DOCS_JA / "_translation_status.md"
 ANNOTATION_JSON = DOCS_JA / "_annotation_inventory.json"
 SAMPLE_README_JSON = DOCS_JA / "_sample_readme_inventory.json"
+THEME_GUIDE_JSON = DOCS_JA / "_theme_inventory.json"
 
 DOC_EXTS = {".md", ".txt", ".pdf", ".doc", ".docx"}
 CODE_EXTS = {
@@ -65,6 +66,19 @@ REQUIRED_SAMPLE_SECTIONS = (
     "## Common Mistakes",
     "## Exercises",
     "## Related Themes",
+)
+REQUIRED_THEME_SECTIONS = (
+    "## Concept",
+    "## Why It Matters",
+    "## Mental Model",
+    "## API Map",
+    "## Sample References",
+    "## Reading Steps",
+    "## Common Mistakes",
+    "## Performance Notes",
+    "## Exercises",
+    "## Cross-Theme Links",
+    "## Review Checklist",
 )
 
 
@@ -505,6 +519,39 @@ def analyze_sample_readme(sample_dir: Path) -> dict[str, object]:
     }
 
 
+def analyze_theme_guide(path: Path) -> dict[str, object]:
+    reasons: list[str] = []
+    text = path.read_text(encoding="utf-8", errors="ignore") if path.exists() else ""
+    missing_sections = [section for section in REQUIRED_THEME_SECTIONS if section not in text]
+    if missing_sections:
+        reasons.append("missing required theme sections")
+    if "| API or concept |" not in text:
+        reasons.append("missing API/concept table")
+    if "## Sample References" not in text or "../../cpp/" not in text and "../../python/" not in text:
+        reasons.append("missing sample references")
+    if text.count("> **日本語**") < 2 or text.count("> **学習メモ**") < 2:
+        reasons.append("missing Japanese learning blocks")
+    line_count = len(text.splitlines())
+    if line_count < 85:
+        reasons.append("theme guide is too short for required coverage")
+    return {
+        "path": rel(path),
+        "status": "DONE" if not reasons else "PARTIAL",
+        "line_count": line_count,
+        "jp_blocks": text.count("> **日本語**"),
+        "memo_blocks": text.count("> **学習メモ**"),
+        "missing_sections": missing_sections,
+        "reasons": reasons,
+    }
+
+
+def theme_guides() -> list[Path]:
+    theme_dir = DOCS_JA / "themes"
+    if not theme_dir.exists():
+        return []
+    return sorted([p for p in theme_dir.glob("*.md") if p.name != "README.md"], key=rel)
+
+
 def japanese_files() -> list[Path]:
     files = (
         [p for p in DOCS_JA.rglob("*") if p.is_file()]
@@ -522,9 +569,11 @@ def summarize() -> dict[str, object]:
     partial_annotations = [record for record in annotation_records if record["status"] != "DONE"]
     sample_readme_records = [analyze_sample_readme(path) for path in samples]
     partial_sample_readmes = [record for record in sample_readme_records if record["status"] != "DONE"]
+    theme_records = [analyze_theme_guide(path) for path in theme_guides()]
+    partial_theme_guides = [record for record in theme_records if record["status"] != "DONE"]
     missing_companions = [p for p in docs if not companion_for(p).exists()]
     status = "DONE"
-    if missing_companions or partial_sample_readmes or partial_annotations:
+    if missing_companions or partial_sample_readmes or partial_annotations or partial_theme_guides:
         status = "PARTIAL"
 
     return {
@@ -540,6 +589,9 @@ def summarize() -> dict[str, object]:
             "sample_dirs": len(samples),
             "sample_readme_ja_done": len(samples) - len(partial_sample_readmes),
             "sample_readme_ja_partial": len(partial_sample_readmes),
+            "theme_guides": len(theme_records),
+            "theme_guides_done": len(theme_records) - len(partial_theme_guides),
+            "theme_guides_partial": len(partial_theme_guides),
             "annotation_files": len(code),
             "annotation_files_done": len(code) - len(partial_annotations),
             "annotation_files_partial": len(partial_annotations),
@@ -550,15 +602,18 @@ def summarize() -> dict[str, object]:
         "missing": {
             "doc_companions": [rel(p) for p in missing_companions[:200]],
             "sample_readme_ja": [str(record["path"]) for record in partial_sample_readmes[:200]],
+            "theme_guides": [str(record["path"]) for record in partial_theme_guides[:200]],
             "annotations": [str(record["path"]) for record in partial_annotations[:200]],
         },
         "overflow": {
             "doc_companions": max(0, len(missing_companions) - 200),
             "sample_readme_ja": max(0, len(partial_sample_readmes) - 200),
+            "theme_guides": max(0, len(partial_theme_guides) - 200),
             "annotations": max(0, len(partial_annotations) - 200),
         },
         "annotation_records": annotation_records,
         "sample_readme_records": sample_readme_records,
+        "theme_records": theme_records,
     }
 
 
@@ -582,6 +637,8 @@ def render_markdown(summary: dict[str, object]) -> str:
     done_records = [record for record in records if record["status"] == "DONE"]
     sample_records = list(summary["sample_readme_records"])
     partial_sample_records = [record for record in sample_records if record["status"] != "DONE"]
+    theme_records = list(summary["theme_records"])
+    partial_theme_records = [record for record in theme_records if record["status"] != "DONE"]
     lines = [
         "# Japanese Translation Status",
         "",
@@ -600,6 +657,7 @@ def render_markdown(summary: dict[str, object]) -> str:
         f"- Current commit: `{summary['head']}`",
         f"- Detailed annotation record: `{rel(ANNOTATION_JSON)}`",
         f"- Detailed sample README record: `{rel(SAMPLE_README_JSON)}`",
+        f"- Detailed theme guide record: `{rel(THEME_GUIDE_JSON)}`",
         "",
         "## Counts",
         "",
@@ -665,6 +723,26 @@ def render_markdown(summary: dict[str, object]) -> str:
 
     lines.extend(
         [
+            "## Theme Guide Quality",
+            "",
+            f"- DONE guides: {len(theme_records) - len(partial_theme_records)}",
+            f"- PARTIAL guides: {len(partial_theme_records)}",
+            "- Required sections: " + ", ".join(f"`{section}`" for section in REQUIRED_THEME_SECTIONS),
+            "",
+        ]
+    )
+    if partial_theme_records:
+        lines.extend(["### First PARTIAL Theme Guide Records", ""])
+        for record in partial_theme_records:
+            reason_text = "; ".join(str(reason) for reason in record.get("reasons", [])) or "needs review"
+            lines.append(
+                f"- `{record['path']}`: lines={record['line_count']}, "
+                f"jp_blocks={record['jp_blocks']}, memo_blocks={record['memo_blocks']}, reason={reason_text}"
+            )
+        lines.append("")
+
+    lines.extend(
+        [
             "## Policy Notes",
             "",
             "- English source text, file names, commands, APIs, expected output, license text, and attribution are preserved.",
@@ -693,6 +771,11 @@ def main() -> int:
         )
         SAMPLE_README_JSON.write_text(
             json.dumps(summary["sample_readme_records"], ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        THEME_GUIDE_JSON.write_text(
+            json.dumps(summary["theme_records"], ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
             newline="\n",
         )
