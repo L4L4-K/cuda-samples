@@ -9,10 +9,10 @@ English inventory for the local Japanese learning overlay.
 > `DONE` は対象ファイルがそろい、`PARTIAL` は未対応が残っている状態です。完了時に `PARTIAL` を残さないよう確認します。
 
 - Status: DONE
-- Updated: 2026-06-10 00:04:01 UTC
+- Updated: 2026-06-10 00:10:57 UTC
 - Branch: `ja-study/local-annotations`
 - Base commit: `b7c5481c556c3fe98db060207ecaa41a4b9a9abc`
-- Current commit: `0b0ee87d99318e8df4a821c5a2b4990085e89f46`
+- Current commit: `5491a6eb6df88a4bd5571b1c9802f8a994685bcf`
 
 ## Counts
 
