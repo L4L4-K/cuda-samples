@@ -49,12 +49,15 @@ VENDOR_PARTS = {
     "cpp/5_Domain_Specific/simpleD3D11Texture/d3dx11effect",
 }
 GENERATED_NAME_PARTS = {
+    "cuda_drvapi_dynlink_cuda",
     "ptxdump",
 }
 
 NEARBY_BEFORE = 4
 NEARBY_AFTER = 2
 TOP_LINE_LIMIT = 45
+GROUP_LINE_GAP = 8
+MISSING_EXAMPLE_LIMIT = 30
 REQUIRED_SAMPLE_SECTIONS = (
     "## Purpose",
     "## Prerequisites",
@@ -147,7 +150,7 @@ ANCHOR_RULES: tuple[AnchorRule, ...] = (
     AnchorRule(
         "kernel_launch",
         # JP: kernel launch の anchor。grid/block/shared-memory/stream と完了確認の説明を求めます。
-        re.compile(r"(<<<[^>]*>>>|\.launch\s*\(|launch\s*\(|cuLaunchKernel|LaunchKernel)"),
+        re.compile(r"(<<<[^>]*>>>|\.launch\s*\(|cuLaunchKernel|cudaLaunchKernel|LaunchKernel)"),
         "kernel launch",
     ),
     AnchorRule(
@@ -171,7 +174,7 @@ ANCHOR_RULES: tuple[AnchorRule, ...] = (
     AnchorRule(
         "streams_events",
         # JP: streams/events の anchor。非同期順序、overlap、計測範囲の説明を求めます。
-        re.compile(r"\b(cudaStream\w*|cudaEvent\w*|CUstream|CUevent|Stream\(|Event\(|stream\s*=|streaming|event)\b", re.I),
+        re.compile(r"\b(cudaStream\w*|cudaEvent\w*|CUstream|CUevent|Stream\(|Event\(|stream\s*=)\b", re.I),
         "streams/events",
     ),
     AnchorRule(
@@ -183,31 +186,31 @@ ANCHOR_RULES: tuple[AnchorRule, ...] = (
     AnchorRule(
         "driver_api",
         # JP: Driver API の anchor。CU* handle の所有、context/module/function の境界を説明します。
-        re.compile(r"\b(cu[A-Z][A-Za-z0-9_]*|CUdevice|CUcontext|CUmodule|CUfunction|CUresult)\b"),
+        re.compile(r"\b(cu[A-Z][A-Za-z0-9_]*\s*\(|CUdevice|CUcontext|CUmodule|CUfunction|CUstream|CUevent)\b"),
         "Driver API boundary",
     ),
     AnchorRule(
         "nvrtc",
         # JP: NVRTC/JIT の anchor。compile/link した module と kernel launch の対応を説明します。
-        re.compile(r"\b(nvrtc\w*|NVRTC|nvJitLink\w*|jitify|JIT compilation|compile\s*\(|Program\(|Linker\()\b"),
+        re.compile(r"\b(nvrtc\w*|NVRTC|nvJitLink\w*|jitify|JIT compilation|Program\(|Linker\()\b"),
         "runtime compilation/JIT",
     ),
     AnchorRule(
         "library_resources",
         # JP: CUDA library resource の anchor。handle/descriptor/workspace の作成と破棄を対応させます。
-        re.compile(r"\b(cublas\w*|cufft\w*|cusparse\w*|cusolver\w*|curand\w*|npp\w*|nvjpeg\w*|nccl\w*|cudnn\w*|Create\w*Handle|Destroy\w*Handle|descriptor|workspace)\b", re.I),
+        re.compile(r"\b(cublas\w*|cufft\w*|cusparse\w*|cusolver\w*|curand\w*|nppi\w*|npps\w*|npp[A-Z]\w*|nvjpeg\w*|nccl\w*|cudnn\w*|Create\w*Handle|Destroy\w*Handle)\b"),
         "CUDA library resources",
     ),
     AnchorRule(
         "validation",
         # JP: validation の anchor。CPU/reference 比較と、失敗時に疑う境界を説明します。
-        re.compile(r"\b(assert|sdkCompare\w*|compare\w*|checkResult|validate\w*|np\.allclose|cupy\.allclose|Result\s*=\s*PASS|PASS|FAIL)\b"),
+        re.compile(r"\b(sdkCompare\w*|compare\w*|checkResult|validate\w*|np\.allclose|cupy\.allclose|Result\s*=\s*PASS|PASS|FAIL)\b"),
         "validation/checking",
     ),
     AnchorRule(
         "cleanup",
         # JP: cleanup の anchor。確保、作成、登録した resource の lifetime end を確認します。
-        re.compile(r"\b(cudaFree\w*|cudaDestroy\w*|cudaEventDestroy|cudaStreamDestroy|Destroy\w*|destroy\s*\(|free\s*\(|delete\s+|cuMemFree\w*|release\s*\(|close\s*\()\b"),
+        re.compile(r"\b(cudaFree\w*|cudaDestroy\w*|cudaEventDestroy|cudaStreamDestroy|Destroy\w*|cuMemFree\w*)\b"),
         "cleanup/lifetime end",
     ),
     AnchorRule(
@@ -291,6 +294,40 @@ def read_lines(path: Path) -> list[str]:
         return []
 
 
+def source_paragraphs(path: Path) -> list[str]:
+    text = path.read_text(encoding="utf-8", errors="ignore") if path.exists() else ""
+    paragraphs: list[str] = []
+    current: list[str] = []
+    in_fence = False
+    suffix = path.suffix.lower()
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            if current:
+                paragraphs.append(" ".join(current))
+                current = []
+            continue
+        if in_fence:
+            continue
+        if not stripped or stripped.startswith("#") or stripped.startswith("|"):
+            if current:
+                paragraphs.append(" ".join(current))
+                current = []
+            continue
+        if stripped.startswith(("-", "*", "+")) and suffix in {".md", ".txt"}:
+            if current:
+                paragraphs.append(" ".join(current))
+                current = []
+            if len(stripped) > 28:
+                paragraphs.append(stripped)
+            continue
+        current.append(stripped)
+    if current:
+        paragraphs.append(" ".join(current))
+    return [paragraph for paragraph in paragraphs if paragraph.strip()]
+
+
 def git_value(args: list[str]) -> str:
     try:
         return subprocess.check_output(["git", *args], cwd=ROOT, text=True).strip()
@@ -371,6 +408,61 @@ def strip_python_string_literals(line: str) -> str:
     return "".join(result)
 
 
+def strip_c_like_string_literals(line: str) -> str:
+    result: list[str] = []
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if char in {"'", '"'}:
+            quote = char
+            index += 1
+            escaped = False
+            while index < len(line):
+                current = line[index]
+                if escaped:
+                    escaped = False
+                elif current == "\\":
+                    escaped = True
+                elif current == quote:
+                    index += 1
+                    break
+                index += 1
+            result.append(" ")
+            continue
+        if char == "R" and index + 1 < len(line) and line[index + 1] == '"':
+            # Raw string literals often contain sample output text; anchor search
+            # should stay on executable/source tokens.
+            result.append(" ")
+            break
+        result.append(char)
+        index += 1
+    return "".join(result)
+
+
+def strip_inline_comment_text(line: str, path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix == ".py":
+        return line.split("#", 1)[0]
+    if suffix in {".c", ".cc", ".cpp", ".cu", ".cuh", ".h", ".hpp"}:
+        line = line.split("//", 1)[0]
+        while "/*" in line and "*/" in line:
+            start = line.find("/*")
+            end = line.find("*/", start + 2)
+            line = line[:start] + " " + line[end + 2 :]
+    if suffix in {".cmake", ".sh", ".bat", ".cmd", ".ps1"} or path.name == "CMakeLists.txt":
+        return line.split("#", 1)[0]
+    return line
+
+
+def searchable_code_line(line: str, path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix == ".py":
+        line = strip_python_string_literals(line)
+    elif suffix in {".c", ".cc", ".cpp", ".cu", ".cuh", ".h", ".hpp"}:
+        line = strip_c_like_string_literals(line)
+    return strip_inline_comment_text(line, path)
+
+
 def is_macro_continuation(lines: list[str], index: int) -> bool:
     stripped = lines[index].rstrip()
     if stripped.endswith("\\"):
@@ -413,6 +505,68 @@ def line_has_japanese(text: str) -> bool:
     return bool(re.search(r"[\u3040-\u30ff\u3400-\u9fff]", text))
 
 
+def inaccurate_comment_flags(path: Path, lines: list[str], jp_line_numbers: list[int]) -> list[dict[str, object]]:
+    flags: list[dict[str, object]] = []
+    relative = rel(path)
+    for line_number in jp_line_numbers:
+        text = lines[line_number - 1].strip()
+        lower = text.lower()
+        if "__syncthreads" in text and any(term in lower for term in ("host", "cpu", "gpu work", "device-wide")):
+            flags.append(
+                {
+                    "line": line_number,
+                    "reason": "__syncthreads is block-local device synchronization, not host completion",
+                    "text": text,
+                }
+            )
+        if "__syncthreads" in text and "検証" in text:
+            flags.append(
+                {
+                    "line": line_number,
+                    "reason": "__syncthreads comment refers to host-side validation",
+                    "text": text,
+                }
+            )
+        if relative.endswith("cpp/1_Utilities/deviceQuery/deviceQuery.cpp") and line_number <= TOP_LINE_LIMIT:
+            if any(term in lower for term in ("stream/event", "unified memory", "migration")) or "block 内同期" in text:
+                flags.append(
+                    {
+                        "line": line_number,
+                        "reason": "deviceQuery reports device properties; it should not be described as a streams/shared/unified-memory execution sample",
+                        "text": text,
+                    }
+                )
+        if relative.endswith("cpp/1_Utilities/deviceQuery/deviceQuery.cpp") and "GPU result" in text:
+            flags.append(
+                {
+                    "line": line_number,
+                    "reason": "deviceQuery validates API/device availability, not GPU numerical results against a CPU reference",
+                    "text": text,
+                }
+            )
+    return flags
+
+
+def useful_jp_line_numbers(
+    lines: list[str], jp_line_numbers: list[int], inaccurate_lines: set[int]
+) -> list[int]:
+    useful: list[int] = []
+    for line_number in jp_line_numbers:
+        text = lines[line_number - 1]
+        if line_number in inaccurate_lines:
+            continue
+        if not line_has_japanese(text):
+            continue
+        if is_probably_generic_jp(text):
+            continue
+        useful.append(line_number)
+    return useful
+
+
+def nearby_jp_lines(anchor_line: int, jp_lines: Iterable[int]) -> list[int]:
+    return [jp for jp in jp_lines if anchor_line - NEARBY_BEFORE <= jp <= anchor_line + NEARBY_AFTER]
+
+
 def detect_anchor_lines(lines: list[str], path: Path | None = None) -> list[dict[str, object]]:
     anchors: list[dict[str, object]] = []
     ignored_python_lines = python_triple_string_lines(lines) if path and path.suffix.lower() == ".py" else set()
@@ -426,7 +580,9 @@ def detect_anchor_lines(lines: list[str], path: Path | None = None) -> list[dict
             continue
         if is_comment_only(line):
             continue
-        search_line = strip_python_string_literals(line) if path and path.suffix.lower() == ".py" else line
+        search_line = searchable_code_line(line, path) if path else line
+        if not search_line.strip():
+            continue
         categories: list[str] = []
         labels: list[str] = []
         for rule in ANCHOR_RULES:
@@ -436,6 +592,7 @@ def detect_anchor_lines(lines: list[str], path: Path | None = None) -> list[dict
         if categories:
             anchors.append(
                 {
+                    "id": len(anchors),
                     "line": number,
                     "categories": sorted(set(categories)),
                     "labels": sorted(set(labels)),
@@ -449,31 +606,167 @@ def anchor_has_nearby_jp(anchor_line: int, jp_lines: Iterable[int]) -> bool:
     return any(anchor_line - NEARBY_BEFORE <= jp <= anchor_line + NEARBY_AFTER for jp in jp_lines)
 
 
+def jp_allows_grouping(text: str, categories: set[str]) -> bool:
+    lower = text.lower()
+    generic_group_terms = ("連続", "複数", "まとめ", "それぞれ", "対応", "group", "all", "pairs")
+    if any(term in lower or term in text for term in generic_group_terms):
+        return True
+    if categories & {"device_memory", "pinned_memory", "managed_memory"}:
+        return any(term in lower or term in text for term in ("ownership", "lifetime", "resource", "確保", "解放", "所有"))
+    if "transfer" in categories:
+        return any(term in lower or term in text for term in ("direction", "方向", "visibility", "async", "同期"))
+    if categories & {"streams_events", "graphs"}:
+        return any(term in lower or term in text for term in ("ordering", "順序", "依存", "計測", "lifetime"))
+    if "cleanup" in categories:
+        return any(term in lower or term in text for term in ("cleanup", "lifetime", "解放", "破棄", "閉じ"))
+    if categories & {"library_resources", "driver_api", "nvrtc"}:
+        return any(term in lower or term in text for term in ("handle", "descriptor", "workspace", "resource", "lifetime", "所有"))
+    if categories & {"indexing", "shared_memory", "sync", "kernel_launch", "validation", "python_cuda", "build_cuda"}:
+        return True
+    return False
+
+
+def group_cover_anchors(
+    anchors: list[dict[str, object]],
+    directly_covered: dict[int, int],
+    lines: list[str],
+) -> tuple[dict[int, int], list[dict[str, object]]]:
+    grouped: dict[int, int] = {}
+    grouped_records: list[dict[str, object]] = []
+    if not anchors:
+        return grouped, grouped_records
+
+    current: list[dict[str, object]] = []
+    for anchor in anchors:
+        if not current:
+            current = [anchor]
+            continue
+        previous = current[-1]
+        previous_categories = set(str(item) for item in previous["categories"])
+        current_categories = set(str(item) for item in anchor["categories"])
+        gap = int(anchor["line"]) - int(previous["line"])
+        if gap <= GROUP_LINE_GAP and previous_categories & current_categories:
+            current.append(anchor)
+        else:
+            grouped.update(_cover_anchor_group(current, directly_covered, lines, grouped_records))
+            current = [anchor]
+    grouped.update(_cover_anchor_group(current, directly_covered, lines, grouped_records))
+    return grouped, grouped_records
+
+
+def _cover_anchor_group(
+    group: list[dict[str, object]],
+    directly_covered: dict[int, int],
+    lines: list[str],
+    grouped_records: list[dict[str, object]],
+) -> dict[int, int]:
+    result: dict[int, int] = {}
+    if len(group) < 2:
+        return result
+    covered_members = [anchor for anchor in group if int(anchor["id"]) in directly_covered]
+    if not covered_members:
+        return result
+    group_categories = set.intersection(*(set(str(item) for item in anchor["categories"]) for anchor in group))
+    if not group_categories:
+        return result
+    for covered in covered_members:
+        jp_line = directly_covered[int(covered["id"])]
+        jp_text = lines[jp_line - 1]
+        if not jp_allows_grouping(jp_text, group_categories):
+            continue
+        for anchor in group:
+            anchor_id = int(anchor["id"])
+            if anchor_id in directly_covered or anchor_id in result:
+                continue
+            result[anchor_id] = jp_line
+            grouped_records.append(
+                {
+                    "line": int(anchor["line"]),
+                    "categories": anchor["categories"],
+                    "covered_by_jp_line": jp_line,
+                    "rule": "adjacent repeated anchor group",
+                    "text": anchor["text"],
+                }
+            )
+        break
+    return result
+
+
+def group_cover_build_file(
+    path: Path,
+    anchors: list[dict[str, object]],
+    directly_covered: dict[int, int],
+    useful_jp_lines: list[int],
+    lines: list[str],
+) -> tuple[dict[int, int], list[dict[str, object]]]:
+    if path.name != "CMakeLists.txt" and path.suffix.lower() != ".cmake":
+        return {}, []
+    overview_lines = [line for line in useful_jp_lines if line <= TOP_LINE_LIMIT]
+    if not overview_lines:
+        return {}, []
+    overview = overview_lines[0]
+    overview_text = lines[overview - 1].lower()
+    if not any(term in overview_text for term in ("cmake", "target", "build", "link", "cuda", "architecture")):
+        return {}, []
+    grouped: dict[int, int] = {}
+    records: list[dict[str, object]] = []
+    for anchor in anchors:
+        anchor_id = int(anchor["id"])
+        categories = set(str(item) for item in anchor["categories"])
+        if anchor_id in directly_covered or "build_cuda" not in categories:
+            continue
+        grouped[anchor_id] = overview
+        records.append(
+            {
+                "line": int(anchor["line"]),
+                "categories": anchor["categories"],
+                "covered_by_jp_line": overview,
+                "rule": "file-level CMake build overview",
+                "text": anchor["text"],
+            }
+        )
+    return grouped, records
+
+
 def analyze_code_file(path: Path) -> dict[str, object]:
     lines = read_lines(path)
     jp_line_numbers = [i for i, line in enumerate(lines, start=1) if "JP:" in line]
     jp_lines = [lines[i - 1].strip() for i in jp_line_numbers]
+    inaccurate_flags = inaccurate_comment_flags(path, lines, jp_line_numbers)
+    inaccurate_lines = {int(flag["line"]) for flag in inaccurate_flags}
+    useful_jp_lines = useful_jp_line_numbers(lines, jp_line_numbers, inaccurate_lines)
     anchors = detect_anchor_lines(lines, path)
     categories: dict[str, int] = {}
     categories_with_jp: set[str] = set()
-    missing_details: list[dict[str, object]] = []
+    directly_covered: dict[int, int] = {}
 
     for anchor in anchors:
         line_number = int(anchor["line"])
-        nearby = anchor_has_nearby_jp(line_number, jp_line_numbers)
+        nearby_lines = nearby_jp_lines(line_number, useful_jp_lines)
         for category in anchor["categories"]:
             categories[category] = categories.get(category, 0) + 1
-            if nearby:
+        if nearby_lines:
+            jp_line = min(nearby_lines, key=lambda jp: abs(jp - line_number))
+            directly_covered[int(anchor["id"])] = jp_line
+
+    grouped_coverage, grouped_records = group_cover_anchors(anchors, directly_covered, lines)
+    build_grouped, build_grouped_records = group_cover_build_file(path, anchors, directly_covered, useful_jp_lines, lines)
+    for anchor_id, jp_line in build_grouped.items():
+        grouped_coverage.setdefault(anchor_id, jp_line)
+    grouped_records.extend(build_grouped_records)
+    covered_ids = set(directly_covered) | set(grouped_coverage)
+    missing_details = [anchor for anchor in anchors if int(anchor["id"]) not in covered_ids]
+    for anchor in anchors:
+        if int(anchor["id"]) in covered_ids:
+            for category in anchor["categories"]:
                 categories_with_jp.add(str(category))
-        if not nearby:
-            missing_details.append(anchor)
 
     detected = sorted(categories)
-    missing_categories = [name for name in detected if name not in categories_with_jp]
+    missing_categories = sorted({str(category) for anchor in missing_details for category in anchor["categories"]})
     top_only = bool(jp_line_numbers) and all(line <= TOP_LINE_LIMIT for line in jp_line_numbers)
     generic_line_count = sum(1 for line in jp_lines if is_probably_generic_jp(line))
-    jp_near_anchor = any(anchor_has_nearby_jp(int(anchor["line"]), jp_line_numbers) for anchor in anchors)
-    generic_only = bool(jp_line_numbers) and generic_line_count == len(jp_line_numbers) and (not anchors or not jp_near_anchor)
+    jp_near_anchor = any(anchor_has_nearby_jp(int(anchor["line"]), useful_jp_lines) for anchor in anchors)
+    generic_only = bool(jp_line_numbers) and generic_line_count == len(jp_line_numbers) and anchors
 
     status = "DONE"
     reasons: list[str] = []
@@ -483,12 +776,18 @@ def analyze_code_file(path: Path) -> dict[str, object]:
     if anchors and not jp_near_anchor:
         status = "PARTIAL"
         reasons.append("JP comments are only top-level or away from anchors")
-    if missing_categories:
+    if missing_details:
         status = "PARTIAL"
-        reasons.append("important anchor categories lack nearby JP")
+        reasons.append("anchor instances lack nearby JP or valid grouping")
     if generic_only and anchors:
         status = "PARTIAL"
         reasons.append("generic-only JP comments")
+    if top_only and generic_only and anchors:
+        status = "PARTIAL"
+        reasons.append("generic top-level JP comments for files with anchors")
+    if inaccurate_flags:
+        status = "PARTIAL"
+        reasons.append("misleading or inaccurate JP comments")
 
     return {
         "path": rel(path),
@@ -497,11 +796,16 @@ def analyze_code_file(path: Path) -> dict[str, object]:
         "jp_lines": jp_line_numbers,
         "top_only": top_only,
         "generic_only": generic_only,
+        "inaccurate_comment_flags": inaccurate_flags,
         "detected_anchors": [{"name": name, "count": categories[name]} for name in detected],
         "anchors_with_nearby_jp": sorted(categories_with_jp),
         "missing_anchors": missing_categories,
-        "missing_anchor_examples": missing_details[:12],
+        "missing_anchor_examples": missing_details[:MISSING_EXAMPLE_LIMIT],
+        "grouped_anchors": grouped_records[:MISSING_EXAMPLE_LIMIT],
         "anchor_count": len(anchors),
+        "covered_anchor_count": len(covered_ids),
+        "missing_anchor_count": len(missing_details),
+        "grouped_anchor_count": len(grouped_coverage),
         "reasons": reasons,
     }
 
@@ -578,6 +882,16 @@ def analyze_theme_guide(path: Path) -> dict[str, object]:
 def analyze_major_companion(path: Path) -> dict[str, object]:
     companion = path if path == DOCS_JA / "README.md" else companion_for(path)
     text = companion.read_text(encoding="utf-8", errors="ignore") if companion.exists() else ""
+    paragraphs = [] if path == DOCS_JA / "README.md" else source_paragraphs(path)
+    source_paragraph_count = len(paragraphs)
+    english_blocks = (
+        text.count("English paragraph")
+        + text.count("English anchor:")
+        + text.count("## English Reference")
+        + text.count("> **English**")
+    )
+    jp_blocks = text.count("> **日本語**")
+    memo_blocks = text.count("> **学習メモ**")
     reasons: list[str] = []
     if not companion.exists():
         reasons.append("missing companion")
@@ -587,6 +901,11 @@ def analyze_major_companion(path: Path) -> dict[str, object]:
         reasons.append("missing Japanese learning blocks")
     if text.count("## ") < 5:
         reasons.append("not section-level enough")
+    if source_paragraph_count:
+        if english_blocks < source_paragraph_count:
+            reasons.append("not enough English paragraph/reference blocks for source paragraphs")
+        if jp_blocks < source_paragraph_count:
+            reasons.append("not enough Japanese blocks for source paragraphs")
     line_count = len(text.splitlines())
     if line_count < 45:
         reasons.append("too short for major companion")
@@ -595,8 +914,10 @@ def analyze_major_companion(path: Path) -> dict[str, object]:
         "path": rel(companion),
         "status": "DONE" if not reasons else "PARTIAL",
         "line_count": line_count,
-        "jp_blocks": text.count("> **日本語**"),
-        "memo_blocks": text.count("> **学習メモ**"),
+        "source_paragraph_count": source_paragraph_count,
+        "english_reference_blocks": english_blocks,
+        "jp_blocks": jp_blocks,
+        "memo_blocks": memo_blocks,
         "section_count": text.count("## "),
         "reasons": reasons,
     }
@@ -691,6 +1012,13 @@ def summarize() -> dict[str, object]:
             "doc_companions_done": len(docs) - len(missing_companions),
             "major_companions_done": len(companion_records) - len(partial_companions),
             "major_companions_partial": len(partial_companions),
+            "major_companion_source_paragraphs": sum(
+                int(record.get("source_paragraph_count", 0)) for record in companion_records
+            ),
+            "major_companion_english_blocks": sum(
+                int(record.get("english_reference_blocks", 0)) for record in companion_records
+            ),
+            "major_companion_jp_blocks": sum(int(record.get("jp_blocks", 0)) for record in companion_records),
             "sample_dirs": len(samples),
             "sample_readme_ja_done": len(samples) - len(partial_sample_readmes),
             "sample_readme_ja_partial": len(partial_sample_readmes),
@@ -705,6 +1033,12 @@ def summarize() -> dict[str, object]:
             "annotation_files_partial": len(partial_annotations),
             "annotation_anchor_files": sum(1 for record in annotation_records if int(record["anchor_count"]) > 0),
             "annotation_anchor_instances": sum(int(record["anchor_count"]) for record in annotation_records),
+            "annotation_anchor_instances_covered": sum(int(record["covered_anchor_count"]) for record in annotation_records),
+            "annotation_anchor_instances_missing": sum(int(record["missing_anchor_count"]) for record in annotation_records),
+            "annotation_grouped_anchor_instances": sum(int(record["grouped_anchor_count"]) for record in annotation_records),
+            "annotation_inaccurate_comment_flags": sum(
+                len(record.get("inaccurate_comment_flags", [])) for record in annotation_records
+            ),
             "japanese_files": len(japanese_files()),
         },
         "missing": {
@@ -803,6 +1137,11 @@ def render_markdown(summary: dict[str, object]) -> str:
             f"- DONE files: {len(done_records)}",
             f"- PARTIAL files: {len(partial_records)}",
             f"- Anchor search window: {NEARBY_BEFORE} lines before to {NEARBY_AFTER} lines after each anchor.",
+            f"- Grouping window: adjacent repeated anchors up to {GROUP_LINE_GAP} lines apart, with a useful JP comment explaining the grouped resource/direction/cleanup pattern.",
+            f"- Covered anchor instances: {counts['annotation_anchor_instances_covered']}",
+            f"- Missing anchor instances: {counts['annotation_anchor_instances_missing']}",
+            f"- Grouped anchor instances: {counts['annotation_grouped_anchor_instances']}",
+            f"- Inaccurate JP flags: {counts['annotation_inaccurate_comment_flags']}",
             "",
         ]
     )
@@ -811,9 +1150,12 @@ def render_markdown(summary: dict[str, object]) -> str:
         for record in partial_records[:120]:
             missing_anchors = record.get("missing_anchors") or []
             missing_text = ", ".join(str(item) for item in missing_anchors[:8]) if missing_anchors else "none"
+            inaccurate = record.get("inaccurate_comment_flags") or []
             lines.append(
                 f"- `{record['path']}`: jp_count={record['jp_count']}, "
-                f"anchors={record['anchor_count']}, missing=[{missing_text}], reason={annotation_reason(record)}"
+                f"anchors={record['anchor_count']}, covered={record.get('covered_anchor_count', 0)}, "
+                f"missing_count={record.get('missing_anchor_count', 0)}, grouped={record.get('grouped_anchor_count', 0)}, "
+                f"inaccurate_flags={len(inaccurate)}, missing=[{missing_text}], reason={annotation_reason(record)}"
             )
         if len(partial_records) > 120:
             lines.append(f"- ... plus {len(partial_records) - 120} more PARTIAL files")
@@ -876,7 +1218,9 @@ def render_markdown(summary: dict[str, object]) -> str:
             reason_text = "; ".join(str(reason) for reason in record.get("reasons", [])) or "needs review"
             lines.append(
                 f"- `{record['path']}`: lines={record['line_count']}, "
-                f"sections={record['section_count']}, jp_blocks={record['jp_blocks']}, reason={reason_text}"
+                f"sections={record['section_count']}, source_paragraphs={record.get('source_paragraph_count', 0)}, "
+                f"english_blocks={record.get('english_reference_blocks', 0)}, jp_blocks={record['jp_blocks']}, "
+                f"reason={reason_text}"
             )
         lines.append("")
 
