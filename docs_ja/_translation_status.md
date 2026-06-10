@@ -9,10 +9,10 @@ English inventory for the local Japanese learning overlay.
 > `DONE` は対象ファイルがそろい、重要な CUDA/API アンカーの近くに具体的な `JP:` 注釈がある状態です。`PARTIAL` は、トップだけの一般コメントやアンカー不足が残っている状態です。
 
 - Status: DONE
-- Updated: 2026-06-10 03:27:31 UTC
+- Updated: 2026-06-10 03:30:38 UTC
 - Branch: `ja-study/local-annotations`
 - Base commit: `b7c5481c556c3fe98db060207ecaa41a4b9a9abc`
-- Current commit: `211dac939562ec57d9a3055fc1182817801afc76`
+- Current commit: `2e7eca013230c01acf9fc2c7b4c3ceae330e9869`
 - Detailed annotation record: `docs_ja/_annotation_inventory.json`
 - Detailed sample README record: `docs_ja/_sample_readme_inventory.json`
 - Detailed theme guide record: `docs_ja/_theme_inventory.json`
@@ -39,7 +39,7 @@ English inventory for the local Japanese learning overlay.
 - annotation_files_partial: 0
 - annotation_anchor_files: 708
 - annotation_anchor_instances: 13750
-- japanese_files: 841
+- japanese_files: 842
 
 ## Missing Or Partial Items
 
