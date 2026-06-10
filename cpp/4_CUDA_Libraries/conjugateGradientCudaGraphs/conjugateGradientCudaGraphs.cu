@@ -202,6 +202,7 @@ int main(int argc, char **argv)
     checkCudaErrors(cudaMalloc((void **)&d_b, sizeof(float)));
 
     /* Wrap raw data into cuSPARSE generic API objects */
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cusparseSpMatDescr_t matA = NULL;
     checkCudaErrors(cusparseCreateCsr(&matA,
                                       N,
@@ -214,6 +215,7 @@ int main(int argc, char **argv)
                                       CUSPARSE_INDEX_32I,
                                       CUSPARSE_INDEX_BASE_ZERO,
                                       CUDA_R_32F));
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cusparseDnVecDescr_t vecx = NULL;
     checkCudaErrors(cusparseCreateDnVec(&vecx, N, d_x, CUDA_R_32F));
     cusparseDnVecDescr_t vecp = NULL;
@@ -234,8 +236,10 @@ int main(int argc, char **argv)
                                             CUSPARSE_SPMV_ALG_DEFAULT,
                                             &bufferSize));
     void *buffer = NULL;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc(&buffer, bufferSize));
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cusparseMatDescr_t descr = 0;
     checkCudaErrors(cusparseCreateMatDescr(&descr));
 
@@ -257,6 +261,7 @@ int main(int argc, char **argv)
     alpham1 = -1.0;
     beta    = 0.0;
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusparseSetStream(cusparseHandle, stream1));
     checkCudaErrors(cusparseSpMV(cusparseHandle,
                                  CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -269,6 +274,7 @@ int main(int argc, char **argv)
                                  CUSPARSE_SPMV_ALG_DEFAULT,
                                  buffer));
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cublasSetStream(cublasHandle, stream1));
     checkCudaErrors(cublasSaxpy(cublasHandle, N, &alpham1, d_Ax, 1, d_r, 1));
 
@@ -289,18 +295,25 @@ int main(int argc, char **argv)
                                  CUSPARSE_SPMV_ALG_DEFAULT,
                                  buffer));
 
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cublasSdot(cublasHandle, N, d_p, 1, d_Ax, 1, d_dot));
 
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     r1_div_x<<<1, 1, 0, stream1>>>(d_r1, d_dot, d_a);
 
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cublasSaxpy(cublasHandle, N, d_a, d_p, 1, d_x, 1));
 
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     a_minus<<<1, 1, 0, stream1>>>(d_a, d_na);
 
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cublasSaxpy(cublasHandle, N, d_na, d_Ax, 1, d_r, 1));
 
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpyAsync(d_r0, d_r1, sizeof(float), cudaMemcpyDeviceToDevice, stream1));
 
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cublasSdot(cublasHandle, N, d_r, 1, d_r, 1, d_r1));
 
     checkCudaErrors(cudaMemcpyAsync(&r1, d_r1, sizeof(float), cudaMemcpyDeviceToHost, stream1));
@@ -316,9 +329,12 @@ int main(int argc, char **argv)
     checkCudaErrors(cudaStreamCreate(&streamForGraph));
     checkCudaErrors(cublasSetStream(cublasHandle, stream1));
     checkCudaErrors(cusparseSetStream(cusparseHandle, stream1));
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamBeginCapture(stream1, cudaStreamCaptureModeGlobal));
 
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     r1_div_x<<<1, 1, 0, stream1>>>(d_r1, d_r0, d_b);
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cublasSetPointerMode(cublasHandle, CUBLAS_POINTER_MODE_DEVICE);
     checkCudaErrors(cublasSscal(cublasHandle, N, d_b, d_p, 1));
     cublasSetPointerMode(cublasHandle, CUBLAS_POINTER_MODE_HOST);
@@ -337,38 +353,54 @@ int main(int argc, char **argv)
                                  CUSPARSE_SPMV_ALG_DEFAULT,
                                  buffer));
 
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemsetAsync(d_dot, 0, sizeof(float), stream1));
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cublasSdot(cublasHandle, N, d_p, 1, d_Ax, 1, d_dot));
 
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     r1_div_x<<<1, 1, 0, stream1>>>(d_r1, d_dot, d_a);
 
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cublasSaxpy(cublasHandle, N, d_a, d_p, 1, d_x, 1));
 
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     a_minus<<<1, 1, 0, stream1>>>(d_a, d_na);
 
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cublasSaxpy(cublasHandle, N, d_na, d_Ax, 1, d_r, 1));
 
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpyAsync(d_r0, d_r1, sizeof(float), cudaMemcpyDeviceToDevice, stream1));
     checkCudaErrors(cudaMemsetAsync(d_r1, 0, sizeof(float), stream1));
 
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cublasSdot(cublasHandle, N, d_r, 1, d_r, 1, d_r1));
 
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpyAsync((float *)&r1, d_r1, sizeof(float), cudaMemcpyDeviceToHost, stream1));
 
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamEndCapture(stream1, &initGraph));
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     cudaGraphExec_t graphExec;
     checkCudaErrors(cudaGraphInstantiate(&graphExec, initGraph, NULL, NULL, 0));
 #endif
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cublasSetStream(cublasHandle, stream1));
     checkCudaErrors(cusparseSetStream(cusparseHandle, stream1));
 
     while (r1 > tol * tol && k <= max_iter) {
 #if WITH_GRAPH
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         checkCudaErrors(cudaGraphLaunch(graphExec, streamForGraph));
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaStreamSynchronize(streamForGraph));
 #else
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         r1_div_x<<<1, 1, 0, stream1>>>(d_r1, d_r0, d_b);
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         cublasSetPointerMode(cublasHandle, CUBLAS_POINTER_MODE_DEVICE);
         checkCudaErrors(cublasSscal(cublasHandle, N, d_b, d_p, 1));
 
@@ -386,20 +418,29 @@ int main(int argc, char **argv)
                                      CUSPARSE_SPMV_ALG_DEFAULT,
                                      buffer));
 
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         cublasSetPointerMode(cublasHandle, CUBLAS_POINTER_MODE_DEVICE);
         checkCudaErrors(cublasSdot(cublasHandle, N, d_p, 1, d_Ax, 1, d_dot));
 
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         r1_div_x<<<1, 1, 0, stream1>>>(d_r1, d_dot, d_a);
 
+        // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         checkCudaErrors(cublasSaxpy(cublasHandle, N, d_a, d_p, 1, d_x, 1));
 
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         a_minus<<<1, 1, 0, stream1>>>(d_a, d_na);
+        // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         checkCudaErrors(cublasSaxpy(cublasHandle, N, d_na, d_Ax, 1, d_r, 1));
 
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemcpyAsync(d_r0, d_r1, sizeof(float), cudaMemcpyDeviceToDevice, stream1));
 
+        // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         checkCudaErrors(cublasSdot(cublasHandle, N, d_r, 1, d_r, 1, d_r1));
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemcpyAsync((float *)&r1, d_r1, sizeof(float), cudaMemcpyDeviceToHost, stream1));
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaStreamSynchronize(stream1));
 #endif
         printf("iteration = %3d, residual = %e\n", k, sqrt(r1));
@@ -407,10 +448,14 @@ int main(int argc, char **argv)
     }
 
 #if WITH_GRAPH
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpyAsync(x, d_x, N * sizeof(float), cudaMemcpyDeviceToHost, streamForGraph));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaStreamSynchronize(streamForGraph));
 #else
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpyAsync(x, d_x, N * sizeof(float), cudaMemcpyDeviceToHost, stream1));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaStreamSynchronize(stream1));
 #endif
 
@@ -453,6 +498,7 @@ int main(int argc, char **argv)
         checkCudaErrors(cusparseDestroyDnVec(vecp));
     }
 
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFreeHost(I));
     checkCudaErrors(cudaFreeHost(J));
     checkCudaErrors(cudaFreeHost(val));

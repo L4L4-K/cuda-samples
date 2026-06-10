@@ -92,6 +92,7 @@ __global__ void computeBezierLinePositions(int lidx, BezierLine *bLines, int nTe
 
 __global__ void computeBezierLinesCDP(BezierLine *bLines, int nLines)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int lidx = threadIdx.x + blockDim.x * blockIdx.x;
 
     if (lidx < nLines) {
@@ -113,6 +114,7 @@ __global__ void computeBezierLinesCDP(BezierLine *bLines, int nLines)
 
 __global__ void freeVertexMem(BezierLine *bLines, int nLines)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int lidx = threadIdx.x + blockDim.x * blockIdx.x;
 
     if (lidx < nLines)
@@ -204,6 +206,7 @@ int main(int argc, char **argv)
     // Do something to draw the lines here
 
     freeVertexMem<<<(unsigned int)ceil((float)N_LINES / (float)BLOCK_DIM), BLOCK_DIM>>>(bLines_d, N_LINES);
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(bLines_d));
     delete[] bLines_h;
 

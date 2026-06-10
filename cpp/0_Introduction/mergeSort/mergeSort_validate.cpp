@@ -108,6 +108,7 @@ extern "C" void fillValues(uint *val, uint N)
         val[i] = i;
 }
 
+// JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
 extern "C" int validateSortedValues(uint *resKey, uint *resVal, uint *srcKey, uint batchSize, uint arrayLength)
 {
     int correctFlag = 1, stableFlag = 1;

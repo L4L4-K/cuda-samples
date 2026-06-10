@@ -186,6 +186,7 @@ __global__ void reorderDataAndFindCellStartD(uint   *cellStart,         // outpu
         // Load hash data into shared memory so that we can look
         // at neighboring particle's hash value without loading
         // two hash values per thread
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         sharedHash[threadIdx.x + 1] = hash;
 
         if (index > 0 && threadIdx.x == 0) {
@@ -204,6 +205,7 @@ __global__ void reorderDataAndFindCellStartD(uint   *cellStart,         // outpu
         // As it isn't the first particle, it must also be the cell end of
         // the previous particle's cell
 
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         if (index == 0 || hash != sharedHash[threadIdx.x]) {
             cellStart[hash] = index;
 
@@ -305,6 +307,7 @@ __global__ void collideD(float4 *newVel,            // output: new velocity
                          uint   *cellEnd,
                          uint    numParticles)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     uint index = __mul24(blockIdx.x, blockDim.x) + threadIdx.x;
 
     if (index >= numParticles)

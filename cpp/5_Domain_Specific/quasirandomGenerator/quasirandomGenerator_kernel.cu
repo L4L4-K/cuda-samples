@@ -59,6 +59,7 @@ static __global__ void quasirandomGeneratorKernel(float *d_Output, unsigned int 
                 result ^= dimBase[bit];
             }
 
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         d_Output[MUL(threadIdx.y, N) + pos] = (float)(result + 1) * INT_SCALE;
     }
 }
@@ -149,6 +150,7 @@ __device__ inline float MoroInvCNDgpu(unsigned int x)
 static __global__ void inverseCNDKernel(float *d_Output, unsigned int *d_Input, unsigned int pathN)
 {
     unsigned int distance = ((unsigned int)-1) / (pathN + 1);
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned int tid      = MUL(blockDim.x, blockIdx.x) + threadIdx.x;
     unsigned int threadN  = MUL(blockDim.x, gridDim.x);
 
@@ -171,6 +173,7 @@ static __global__ void inverseCNDKernel(float *d_Output, unsigned int *d_Input, 
 
 extern "C" void inverseCNDgpu(float *d_Output, unsigned int *d_Input, unsigned int N)
 {
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     inverseCNDKernel<<<128, 128>>>(d_Output, d_Input, N);
     getLastCudaError("inverseCNDKernel() execution failed.\n");
 }

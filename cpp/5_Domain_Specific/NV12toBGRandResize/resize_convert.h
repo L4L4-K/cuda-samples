@@ -56,6 +56,7 @@ extern "C" void resizeBGRplanarBatch(float       *dpSrc,
                                      int          nDstWidth,
                                      int          nDstHeight,
                                      int          nBatchSize,
+                                     // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
                                      cudaStream_t stream            = 0,
                                      int          cropX             = 0,
                                      int          cropY             = 0,
@@ -71,5 +72,6 @@ extern "C" void nv12ToBGRplanarBatch(uint8_t     *pNv12,
                                      int          nWidth,
                                      int          nHeight,
                                      int          nBatchSize,
+                                     // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
                                      cudaStream_t stream = 0);
 #endif

@@ -28,6 +28,7 @@
 
 extern "C" __global__ void sequence_gpu(int *d_ptr, int length)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int elemID = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (elemID < length) {

@@ -108,6 +108,7 @@ def main():
     print("=" * 60)
 
     # Initialize device using cuda.core
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     device = Device(0)
     device.set_current()
     print(f"\nDevice: {device.name}")
@@ -117,6 +118,7 @@ def main():
     stream = device.create_stream()
 
     # Make CuPy use the same stream for correct ordering (avoids null-stream sync)
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     cp.cuda.Stream.from_external(stream).use()
 
     try:
@@ -143,6 +145,7 @@ def _run_histogram(device, stream):
     # Generate test data directly on GPU (more efficient than CPU->GPU copy)
     n = 10_000_000
     print(f"\nGenerating {n:,} random values on GPU...")
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     data_gpu = cp.random.randint(0, 256, size=n, dtype=cp.uint8)
     hist_gpu = cp.zeros(NUM_BINS, dtype=cp.uint32)
 
@@ -168,6 +171,7 @@ def _run_histogram(device, stream):
     )
     stream.sync()
 
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     hist_global = cp.asnumpy(hist_gpu)
     global_ok = np.array_equal(hist_cpu, hist_global)
     print(f"  Global atomics:     {'PASSED' if global_ok else 'FAILED'}")
@@ -184,6 +188,7 @@ def _run_histogram(device, stream):
     )
     stream.sync()
 
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     hist_privatized = cp.asnumpy(hist_gpu)
     privatized_ok = np.array_equal(hist_cpu, hist_privatized)
     print(f"  Privatized atomics: {'PASSED' if privatized_ok else 'FAILED'}")

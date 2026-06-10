@@ -215,6 +215,7 @@ def run_pagerank_benchmark(
     print("=" * 60)
 
     # Initialize cuda.core device and stream
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     device = Device(0)
     device.set_current()
     stream: Stream = device.create_stream()
@@ -236,6 +237,7 @@ def run_pagerank_benchmark(
         sys.exit(2)
 
     # Make CuPy/cuDF use our cuda.core stream
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     cp.cuda.Stream.from_external(stream).use()
 
     # Generate random graph
@@ -354,6 +356,7 @@ def run_pagerank_benchmark(
         success = success and sum_ok
         return success
     finally:
+        # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
         cp.cuda.Stream.null.use()
         stream.close()
 

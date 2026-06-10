@@ -104,6 +104,7 @@ static void getLTOIR(const char *code, const char *name, char **ltoIR, size_t *l
 
     // specify that LTO IR should be generated for LTO operation
     const char *opts[]        = {"-dlto", "--relocatable-device-code=true"};
+    // JP: この連続する anchor 群では NVRTC/JIT compile/link output です。compile option、log、生成 code と後続 module/kernel の対応 を確認します。
     nvrtcResult compileResult = nvrtcCompileProgram(prog,  // prog
                                                     2,     // numOptions
                                                     opts); // options
@@ -241,6 +242,7 @@ int main(int argc, char *argv[])
                                   0)); // arguments
     CUDA_SAFE_CALL(cuCtxSynchronize());
     // Retrieve and print output.
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     CUDA_SAFE_CALL(cuMemcpyDtoH(hOut, dOut, bufferSize));
 
     for (size_t i = 0; i < n; ++i) {
@@ -254,6 +256,7 @@ int main(int argc, char *argv[])
         std::cout << "values not expected?\n";
     }
     // Release resources.
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     CUDA_SAFE_CALL(cuMemFree(dX));
     CUDA_SAFE_CALL(cuMemFree(dY));
     CUDA_SAFE_CALL(cuMemFree(dOut));

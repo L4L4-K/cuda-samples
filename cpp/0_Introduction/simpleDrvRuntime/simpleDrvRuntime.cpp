@@ -84,6 +84,7 @@ int main(int argc, char **argv)
     printf("simpleDrvRuntime..\n");
     int               N = 50000, devID = 0;
     size_t            size = N * sizeof(float);
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     CUdevice          cuDevice;
     CUfunction        vecAdd_kernel;
     CUmodule          cuModule = 0;
@@ -177,6 +178,7 @@ int main(int argc, char **argv)
     exit((i == N) ? EXIT_SUCCESS : EXIT_FAILURE);
 }
 
+// JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
 int CleanupNoFailure(CUcontext &cuContext)
 {
     // Free device memory
@@ -198,6 +200,7 @@ int CleanupNoFailure(CUcontext &cuContext)
         checkCudaErrors(cudaFreeHost(h_C));
     }
 
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaDrvErrors(cuCtxDestroy(cuContext));
 
     return EXIT_SUCCESS;

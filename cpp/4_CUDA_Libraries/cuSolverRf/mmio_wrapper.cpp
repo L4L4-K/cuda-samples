@@ -49,6 +49,7 @@ template <> __inline__ cuComplex cuGet<cuComplex>(int x) { return (make_cuComple
 
 template <> __inline__ cuDoubleComplex cuGet<cuDoubleComplex>(int x) { return (make_cuDoubleComplex(double(x), 0.0)); }
 
+// JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
 template <typename T_ELEM> __inline__ T_ELEM cuGet(int, int);
 template <> __inline__ float                 cuGet<float>(int x, int y) { return float(x); }
 
@@ -61,6 +62,7 @@ template <> __inline__ cuDoubleComplex cuGet<cuDoubleComplex>(int x, int y)
     return (make_cuDoubleComplex(double(x), double(y)));
 }
 
+// JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
 template <typename T_ELEM> __inline__ T_ELEM cuGet(float);
 template <> __inline__ float                 cuGet<float>(float x) { return float(x); }
 
@@ -73,6 +75,7 @@ template <> __inline__ cuDoubleComplex cuGet<cuDoubleComplex>(float x)
     return (make_cuDoubleComplex(double(x), 0.0));
 }
 
+// JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
 template <typename T_ELEM> __inline__ T_ELEM cuGet(float, float);
 template <> __inline__ float                 cuGet<float>(float x, float y) { return float(x); }
 
@@ -85,6 +88,7 @@ template <> __inline__ cuDoubleComplex cuGet<cuDoubleComplex>(float x, float y)
     return (make_cuDoubleComplex(double(x), double(y)));
 }
 
+// JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
 template <typename T_ELEM> __inline__ T_ELEM cuGet(double);
 template <> __inline__ float                 cuGet<float>(double x) { return float(x); }
 
@@ -97,6 +101,7 @@ template <> __inline__ cuDoubleComplex cuGet<cuDoubleComplex>(double x)
     return (make_cuDoubleComplex(double(x), 0.0));
 }
 
+// JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
 template <typename T_ELEM> __inline__ T_ELEM cuGet(double, double);
 template <> __inline__ float                 cuGet<float>(double x, double y) { return float(x); }
 

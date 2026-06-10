@@ -232,6 +232,7 @@ int main(int argc, char **argv)
     checkCudaErrors(cudaMalloc((void **)&d_rm2, (N) * sizeof(float)));
 
     /* Wrap raw data into cuSPARSE generic API objects */
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cusparseDnVecDescr_t vecp = NULL, vecX = NULL, vecY = NULL, vecR = NULL, vecZM1 = NULL;
     checkCudaErrors(cusparseCreateDnVec(&vecp, N, d_p, CUDA_R_32F));
     checkCudaErrors(cusparseCreateDnVec(&vecX, N, d_x, CUDA_R_32F));
@@ -250,6 +251,7 @@ int main(int argc, char **argv)
     checkCudaErrors(cudaMemcpy(d_x, x, N * sizeof(float), cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_r, rhs, N * sizeof(float), cudaMemcpyHostToDevice));
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cusparseSpMatDescr_t matA = NULL;
     cusparseSpMatDescr_t matM_lower, matM_upper;
     cusparseFillMode_t   fill_lower    = CUSPARSE_FILL_MODE_LOWER;
@@ -270,9 +272,11 @@ int main(int argc, char **argv)
                                       CUDA_R_32F));
 
     /* Copy A data to ILU(0) vals as input*/
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(d_valsILU0, d_val, nz * sizeof(float), cudaMemcpyDeviceToDevice));
 
     // Lower Part
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusparseCreateCsr(&matM_lower,
                                       N,
                                       N,
@@ -285,6 +289,7 @@ int main(int argc, char **argv)
                                       CUSPARSE_INDEX_BASE_ZERO,
                                       CUDA_R_32F));
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusparseSpMatSetAttribute(matM_lower, CUSPARSE_SPMAT_FILL_MODE, &fill_lower, sizeof(fill_lower)));
     checkCudaErrors(cusparseSpMatSetAttribute(matM_lower, CUSPARSE_SPMAT_DIAG_TYPE, &diag_unit, sizeof(diag_unit)));
     // M_upper
@@ -299,6 +304,7 @@ int main(int argc, char **argv)
                                       CUSPARSE_INDEX_32I,
                                       CUSPARSE_INDEX_BASE_ZERO,
                                       CUDA_R_32F));
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusparseSpMatSetAttribute(matM_upper, CUSPARSE_SPMAT_FILL_MODE, &fill_upper, sizeof(fill_upper)));
     checkCudaErrors(
         cusparseSpMatSetAttribute(matM_upper, CUSPARSE_SPMAT_DIAG_TYPE, &diag_non_unit, sizeof(diag_non_unit)));
@@ -328,12 +334,16 @@ int main(int argc, char **argv)
                                             CUDA_R_32F,
                                             CUSPARSE_SPMV_ALG_DEFAULT,
                                             &bufferSizeMV));
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc(&d_bufferMV, bufferSizeMV));
 
     checkCudaErrors(
+        // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         cusparseScsrilu02_bufferSize(cusparseHandle, N, nz, matLU, d_val, d_row, d_col, infoILU, &bufferSizeLU));
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc(&d_bufferLU, bufferSizeLU));
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusparseSpSV_createDescr(&spsvDescrL));
     checkCudaErrors(cusparseSpSV_bufferSize(cusparseHandle,
                                             CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -345,8 +355,10 @@ int main(int argc, char **argv)
                                             CUSPARSE_SPSV_ALG_DEFAULT,
                                             spsvDescrL,
                                             &bufferSizeL));
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc(&d_bufferL, bufferSizeL));
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusparseSpSV_createDescr(&spsvDescrU));
     checkCudaErrors(cusparseSpSV_bufferSize(cusparseHandle,
                                             CUSPARSE_OPERATION_NON_TRANSPOSE,
@@ -358,6 +370,7 @@ int main(int argc, char **argv)
                                             CUSPARSE_SPSV_ALG_DEFAULT,
                                             spsvDescrU,
                                             &bufferSizeU));
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc(&d_bufferU, bufferSizeU));
 
     /* Conjugate gradient without preconditioning.
@@ -369,6 +382,7 @@ int main(int argc, char **argv)
     printf("Convergence of CG without preconditioning: \n");
     k  = 0;
     r0 = 0;
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cublasSdot(cublasHandle, N, d_r, 1, d_r, 1, &r1));
 
     while (r1 > tol * tol && k <= max_iter) {
@@ -393,6 +407,7 @@ int main(int argc, char **argv)
                                      CUDA_R_32F,
                                      CUSPARSE_SPMV_ALG_DEFAULT,
                                      d_bufferMV));
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         checkCudaErrors(cublasSdot(cublasHandle, N, d_p, 1, d_omega, 1, &dot));
         alpha = r1 / dot;
         checkCudaErrors(cublasSaxpy(cublasHandle, N, &alpha, d_p, 1, d_x, 1));
@@ -404,6 +419,7 @@ int main(int argc, char **argv)
 
     printf("  iteration = %3d, residual = %e \n", k, sqrt(r1));
 
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(x, d_x, N * sizeof(float), cudaMemcpyDeviceToHost));
 
     /* check result */
@@ -454,6 +470,7 @@ int main(int argc, char **argv)
     printf("\nConvergence of CG using ILU(0) preconditioning: \n");
 
     /* Perform analysis for ILU(0) */
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusparseScsrilu02_analysis(
         cusparseHandle, N, nz, descr, d_valsILU0, d_row, d_col, infoILU, CUSPARSE_SOLVE_POLICY_USE_LEVEL, d_bufferLU));
 
@@ -473,6 +490,7 @@ int main(int argc, char **argv)
                                           spsvDescrL,
                                           d_bufferL));
 
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusparseSpSV_analysis(cusparseHandle,
                                           CUSPARSE_OPERATION_NON_TRANSPOSE,
                                           &floatone,
@@ -488,10 +506,12 @@ int main(int argc, char **argv)
     for (int i = 0; i < N; i++) {
         x[i] = 0.0;
     }
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(d_r, rhs, N * sizeof(float), cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_x, x, N * sizeof(float), cudaMemcpyHostToDevice));
 
     k = 0;
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cublasSdot(cublasHandle, N, d_r, 1, d_r, 1, &r1));
 
     while (r1 > tol * tol && k <= max_iter) {
@@ -506,6 +526,7 @@ int main(int argc, char **argv)
                                            CUSPARSE_SPSV_ALG_DEFAULT,
                                            spsvDescrL));
 
+        // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         checkCudaErrors(cusparseSpSV_solve(cusparseHandle,
                                            CUSPARSE_OPERATION_NON_TRANSPOSE,
                                            &floatone,
@@ -518,6 +539,7 @@ int main(int argc, char **argv)
         k++;
 
         if (k == 1) {
+            // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
             checkCudaErrors(cublasScopy(cublasHandle, N, d_zm1, 1, d_p, 1));
         }
         else {
@@ -538,6 +560,7 @@ int main(int argc, char **argv)
                                      CUDA_R_32F,
                                      CUSPARSE_SPMV_ALG_DEFAULT,
                                      d_bufferMV));
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         checkCudaErrors(cublasSdot(cublasHandle, N, d_r, 1, d_zm1, 1, &numerator));
         checkCudaErrors(cublasSdot(cublasHandle, N, d_p, 1, d_omega, 1, &denominator));
         alpha = numerator / denominator;
@@ -551,6 +574,7 @@ int main(int argc, char **argv)
 
     printf("  iteration = %3d, residual = %e \n", k, sqrt(r1));
 
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(x, d_x, N * sizeof(float), cudaMemcpyDeviceToHost));
 
     /* check result */
@@ -575,6 +599,7 @@ int main(int argc, char **argv)
     qaerr2 = err;
 
     /* Destroy descriptors */
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusparseDestroyCsrilu02Info(infoILU));
     checkCudaErrors(cusparseDestroyMatDescr(matLU));
     checkCudaErrors(cusparseSpSV_destroyDescr(spsvDescrL));
@@ -600,6 +625,7 @@ int main(int argc, char **argv)
     free(val);
     free(x);
     free(rhs);
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(d_bufferMV));
     checkCudaErrors(cudaFree(d_bufferLU));
     checkCudaErrors(cudaFree(d_bufferL));

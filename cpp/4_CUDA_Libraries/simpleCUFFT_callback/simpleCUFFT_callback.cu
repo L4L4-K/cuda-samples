@@ -66,6 +66,7 @@ typedef struct _cb_params
 
 // This is the callback routine. It does complex pointwise multiplication with
 // scaling.
+// JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
 static __device__ cufftComplex ComplexPointwiseMulAndScale(void *a, size_t index, void *cb_info, void *sharedmem)
 {
     cb_params *my_params = (cb_params *)cb_info;
@@ -150,13 +151,16 @@ int runTest(int argc, char **argv)
 
     // Allocate device memory for filter kernel
     Complex *d_filter_kernel;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&d_filter_kernel, mem_size));
 
     // Copy host memory to device
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(d_filter_kernel, h_padded_filter_kernel, mem_size, cudaMemcpyHostToDevice));
 
     // Create one CUFFT plan for the forward transforms, and one for the reverse
     // transform with load callback.
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cufftHandle plan, cb_plan;
     size_t      work_size;
 
@@ -175,12 +179,15 @@ int runTest(int argc, char **argv)
 
     // Allocate device memory for parameters
     cb_params *d_params;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&d_params, sizeof(cb_params)));
 
     // Copy host memory to device
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(d_params, &h_params, sizeof(cb_params), cudaMemcpyHostToDevice));
 
     // The host needs to get a copy of the device pointer to the callback
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cufftCallbackLoadC hostCopyOfCallbackPtr;
 
     checkCudaErrors(cudaMemcpyFromSymbol(&hostCopyOfCallbackPtr, myOwnCallbackPtr, sizeof(hostCopyOfCallbackPtr)));
@@ -202,6 +209,7 @@ int runTest(int argc, char **argv)
 
     // Copy device memory to host
     Complex *h_convolved_signal = h_padded_signal;
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_convolved_signal, d_signal, mem_size, cudaMemcpyDeviceToHost));
 
     // Allocate host memory for the convolution result
@@ -217,6 +225,7 @@ int runTest(int argc, char **argv)
 
     // Destroy CUFFT context
     checkCudaErrors(cufftDestroy(plan));
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cufftDestroy(cb_plan));
 
     // cleanup memory
@@ -226,6 +235,7 @@ int runTest(int argc, char **argv)
     free(h_padded_signal);
     free(h_padded_filter_kernel);
     free(h_convolved_signal_ref);
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(d_signal));
     checkCudaErrors(cudaFree(d_filter_kernel));
     checkCudaErrors(cudaFree(d_params));

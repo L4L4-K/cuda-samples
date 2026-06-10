@@ -54,6 +54,7 @@ oddEvenMergeSortShared(uint *d_DstKey, uint *d_DstVal, uint *d_SrcKey, uint *d_S
     __shared__ uint s_val[SHARED_SIZE_LIMIT];
 
     // Offset to the beginning of subbatch and load data
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     d_SrcKey += blockIdx.x * SHARED_SIZE_LIMIT + threadIdx.x;
     d_SrcVal += blockIdx.x * SHARED_SIZE_LIMIT + threadIdx.x;
     d_DstKey += blockIdx.x * SHARED_SIZE_LIMIT + threadIdx.x;
@@ -76,7 +77,9 @@ oddEvenMergeSortShared(uint *d_DstKey, uint *d_DstVal, uint *d_SrcKey, uint *d_S
         }
 
         for (; stride > 0; stride >>= 1) {
+            // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
             cg::sync(cta);
+            // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             uint pos = 2 * threadIdx.x - (threadIdx.x & (stride - 1));
 
             if (offset >= stride)
@@ -84,7 +87,9 @@ oddEvenMergeSortShared(uint *d_DstKey, uint *d_DstVal, uint *d_SrcKey, uint *d_S
         }
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     d_DstKey[0]                       = s_key[threadIdx.x + 0];
     d_DstVal[0]                       = s_val[threadIdx.x + 0];
     d_DstKey[(SHARED_SIZE_LIMIT / 2)] = s_key[threadIdx.x + (SHARED_SIZE_LIMIT / 2)];
@@ -104,6 +109,7 @@ __global__ void oddEvenMergeGlobal(uint *d_DstKey,
                                    uint  stride,
                                    uint  dir)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     uint global_comparatorI = blockIdx.x * blockDim.x + threadIdx.x;
 
     // Odd-even merge
@@ -185,6 +191,7 @@ extern "C" void oddEvenMergeSort(uint *d_DstKey,
                 // stride = [SHARED_SIZE_LIMIT / 2 .. 1] seems to be impossible as there
                 // are dependencies between data elements crossing the SHARED_SIZE_LIMIT
                 // borders
+                // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
                 oddEvenMergeGlobal<<<(batchSize * arrayLength) / 512, 256>>>(
                     d_DstKey, d_DstVal, d_DstKey, d_DstVal, arrayLength, size, stride, dir);
             }

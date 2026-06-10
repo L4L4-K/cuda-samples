@@ -194,6 +194,7 @@ template <typename T_ELEM> struct gemmTestParams
 // template wrappers for cuda functions
 //==============================================================================
 
+// JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
 static inline cublasStatus_t cublasXgemm(cublasHandle_t    handle,
                                          cublasOperation_t transa,
                                          cublasOperation_t transb,
@@ -209,6 +210,7 @@ static inline cublasStatus_t cublasXgemm(cublasHandle_t    handle,
                                          float            *C,
                                          int               ldc)
 {
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     return cublasSgemm(handle, transa, transb, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
 }
 
@@ -227,6 +229,7 @@ static inline cublasStatus_t cublasXgemm(cublasHandle_t    handle,
                                          double           *C,
                                          int               ldc)
 {
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     return cublasDgemm(handle, transa, transb, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc);
 }
 
@@ -247,6 +250,7 @@ static inline cublasStatus_t cublasXgemmBatched(cublasHandle_t    handle,
                                                 int               batchCount)
 {
 #if CUDART_VERSION >= 4010
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     return cublasSgemmBatched(
         handle, transa, transb, m, n, k, alpha, Aarray, lda, Barray, ldb, beta, Carray, ldc, batchCount);
 #else
@@ -271,6 +275,7 @@ static inline cublasStatus_t cublasXgemmBatched(cublasHandle_t    handle,
                                                 int               batchCount)
 {
 #if CUDART_VERSION >= 4010
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     return cublasDgemmBatched(
         handle, transa, transb, m, n, k, alpha, Aarray, lda, Barray, ldb, beta, Carray, ldc, batchCount);
 #else
@@ -395,6 +400,7 @@ template <typename T_ELEM> void fillupMatrixDebug(T_ELEM *A, int lda, int rows, 
 }
 
 template <typename T_ELEM>
+// JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
 int test_gemm_loop(struct gemmOpts &opts, float err, double max_relative_error, cublasHandle_t handle)
 {
     struct gemmTestParams<T_ELEM> params;
@@ -453,6 +459,7 @@ int test_gemm_loop(struct gemmOpts &opts, float err, double max_relative_error, 
 
     // For batched processing we need those arrays on the device
     if (opts.test_method == tmBatched) {
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         cudaError_t err1 = cudaMalloc((void **)&devPtrA_dev, opts.N * sizeof(*devPtrA));
         cudaError_t err2 = cudaMalloc((void **)&devPtrB_dev, opts.N * sizeof(*devPtrB));
         cudaError_t err3 = cudaMalloc((void **)&devPtrC_dev, opts.N * sizeof(*devPtrC));
@@ -485,6 +492,7 @@ int test_gemm_loop(struct gemmOpts &opts, float err, double max_relative_error, 
         return CUBLASTEST_FAILED;
     }
 
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     streamArray = (cudaStream_t *)malloc(opts.N * sizeof(cudaStream_t *));
 
     for (int i = 0; i < opts.N; i++) {
@@ -514,6 +522,7 @@ int test_gemm_loop(struct gemmOpts &opts, float err, double max_relative_error, 
         memset(B, 0xFF, matrixSizeB * sizeof(B[0]));
         fillupMatrix(B, rowsB, params.k, params.n, 121);
 
+        // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
         if (!cuEqual(params.beta, cuGet<T_ELEM>(0))) {
             fillupMatrix(C, rowsC, params.m, params.n);
         }
@@ -525,6 +534,7 @@ int test_gemm_loop(struct gemmOpts &opts, float err, double max_relative_error, 
         double flopsCoef = 2.0;
 
         for (int i = 0; i < opts.N; i++) {
+            // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
             status1 = cublasSetMatrix(rowsA, colsA, sizeof(A[0]), A, rowsA, devPtrA[i], rowsA);
             status2 = cublasSetMatrix(rowsB, colsB, sizeof(B[0]), B, rowsB, devPtrB[i], rowsB);
             status3 = cublasSetMatrix(rowsC, colsC, sizeof(C[0]), C, rowsC, devPtrC[i], rowsC);
@@ -539,6 +549,7 @@ int test_gemm_loop(struct gemmOpts &opts, float err, double max_relative_error, 
         start = second();
 
         if (opts.test_method == tmBatched) {
+            // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
             cublasSetStream(handle, streamArray[0]);
             status1 = cublasXgemmBatched(handle,
                                          params.transa,
@@ -570,6 +581,7 @@ int test_gemm_loop(struct gemmOpts &opts, float err, double max_relative_error, 
         }
         else {
             for (int i = 0; i < opts.N; i++) {
+                // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 cublasSetStream(handle, streamArray[i]);
                 status1 = cublasXgemm(handle,
                                       params.transa,
@@ -651,6 +663,7 @@ int main(int argc, char *argv[])
         return CUBLASTEST_FAILED;
     }
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cublasHandle_t handle;
 
     if (cublasCreate(&handle) != CUBLAS_STATUS_SUCCESS) {
@@ -727,6 +740,7 @@ int main(int argc, char *argv[])
         }
     }
 
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cublasDestroy(handle);
 
     printf("\nTest Summary\n");

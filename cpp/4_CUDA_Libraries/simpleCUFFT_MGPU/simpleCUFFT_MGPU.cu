@@ -151,6 +151,7 @@ int main(int argc, char **argv)
         PadData(h_signal, &h_padded_signal, SIGNAL_SIZE, h_filter_kernel, &h_padded_filter_kernel, FILTER_KERNEL_SIZE);
 
     // cufftCreate() - Create an empty plan
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cufftResult result;
     cufftHandle plan_input;
     checkCudaErrors(cufftCreate(&plan_input));
@@ -184,6 +185,7 @@ int main(int argc, char **argv)
     worksize = (size_t *)malloc(sizeof(size_t) * nGPUs);
 
     // cufftMakePlan1d() - Create the plan
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cufftMakePlan1d(plan_input, new_size, CUFFT_C2C, 1, worksize));
 
     // cufftXtMalloc() - Malloc data on multiple GPUs
@@ -222,6 +224,7 @@ int main(int argc, char **argv)
 
     // cufftXtExecDescriptorC2C() - Execute inverse  FFT on data on multiple GPUs
     printf("Transforming signal back cufftExecC2C\n");
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cufftXtExecDescriptorC2C(plan_input, d_out_signal, d_out_signal, CUFFT_INVERSE));
 
     // Create host pointer pointing to padded signal
@@ -231,6 +234,7 @@ int main(int argc, char **argv)
     Complex *h_convolved_signal_ref = (Complex *)malloc(sizeof(Complex) * SIGNAL_SIZE);
 
     // cufftXtMemcpy() - Copy data from multiple GPUs to host
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cufftXtMemcpy(plan_input, h_convolved_signal, d_out_signal, CUFFT_COPY_DEVICE_TO_HOST));
 
     // Convolve on the host
@@ -252,6 +256,7 @@ int main(int argc, char **argv)
     free(h_convolved_signal_ref);
 
     // cudaXtFree() - Free GPU memory
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cufftXtFree(d_signal));
     checkCudaErrors(cufftXtFree(d_filter_kernel));
     checkCudaErrors(cufftXtFree(d_out_signal));
@@ -335,6 +340,7 @@ void multiplyCoefficient(cudaLibXtDesc *d_signal, cudaLibXtDesc *d_filter_kernel
         checkCudaErrors(cudaSetDevice(device));
 
         // Perform GPU computations
+        // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         ComplexPointwiseMulAndScale<<<32, 256>>>((cufftComplex *)d_signal->descriptor->data[i],
                                                  (cufftComplex *)d_filter_kernel->descriptor->data[i],
                                                  int(d_signal->descriptor->size[i] / sizeof(cufftComplex)),

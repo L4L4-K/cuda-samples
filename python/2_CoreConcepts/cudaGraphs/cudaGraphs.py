@@ -52,6 +52,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "Utilities"))
 
 try:
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     import cupy as cp
     import numpy as np
     from cuda.core import Device, LaunchConfig, Program, ProgramOptions, launch
@@ -153,6 +154,7 @@ def run_pipeline_graph(stream, graph, n_iters):
     stream.sync()
     t0 = time.perf_counter()
     for _ in range(n_iters):
+        # JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         graph.launch(stream)
     stream.sync()
     return time.perf_counter() - t0
@@ -177,6 +179,7 @@ def main() -> int:
     parser.add_argument("--device", type=int, default=0, help="CUDA device id")
     args = parser.parse_args()
 
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     device = Device(args.device)
     device.set_current()
     print_gpu_info(device)
@@ -198,6 +201,7 @@ def main() -> int:
         kernels = (add_k, mul_k, sub_k)
 
         N = args.elements
+        # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
         rng = cp.random.default_rng(seed=0)
         a = rng.random(N, dtype=cp.float32)
         b = rng.random(N, dtype=cp.float32)
@@ -232,6 +236,7 @@ def main() -> int:
 
         run_pipeline_graph(stream, graph, n_iters=5)  # warm up
         t_graph = run_pipeline_graph(stream, graph, n_iters=args.iters)
+        # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
         assert cp.allclose(
             r3, expected, rtol=1e-5, atol=1e-5
         ), "Graph pipeline produced incorrect results"
@@ -243,13 +248,16 @@ def main() -> int:
             print(f"Graph speedup: {t_individual / t_graph:.2f}x")
 
         # Demonstrate that the graph replays against current buffer contents.
+        # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
         a[:] = cp.ones(N, dtype=cp.float32)
         b[:] = cp.full(N, 2.0, dtype=cp.float32)
         c[:] = cp.full(N, 3.0, dtype=cp.float32)
         device.sync()
         # r3 = (a + b) * c - a = (1 + 2) * 3 - 1 = 8
+        # JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         graph.launch(stream)
         stream.sync()
+        # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
         assert cp.allclose(r3, 8.0), "Graph replay with new data produced wrong result"
         print(
             "\nGraph replay on updated data verified (same graph, new buffer contents)"
@@ -263,6 +271,7 @@ def main() -> int:
         if graph_builder is not None:
             graph_builder.close()
         stream.close()
+        # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
         cp.cuda.Stream.null.use()
 
 

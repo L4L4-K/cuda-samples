@@ -134,6 +134,7 @@ int main(int argc, char **argv)
     // While CUDA kernels can't write to textures directly, this copy is
     // inevitable
     printf("Copying convolutionRowGPU() output back to the texture...\n");
+    // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
     sdkResetTimer(&hTimer);
     sdkStartTimer(&hTimer);
@@ -161,6 +162,7 @@ int main(int argc, char **argv)
            imageW * imageH * 1e-6 / (0.001 * gpuTime));
 
     printf("Reading back GPU results...\n");
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_OutputGPU, d_Output, imageW * imageH * sizeof(float), cudaMemcpyDeviceToHost));
 
     printf("Checking the results...\n");

@@ -139,6 +139,7 @@ int main(int argc, char *argv[])
 
         cudaDeviceInit(argc, (const char **)argv);
 
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         NppStreamContext nppStreamCtx;
         nppStreamCtx.hStream =
             0; // The NULL stream by default, set this to whatever your stream ID is if not the NULL stream.
@@ -160,6 +161,7 @@ int main(int argc, char *argv[])
         printf("CUDA Driver  Version: %d.%d\n", driverVersion / 1000, (driverVersion % 100) / 10);
         printf("CUDA Runtime Version: %d.%d\n\n", runtimeVersion / 1000, (runtimeVersion % 100) / 10);
 
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         cudaError = cudaDeviceGetAttribute(&nppStreamCtx.nCudaDevAttrComputeCapabilityMajor,
                                            cudaDevAttrComputeCapabilityMajor,
                                            nppStreamCtx.nCudaDeviceId);
@@ -177,6 +179,7 @@ int main(int argc, char *argv[])
 
         cudaDeviceProp oDeviceProperties;
 
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         cudaError = cudaGetDeviceProperties(&oDeviceProperties, nppStreamCtx.nCudaDeviceId);
 
         nppStreamCtx.nMultiProcessorCount         = oDeviceProperties.multiProcessorCount;
@@ -262,6 +265,7 @@ int main(int argc, char *argv[])
         unsigned char *pSrcData     = FreeImage_GetBits(pBitmap);
 
         int    nSrcPitchCUDA;
+        // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         Npp8u *pSrcImageCUDA = nppiMalloc_8u_C1(nImageWidth, nImageHeight, &nSrcPitchCUDA);
         NPP_ASSERT_NOT_NULL(pSrcImageCUDA);
         // copy image loaded via FreeImage to into CUDA device memory, i.e.
@@ -278,6 +282,7 @@ int main(int argc, char *argv[])
                                    (int)nImageHeight - (oMaskSize.height - 1)};
         // allocate result image memory
         int    nDstPitchCUDA;
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         Npp8u *pDstImageCUDA = nppiMalloc_8u_C1(oSizeROI.width, oSizeROI.height, &nDstPitchCUDA);
         NPP_ASSERT_NOT_NULL(pDstImageCUDA);
         NPP_CHECK_NPP(nppiFilterBox_8u_C1R_Ctx(pSrcImageCUDA,
@@ -295,6 +300,7 @@ int main(int argc, char *argv[])
         unsigned int   nResultPitch = FreeImage_GetPitch(pResultBitmap);
         unsigned char *pResultData  = FreeImage_GetBits(pResultBitmap);
 
+        // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         NPP_CHECK_CUDA(cudaMemcpy2D(pResultData,
                                     nResultPitch,
                                     pDstImageCUDA,
@@ -308,6 +314,7 @@ int main(int argc, char *argv[])
         NPP_ASSERT_MSG(bSuccess, "Failed to save result image.");
 
         // free nppiImage
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         nppiFree(pSrcImageCUDA);
         nppiFree(pDstImageCUDA);
 

@@ -187,6 +187,7 @@ __global__ void SobelShared(uchar4        *pSobelOriginal,
             tex2D<unsigned char>(tex, (float)(u + 4 * ib - RADIUS + 3), (float)(v - RADIUS));
     }
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.y < RADIUS * 2) {
         //
         // copy trailing RADIUS*2 rows of pixels into shared
@@ -210,6 +211,7 @@ __global__ void SobelShared(uchar4        *pSobelOriginal,
 
     u >>= 2; // index as uchar4 from here
     uchar4 *pSobel = (uchar4 *)(((char *)pSobelOriginal) + v * SobelPitch);
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     SharedIdx      = threadIdx.y * SharedPitch;
 
     blockFunction = blockFunction_table[blockOperation];
@@ -256,12 +258,14 @@ __global__ void SobelShared(uchar4        *pSobelOriginal,
         }
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 }
 
 __global__ void
 SobelCopyImage(Pixel *pSobelOriginal, unsigned int Pitch, int w, int h, float fscale, cudaTextureObject_t tex)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned char *pSobel = (unsigned char *)(((char *)pSobelOriginal) + blockIdx.x * Pitch);
 
     for (int i = threadIdx.x; i < w; i += blockDim.x) {
@@ -281,6 +285,7 @@ __global__ void SobelTex(Pixel              *pSobelOriginal,
                          pointFunction_t     pPointOperation,
                          cudaTextureObject_t tex)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned char *pSobel = (unsigned char *)(((char *)pSobelOriginal) + blockIdx.x * Pitch);
     unsigned char  tmp    = 0;
 
@@ -400,6 +405,7 @@ extern "C" void sobelFilter(Pixel                *odata,
         dim3 blocks =
             dim3(iw / (4 * BlockWidth) + (0 != iw % (4 * BlockWidth)), ih / threads.y + (0 != ih % threads.y));
         int SharedPitch = ~0x3f & (4 * (BlockWidth + 2 * RADIUS) + 0x3f);
+        // JP: この連続する anchor 群では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
         int sharedMem   = SharedPitch * (threads.y + 2 * RADIUS);
 
         // for the shared kernel, width must be divisible by 4

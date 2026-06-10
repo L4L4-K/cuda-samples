@@ -102,6 +102,7 @@ extern "C" void cuda_KNN(TColor *d_dst, int imageW, int imageH, float Noise, flo
 ////////////////////////////////////////////////////////////////////////////////
 __global__ void KNNdiag(TColor *dst, int imageW, int imageH, float Noise, float lerpC, cudaTextureObject_t texImage)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const int ix = blockDim.x * blockIdx.x + threadIdx.x;
     const int iy = blockDim.y * blockIdx.y + threadIdx.y;
     // Add half of a texel to always address exact texel centers
@@ -143,5 +144,6 @@ cuda_KNNdiag(TColor *d_dst, int imageW, int imageH, float Noise, float lerpC, cu
     dim3 threads(BLOCKDIM_X, BLOCKDIM_Y);
     dim3 grid(iDivUp(imageW, BLOCKDIM_X), iDivUp(imageH, BLOCKDIM_Y));
 
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     KNNdiag<<<grid, threads>>>(d_dst, imageW, imageH, Noise, lerpC, texImage);
 }

@@ -136,6 +136,7 @@ int main(int argc, char **argv)
 
     printf("Reading back GPU result...\n");
     // Read back GPU results to compare them to CPU results
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_C_GPU, d_C, RESULT_SZ, cudaMemcpyDeviceToHost));
 
     printf("Checking GPU results...\n");

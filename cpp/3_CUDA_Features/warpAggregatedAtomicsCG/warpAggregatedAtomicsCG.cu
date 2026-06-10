@@ -94,6 +94,7 @@ __global__ void
 mapToBuckets(const int *srcArr, int *indicesBuckets, int *bucketCounters, const int srcSize, const int numOfBuckets)
 {
 #if __CUDA_ARCH__ >= 700
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::grid_group grid = cg::this_grid();
 
     for (int i = grid.thread_rank(); i < srcSize; i += grid.size()) {
@@ -176,6 +177,7 @@ __global__ void calculateMaxInEachBuckets(const int *srcArr,
                                           const int  numOfBuckets)
 {
 #if __CUDA_ARCH__ >= 700
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::grid_group grid = cg::this_grid();
 
     for (int i = grid.thread_rank(); i < srcSize; i += grid.size()) {
@@ -202,17 +204,21 @@ int calculateMaxInBuckets(int *h_srcArr, int *d_srcArr, int numOfBuckets)
         h_valueInBuckets[i] = rand();
     }
 
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc(&d_valueInBuckets, sizeof(int) * NUM_ELEMS));
     checkCudaErrors(cudaMalloc(&d_bucketsMax, sizeof(int) * numOfBuckets));
 
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemset(d_bucketsMax, 0, sizeof(int) * numOfBuckets));
     checkCudaErrors(cudaMemcpy(d_valueInBuckets, h_valueInBuckets, sizeof(int) * NUM_ELEMS, cudaMemcpyHostToDevice));
 
     dim3 dimBlock(NUM_THREADS_PER_BLOCK, 1, 1);
     dim3 dimGrid((NUM_ELEMS / NUM_THREADS_PER_BLOCK), 1, 1);
 
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     calculateMaxInEachBuckets<<<dimGrid, dimBlock>>>(d_srcArr, d_valueInBuckets, d_bucketsMax, NUM_ELEMS, numOfBuckets);
 
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_bucketsMax, d_bucketsMax, sizeof(int) * numOfBuckets, cudaMemcpyDeviceToHost));
 
     for (int i = 0; i < NUM_ELEMS; i++) {
@@ -264,18 +270,22 @@ int main(int argc, char **argv)
 
     int devId = findCudaDevice(argc, (const char **)argv);
 
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc(&d_data_to_filter, sizeof(int) * NUM_ELEMS));
     checkCudaErrors(cudaMalloc(&d_filtered_data, sizeof(int) * NUM_ELEMS));
     checkCudaErrors(cudaMalloc(&d_nres, sizeof(int)));
 
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(d_data_to_filter, data_to_filter, sizeof(int) * NUM_ELEMS, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemset(d_nres, 0, sizeof(int)));
 
     dim3 dimBlock(NUM_THREADS_PER_BLOCK, 1, 1);
     dim3 dimGrid((NUM_ELEMS / NUM_THREADS_PER_BLOCK) + 1, 1, 1);
 
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     filter_arr<<<dimGrid, dimBlock>>>(d_filtered_data, d_nres, d_data_to_filter, NUM_ELEMS);
 
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(&nres, d_nres, sizeof(int), cudaMemcpyDeviceToHost));
 
     filtered_data = reinterpret_cast<int *>(malloc(sizeof(int) * nres));
@@ -310,6 +320,7 @@ int main(int argc, char **argv)
                ? "PASSED"
                : "FAILED");
 
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(d_data_to_filter));
     checkCudaErrors(cudaFree(d_filtered_data));
     checkCudaErrors(cudaFree(d_nres));

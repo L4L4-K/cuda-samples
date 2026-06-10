@@ -198,6 +198,7 @@ template <class TData> int runTest(int packedElementSize, int memory_size)
         getLastCudaError("testKernel() execution failed\n");
     }
 
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
     sdkStopTimer(&hTimer);
     double gpuTime = sdkGetTimerValue(&hTimer) / NUM_ITERATIONS;
@@ -206,6 +207,7 @@ template <class TData> int runTest(int packedElementSize, int memory_size)
            (double)totalMemSizeAligned / (gpuTime * 0.001 * 1073741824.0));
 
     // Read back GPU results and run validation
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_odataGPU, d_odata, memory_size, cudaMemcpyDeviceToHost));
     int flag = testCPU((TData *)h_odataGPU, (TData *)h_idataCPU, numElements, packedElementSize);
 
@@ -259,6 +261,7 @@ int main(int argc, char **argv)
     }
 
     printf("Uploading input data to GPU memory...\n");
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(d_idata, h_idataCPU, MemorySize, cudaMemcpyHostToDevice));
 
     printf("Testing misaligned types...\n");

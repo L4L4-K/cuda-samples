@@ -102,9 +102,10 @@ __global__ void shared_tile_transpose_kernel(InTensor in, OutTensor out)
     if (r < static_cast<int>(in.extent(0)) && c < static_cast<int>(in.extent(1))) {
         smem(tr, tc) = in(r, c);
     }
-    // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const int r_out = blockIdx.x * TILE + tr;
     const int c_out = blockIdx.y * TILE + tc;
     if (r_out < static_cast<int>(out.extent(0)) && c_out < static_cast<int>(out.extent(1))) {
@@ -176,6 +177,7 @@ int main(int argc, char **argv)
     checkCudaErrors(cudaDeviceSynchronize());
 
     std::vector<float> scaled(nelem);
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(scaled.data(), d_in, nelem * sizeof(float), cudaMemcpyDeviceToHost));
     bool scale_ok = true;
     for (int r = 0; r < ROWS && scale_ok; ++r) {
@@ -200,11 +202,14 @@ int main(int argc, char **argv)
 
     dim3 tile_block(TILE, TILE);
     dim3 tile_grid((COLS + TILE - 1) / TILE, (ROWS + TILE - 1) / TILE);
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     shared_tile_transpose_kernel<<<tile_grid, tile_block>>>(in_md_const, out_md_rw);
     checkCudaErrors(cudaGetLastError());
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
 
     std::vector<float> transposed(nelem);
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(transposed.data(), d_out, nelem * sizeof(float), cudaMemcpyDeviceToHost));
     bool tp_ok = true;
     for (int r = 0; r < ROWS && tp_ok; ++r) {

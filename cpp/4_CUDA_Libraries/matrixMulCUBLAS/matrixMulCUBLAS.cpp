@@ -272,6 +272,7 @@ int matrixMultiply(int argc, char **argv, int devID, sMatrixSize &matrix_size)
         checkCudaErrors(cublasCreate(&handle));
 
         // Perform warmup operation with cublas
+        // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         checkCudaErrors(cublasSgemm(handle,
                                     CUBLAS_OP_N,
                                     CUBLAS_OP_N,
@@ -288,6 +289,7 @@ int matrixMultiply(int argc, char **argv, int devID, sMatrixSize &matrix_size)
                                     matrix_size.uiWB));
 
         // Allocate CUDA events that we'll use for timing
+        // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         checkCudaErrors(cudaEventCreate(&start));
         checkCudaErrors(cudaEventCreate(&stop));
 
@@ -297,6 +299,7 @@ int matrixMultiply(int argc, char **argv, int devID, sMatrixSize &matrix_size)
         for (int j = 0; j < nIter; j++) {
             // note cublas is column primary!
             // need to transpose the order
+            // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
             checkCudaErrors(cublasSgemm(handle,
                                         CUBLAS_OP_N,
                                         CUBLAS_OP_N,
@@ -316,6 +319,7 @@ int matrixMultiply(int argc, char **argv, int devID, sMatrixSize &matrix_size)
         printf("done.\n");
 
         // Record the stop event
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         checkCudaErrors(cudaEventRecord(stop, NULL));
 
         // Wait for the stop event to complete
@@ -335,9 +339,11 @@ int matrixMultiply(int argc, char **argv, int devID, sMatrixSize &matrix_size)
                flopsPerMatrixMul);
 
         // copy result from device to host
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemcpy(h_CUBLAS, d_C, mem_size_C, cudaMemcpyDeviceToHost));
 
         // Destroy the handle
+        // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         checkCudaErrors(cublasDestroy(handle));
     }
 
@@ -366,6 +372,7 @@ int matrixMultiply(int argc, char **argv, int devID, sMatrixSize &matrix_size)
     free(h_B);
     free(h_C);
     free(reference);
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(d_A));
     checkCudaErrors(cudaFree(d_B));
     checkCudaErrors(cudaFree(d_C));

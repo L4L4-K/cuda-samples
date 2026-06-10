@@ -166,6 +166,7 @@ int main(int argc, char **argv)
         getLastCudaError("BlackScholesGPU() execution failed\n");
     }
 
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
     sdkStopTimer(&hTimer);
     gpuTime = sdkGetTimerValue(&hTimer) / NUM_ITERATIONS;
@@ -186,6 +187,7 @@ int main(int argc, char **argv)
 
     printf("\nReading back GPU results...\n");
     // Read back GPU results to compare them to CPU results
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_CallResultGPU, d_CallResult, OPT_SZ, cudaMemcpyDeviceToHost));
     checkCudaErrors(cudaMemcpy(h_PutResultGPU, d_PutResult, OPT_SZ, cudaMemcpyDeviceToHost));
 

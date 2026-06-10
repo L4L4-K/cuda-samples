@@ -138,6 +138,7 @@ int main(int argc, char **argv)
         printf("\nValidating GPU results...\n");
         printf(" ...reading back GPU results\n");
         checkCudaErrors(
+            // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
             cudaMemcpy(h_HistogramGPU, d_Histogram, HISTOGRAM64_BIN_COUNT * sizeof(uint), cudaMemcpyDeviceToHost));
 
         printf(" ...histogram64CPU()\n");
@@ -165,6 +166,7 @@ int main(int argc, char **argv)
         for (int iter = -1; iter < numRuns; iter++) {
             // iter == -1 -- warmup iteration
             if (iter == 0) {
+                // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
                 checkCudaErrors(cudaDeviceSynchronize());
                 sdkResetTimer(&hTimer);
                 sdkStartTimer(&hTimer);
@@ -190,6 +192,7 @@ int main(int argc, char **argv)
         printf("\nValidating GPU results...\n");
         printf(" ...reading back GPU results\n");
         checkCudaErrors(
+            // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
             cudaMemcpy(h_HistogramGPU, d_Histogram, HISTOGRAM256_BIN_COUNT * sizeof(uint), cudaMemcpyDeviceToHost));
 
         printf(" ...histogram256CPU()\n");

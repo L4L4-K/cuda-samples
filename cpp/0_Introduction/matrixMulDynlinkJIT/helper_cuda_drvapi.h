@@ -59,6 +59,7 @@ inline void __checkCudaErrors(CUresult err, const char *file, const int line)
                 exit(EXIT_FAILURE);
             }
         }
+        // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
         cuGetErrorString(err, &errorStr);
         fprintf(stderr,
                 "checkCudaErrors() Driver API error = %04d \"%s\" from file <%s>, "
@@ -75,6 +76,7 @@ inline void __checkCudaErrors(CUresult err, const char *file, const int line)
 // This function wraps the CUDA Driver API into a template function
 template <class T> inline void getCudaAttribute(T *attribute, CUdevice_attribute device_attribute, int device)
 {
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuDeviceGetAttribute(attribute, device_attribute, device));
 }
 #endif
@@ -136,6 +138,7 @@ inline int gpuDeviceInitDRV(int ARGC, const char **ARGV)
 {
     int cuDevice    = 0;
     int deviceCount = 0;
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuInit(0, __CUDA_API_VERSION));
 
     checkCudaErrors(cuDeviceGetCount(&deviceCount));
@@ -162,6 +165,7 @@ inline int gpuDeviceInitDRV(int ARGC, const char **ARGV)
 
     checkCudaErrors(cuDeviceGet(&cuDevice, dev));
     char name[100];
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuDeviceGetName(name, 100, cuDevice));
 
     int computeMode;
@@ -184,6 +188,7 @@ inline int gpuDeviceInitDRV(int ARGC, const char **ARGV)
 // This function returns the best GPU based on performance
 inline int gpuGetMaxGflopsDeviceIdDRV()
 {
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     CUdevice           current_device   = 0;
     CUdevice           max_perf_device  = 0;
     int                device_count     = 0;
@@ -195,6 +200,7 @@ inline int gpuGetMaxGflopsDeviceIdDRV()
     int                clockRate;
     int                devices_prohibited = 0;
 
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     cuInit(0, __CUDA_API_VERSION);
     checkCudaErrors(cuDeviceGetCount(&device_count));
 
@@ -249,6 +255,7 @@ inline int gpuGetMaxGflopsDeviceIdDRV()
 }
 
 // General initialization call to pick the best CUDA Device
+// JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
 inline CUdevice findCudaDeviceDRV(int argc, const char **argv)
 {
     CUdevice cuDevice;
@@ -268,6 +275,7 @@ inline CUdevice findCudaDeviceDRV(int argc, const char **argv)
         char name[100];
         devID = gpuGetMaxGflopsDeviceIdDRV();
         checkCudaErrors(cuDeviceGet(&cuDevice, devID));
+        // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
         cuDeviceGetName(name, 100, cuDevice);
         printf("> Using CUDA Device [%d]: %s\n", devID, name);
     }
@@ -277,6 +285,7 @@ inline CUdevice findCudaDeviceDRV(int argc, const char **argv)
     return cuDevice;
 }
 
+// JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
 inline CUdevice findIntegratedGPUDrv()
 {
     CUdevice current_device     = 0;
@@ -305,6 +314,7 @@ inline CUdevice findIntegratedGPUDrv()
             char deviceName[256];
             checkCudaErrors(cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, current_device));
             checkCudaErrors(cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, current_device));
+            // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
             checkCudaErrors(cuDeviceGetName(deviceName, 256, current_device));
             printf("GPU Device %d: \"%s\" with compute capability %d.%d\n\n", current_device, deviceName, major, minor);
 
@@ -328,6 +338,7 @@ inline CUdevice findIntegratedGPUDrv()
 // General check for CUDA GPU SM Capabilities
 inline bool checkCudaCapabilitiesDRV(int major_version, int minor_version, int devID)
 {
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     CUdevice cuDevice;
     char     name[256];
     int      major = 0, minor = 0;

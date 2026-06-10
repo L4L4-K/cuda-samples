@@ -366,6 +366,7 @@ extern "C" __global__ void multiGpuConjugateGradient(int            *I,
         x[i] = 0.0;
     }
 
+    // JP: この連続する anchor 群では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(grid);
 
     gpuSpMV(I, J, val, nnz, N, alpha, x, Ax, peer_group);
@@ -409,6 +410,7 @@ extern "C" __global__ void multiGpuConjugateGradient(int            *I,
 
         gpuDotProduct(p, Ax, N, cta, peer_group);
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(grid);
 
         if (grid.thread_rank() == 0) {
@@ -437,6 +439,7 @@ extern "C" __global__ void multiGpuConjugateGradient(int            *I,
 
         gpuDotProduct(r, r, N, cta, peer_group);
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(grid);
 
         if (grid.thread_rank() == 0) {
@@ -593,6 +596,7 @@ int main(int argc, char **argv)
     cudaMemLocation deviceLoc;
     deviceLoc.type = cudaMemLocationTypeDevice;
     deviceLoc.id   = 0; // Device location with initial device 0
+    // JP: この連続する anchor 群では Unified Memory allocation/prefetch/advice です。migration、host/device visibility、同期位置 を確認します。
     checkCudaErrors(cudaMemAdvise(I, sizeof(int) * (N + 1), cudaMemAdviseSetReadMostly, deviceLoc));
     checkCudaErrors(cudaMemAdvise(J, sizeof(int) * nz, cudaMemAdviseSetReadMostly, deviceLoc));
     checkCudaErrors(cudaMemAdvise(val, sizeof(float) * nz, cudaMemAdviseSetReadMostly, deviceLoc));
@@ -607,6 +611,7 @@ int main(int argc, char **argv)
 
     // temp memory for ConjugateGradient
     checkCudaErrors(cudaMallocManaged((void **)&r, N * sizeof(float)));
+    // JP: この連続する anchor 群では Unified Memory allocation/prefetch/advice です。migration、host/device visibility、同期位置 を確認します。
     checkCudaErrors(cudaMallocManaged((void **)&p, N * sizeof(float)));
     checkCudaErrors(cudaMallocManaged((void **)&Ax, N * sizeof(float)));
 
@@ -650,6 +655,7 @@ int main(int argc, char **argv)
     deviceId               = bestFitDeviceIds.begin();
     while (deviceId != bestFitDeviceIds.end()) {
         checkCudaErrors(cudaSetDevice(*deviceId));
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         checkCudaErrors(cudaStreamCreate(&nStreams[device_count]));
 
         int perGPUIter = N / (totalThreadsPerGPU * kNumGpusRequired);
@@ -662,6 +668,7 @@ int main(int argc, char **argv)
         cudaMemLocation deviceLoc;
         deviceLoc.type = cudaMemLocationTypeDevice;
         deviceLoc.id   = *deviceId;
+        // JP: この連続する anchor 群では Unified Memory allocation/prefetch/advice です。migration、host/device visibility、同期位置 を確認します。
         checkCudaErrors(cudaMemPrefetchAsync(I, sizeof(int) * N, deviceLoc, 0, nStreams[device_count]));
         checkCudaErrors(cudaMemPrefetchAsync(val, sizeof(float) * nz, deviceLoc, 0, nStreams[device_count]));
         checkCudaErrors(cudaMemPrefetchAsync(J, sizeof(float) * nz, deviceLoc, 0, nStreams[device_count]));
@@ -760,16 +767,19 @@ int main(int argc, char **argv)
     device_count = 0;
     while (deviceId != bestFitDeviceIds.end()) {
         checkCudaErrors(cudaSetDevice(*deviceId));
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaStreamSynchronize(nStreams[device_count++]));
         deviceId++;
     }
 
     cudaMemLocation hostLoc;
     hostLoc.type = cudaMemLocationTypeHost;
+    // JP: この連続する anchor 群では Unified Memory allocation/prefetch/advice です。migration、host/device visibility、同期位置 を確認します。
     checkCudaErrors(cudaMemPrefetchAsync(x, sizeof(float) * N, hostLoc, 0));
     checkCudaErrors(cudaMemPrefetchAsync(dot_result, sizeof(double), hostLoc, 0));
     // Ensure the async prefetch of x/dot_result on the null stream completes before
     // CPU access. cudaStreamSynchronize only covers the kernel streams, not the null stream.
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
 
     r1 = (float)*dot_result;

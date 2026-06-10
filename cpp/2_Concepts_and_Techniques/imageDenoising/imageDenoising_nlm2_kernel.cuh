@@ -151,11 +151,14 @@ extern "C" void cuda_NLM2(TColor *d_dst, int imageW, int imageH, float Noise, fl
 __global__ void NLM2diag(TColor *dst, int imageW, int imageH, float Noise, float LerpC, cudaTextureObject_t texImage)
 {
     // Handle to thread block group
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta = cg::this_thread_block();
 
     // Weights cache
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ float fWeights[BLOCKDIM_X * BLOCKDIM_Y];
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const int ix = blockDim.x * blockIdx.x + threadIdx.x;
     const int iy = blockDim.y * blockIdx.y + threadIdx.y;
     // Add half of a texel to always address exact texel centers
@@ -173,6 +176,7 @@ __global__ void NLM2diag(TColor *dst, int imageW, int imageH, float Noise, float
                 weight += vecLen(tex2D<float4>(texImage, cx + m, cy + n), tex2D<float4>(texImage, x + m, y + n));
 
         // Geometric distance from current texel to the center of NLM window
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         float dist = (threadIdx.x - NLM_WINDOW_RADIUS) * (threadIdx.x - NLM_WINDOW_RADIUS)
                    + (threadIdx.y - NLM_WINDOW_RADIUS) * (threadIdx.y - NLM_WINDOW_RADIUS);
 
@@ -182,6 +186,7 @@ __global__ void NLM2diag(TColor *dst, int imageW, int imageH, float Noise, float
         // Write the result to shared memory
         fWeights[threadIdx.y * BLOCKDIM_X + threadIdx.x] = weight;
         // Wait until all the weights are ready
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         // Normalized counter for the NLM weight threshold
@@ -214,5 +219,6 @@ cuda_NLM2diag(TColor *d_dst, int imageW, int imageH, float Noise, float LerpC, c
     dim3 threads(BLOCKDIM_X, BLOCKDIM_Y);
     dim3 grid(iDivUp(imageW, BLOCKDIM_X), iDivUp(imageH, BLOCKDIM_Y));
 
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     NLM2diag<<<grid, threads>>>(d_dst, imageW, imageH, Noise, LerpC, texImage);
 }

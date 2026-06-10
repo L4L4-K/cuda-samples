@@ -88,17 +88,19 @@ __global__ void shfl_scan_test(int *data, int width, int *partial_sums = NULL)
     // next sum the largest values for each warp
 
     // write the sum of the warp to smem
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x % warpSize == warpSize - 1) {
         sums[warp_id] = value;
     }
 
-    // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
 
     //
     // scan sum the warp sums
     // the same shfl scan operation, but performed on warp sums
     //
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (warp_id == 0 && lane_id < (blockDim.x / warpSize)) {
         int warp_sum = sums[lane_id];
 
@@ -113,6 +115,7 @@ __global__ void shfl_scan_test(int *data, int width, int *partial_sums = NULL)
         sums[lane_id] = warp_sum;
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
 
     // perform a uniform add across warps in the block
@@ -129,6 +132,7 @@ __global__ void shfl_scan_test(int *data, int width, int *partial_sums = NULL)
     data[id] = value;
 
     // last thread has sum, write write out the block's sum
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (partial_sums != NULL && threadIdx.x == blockDim.x - 1) {
         partial_sums[blockIdx.x] = value;
     }
@@ -137,7 +141,9 @@ __global__ void shfl_scan_test(int *data, int width, int *partial_sums = NULL)
 // Uniform add: add partial sums array
 __global__ void uniform_add(int *data, int *partial_sums, int len)
 {
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ int buf;
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int            id = ((blockIdx.x * blockDim.x) + threadIdx.x);
 
     if (id > len)
@@ -147,6 +153,7 @@ __global__ void uniform_add(int *data, int *partial_sums, int len)
         buf = partial_sums[blockIdx.x];
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
     data[id] += buf;
 }
@@ -289,10 +296,12 @@ bool shuffle_simple_test(int argc, char **argv)
     shfl_scan_test<<<p_gridSize, p_blockSize, shmem_sz>>>(d_partial_sums, 32);
     uniform_add<<<gridSize - 1, blockSize>>>(d_data + blockSize, d_partial_sums, n_elements);
     checkCudaErrors(cudaEventRecord(stop, 0));
+    // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaEventSynchronize(stop));
     checkCudaErrors(cudaEventElapsedTime(&inc, start, stop));
     et += inc;
 
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_result, d_data, sz, cudaMemcpyDeviceToHost));
     checkCudaErrors(cudaMemcpy(h_partial_sums, d_partial_sums, partial_sz, cudaMemcpyDeviceToHost));
 
@@ -329,6 +338,7 @@ bool shuffle_integral_image_test()
 
     printf("\nComputing Integral Image Test on size %d x %d synthetic data\n", w, h);
     printf("---------------------------------------------------\n");
+    // JP: この anchor では pinned host memory の登録/確保/解放です。async transfer や overlap の条件と lifetime を確認します。
     checkCudaErrors(cudaMallocHost(reinterpret_cast<void **>(&h_image), sz));
     // fill test "image" with synthetic 1's data
     memset(h_image, 0, sz);
@@ -339,11 +349,14 @@ bool shuffle_integral_image_test()
     int gridSize = h;
 
     // Create a synthetic image for testing
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&d_data), sz));
     checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&d_integral_image), n_elements * sizeof(int) * 4));
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemset(d_data, 1, sz));
     checkCudaErrors(cudaMemset(d_integral_image, 0, sz));
 
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
@@ -352,14 +365,17 @@ bool shuffle_integral_image_test()
 
     // Execute scan line prefix sum kernel, and time it
     cudaEventRecord(start);
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     shfl_intimage_rows<<<gridSize, blockSize>>>(reinterpret_cast<uint4 *>(d_data),
                                                 reinterpret_cast<uint4 *>(d_integral_image));
+    // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     cudaEventRecord(stop);
     checkCudaErrors(cudaEventSynchronize(stop));
     checkCudaErrors(cudaEventElapsedTime(&et, start, stop));
     printf("Method: Fast  Time (GPU Timer): %f ms ", et);
 
     // verify the scan line results
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_image, d_integral_image, sz, cudaMemcpyDeviceToHost));
     err = verifyDataRowSums(h_image, w, h);
     printf("Diff = %d\n", err);
@@ -368,20 +384,25 @@ bool shuffle_integral_image_test()
     dim3 blockSz(32, 8);
     dim3 testGrid(w / blockSz.x, 1);
 
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaEventRecord(start);
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     shfl_vertical_shfl<<<testGrid, blockSz>>>((unsigned int *)d_integral_image, w, h);
+    // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     cudaEventRecord(stop);
     checkCudaErrors(cudaEventSynchronize(stop));
     checkCudaErrors(cudaEventElapsedTime(&et, start, stop));
     printf("Method: Vertical Scan  Time (GPU Timer): %f ms ", et);
 
     // Verify the column results
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_image, d_integral_image, sz, cudaMemcpyDeviceToHost));
     printf("\n");
 
     int finalSum = h_image[w * h - 1];
     printf("CheckSum: %d, (expect %dx%d=%d)\n", finalSum, w, h, w * h);
 
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(d_data));
     checkCudaErrors(cudaFree(d_integral_image));
     checkCudaErrors(cudaFreeHost(h_image));

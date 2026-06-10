@@ -456,6 +456,7 @@ private:
 
         // Copy graph to the device memory
         checkCudaErrors(
+            // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
             cudaMemcpy(dVertices_.get(), &(graph.vertices[0]), sizeof(uint) * verticesCount_, cudaMemcpyHostToDevice));
         checkCudaErrors(
             cudaMemcpy(dEdges_.get(), &(graph.edges[0]), sizeof(uint) * edgesCount_, cudaMemcpyHostToDevice));
@@ -528,6 +529,7 @@ private:
         // by the minimal edge.
         thrust::device_ptr<uint> dSuccessors = pools.uintVertices.get();
 
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         getSuccessors<<<gridDimsForVertices, blockDimsForVertices, 0>>>(
             dVertices_.get(), dMinScannedEdges.get(), dSuccessors.get(), verticesCount_, edgesCount_);
         getLastCudaError("getSuccessors launch failed.");
@@ -537,6 +539,7 @@ private:
 
         // Remove cyclic successor dependencies. Note that there can be only
         // two vertices in a cycle. See [1] for details.
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         removeCycles<<<gridDimsForVertices, blockDimsForVertices, 0>>>(dSuccessors.get(), verticesCount_);
         getLastCudaError("removeCycles launch failed.");
 
@@ -547,6 +550,7 @@ private:
 
         thrust::inclusive_scan(dEdgesFlags, dEdgesFlags + edgesCount_, dStartpoints);
 
+        // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         addScalar<<<gridDimsForEdges, blockDimsForEdges, 0>>>(dStartpoints.get(), -1, edgesCount_);
         getLastCudaError("addScalar launch failed.");
 
@@ -580,6 +584,7 @@ private:
         thrust::adjacent_difference(
             dSuccessors, dSuccessors + verticesCount_, dVerticesFlags_, thrust::not_equal_to<uint>());
 
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         cudaMemset((void *)dVerticesFlags_.get(), 0, sizeof(uint));
 
         // Assign new indices to the successors (the indices of vertices
@@ -592,6 +597,7 @@ private:
 
         // Now we can calculate number of resulting superpixels easily.
         uint newVerticesCount;
+        // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         cudaMemcpy(
             &newVerticesCount, (dNewVerticesIDs_ + verticesCount_ - 1).get(), sizeof(uint), cudaMemcpyDeviceToHost);
         ++newVerticesCount;
@@ -605,6 +611,7 @@ private:
         else if (newVerticesCount == 1) {
             thrust::device_ptr<uint> dDummyVerticesOffsets = pools.uintVertices.get();
 
+            // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
             cudaMemset((void *)dDummyVerticesOffsets.get(), 0, sizeof(uint));
 
             thrust::device_ptr<uint> dDummyVerticesIDs = pools.uintVertices.get();
@@ -619,6 +626,7 @@ private:
         // Calculate how old vertices IDs map to new vertices IDs.
         thrust::device_ptr<uint> dVerticesMapping = pools.uintVertices.get();
 
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         getVerticesMapping<<<gridDimsForVertices, blockDimsForVertices, 0>>>(
             dClusteredVerticesIDs.get(), dNewVerticesIDs_.get(), dVerticesMapping.get(), verticesCount_);
         getLastCudaError("getVerticesMapping launch failed.");
@@ -630,6 +638,7 @@ private:
         // Invalidate self-loops in the reduced graph (the graph
         // produced by merging all old vertices that have
         // the same successor).
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         invalidateLoops<<<gridDimsForEdges, blockDimsForEdges, 0>>>(
             dStartpoints.get(), dVerticesMapping.get(), dEdges_.get(), edgesCount_);
         getLastCudaError("invalidateLoops launch failed.");
@@ -640,6 +649,7 @@ private:
         thrust::device_ptr<uint> dNewStartpoints   = pools.uintEdges.get();
         thrust::device_ptr<uint> dSurvivedEdgesIDs = pools.uintEdges.get();
 
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         calculateEdgesInfo<<<gridDimsForEdges, blockDimsForEdges, 0>>>(dStartpoints.get(),
                                                                        dVerticesMapping.get(),
                                                                        dEdges_.get(),
@@ -673,6 +683,7 @@ private:
         thrust::adjacent_difference(
             dNewStartpoints, dNewStartpoints + edgesCount_, dEdgesFlags, thrust::not_equal_to<uint>());
 
+        // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         cudaMemset((void *)dEdgesFlags.get(), 0, sizeof(uint));
         cudaMemset((void *)dEdgesFlags.get(), 1, 1);
 
@@ -700,6 +711,7 @@ private:
         thrust::device_ptr<uint>  dNewEdges   = pools.uintEdges.get();
         thrust::device_ptr<float> dNewWeights = pools.floatEdges.get();
 
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         makeNewEdges<<<newGridDimsForEdges, newBlockDimsForEdges, 0>>>(dSurvivedEdgesIDs.get(),
                                                                        dVerticesMapping.get(),
                                                                        dEdges_.get(),

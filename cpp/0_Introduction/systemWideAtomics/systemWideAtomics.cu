@@ -322,6 +322,7 @@ int main(int argc, char **argv)
     }
     else {
         printf("CANNOT access pageable memory\n");
+        // JP: この anchor では Unified Memory allocation/prefetch/advice です。migration、host/device visibility、同期位置 を確認します。
         checkCudaErrors(cudaMallocManaged(&atom_arr, sizeof(int) * numData));
     }
 

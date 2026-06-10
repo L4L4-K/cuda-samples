@@ -60,6 +60,7 @@ bitonicSortSharedKernel(uint *d_DstKey, uint *d_DstVal, uint *d_SrcKey, uint *d_
     __shared__ uint s_val[SHARED_SIZE_LIMIT];
 
     // Offset to the beginning of subbatch and load data
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     d_SrcKey += blockIdx.x * SHARED_SIZE_LIMIT + threadIdx.x;
     d_SrcVal += blockIdx.x * SHARED_SIZE_LIMIT + threadIdx.x;
     d_DstKey += blockIdx.x * SHARED_SIZE_LIMIT + threadIdx.x;
@@ -84,13 +85,17 @@ bitonicSortSharedKernel(uint *d_DstKey, uint *d_DstVal, uint *d_SrcKey, uint *d_
     // ddd == sortDir for the last bitonic merge step
     {
         for (uint stride = arrayLength / 2; stride > 0; stride >>= 1) {
+            // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
             cg::sync(cta);
+            // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             uint pos = 2 * threadIdx.x - (threadIdx.x & (stride - 1));
             Comparator(s_key[pos + 0], s_val[pos + 0], s_key[pos + stride], s_val[pos + stride], sortDir);
         }
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     d_DstKey[0]                       = s_key[threadIdx.x + 0];
     d_DstVal[0]                       = s_val[threadIdx.x + 0];
     d_DstKey[(SHARED_SIZE_LIMIT / 2)] = s_key[threadIdx.x + (SHARED_SIZE_LIMIT / 2)];
@@ -180,11 +185,14 @@ __global__ void bitonicMergeElementaryIntervalsKernel(uint *d_DstKey,
                                                       uint  N)
 {
     // Handle to thread block group
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta = cg::this_thread_block();
+    // JP: この連続する anchor 群では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ uint  s_key[2 * SAMPLE_STRIDE];
     __shared__ uint  s_val[2 * SAMPLE_STRIDE];
     __shared__ uint  s_inf[2 * SAMPLE_STRIDE];
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const uint intervalI   = blockIdx.x & ((2 * stride) / SAMPLE_STRIDE - 1);
     const uint segmentBase = (blockIdx.x - intervalI) * SAMPLE_STRIDE;
     d_SrcKey += segmentBase;
@@ -193,8 +201,10 @@ __global__ void bitonicMergeElementaryIntervalsKernel(uint *d_DstKey,
     d_DstVal += segmentBase;
 
     // Set up threadblock-wide parameters
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ uint startSrcA, lenSrcA, startSrcB, lenSrcB, startDst;
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x == 0) {
         uint segmentElementsA = stride;
         uint segmentElementsB = umin(stride, N - segmentBase - stride);
@@ -216,8 +226,10 @@ __global__ void bitonicMergeElementaryIntervalsKernel(uint *d_DstKey,
     s_inf[threadIdx.x + SAMPLE_STRIDE] = 1;
 
     // Load input data
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x < lenSrcA) {
         s_key[threadIdx.x] = d_SrcKey[0 + startSrcA + threadIdx.x];
         s_val[threadIdx.x] = d_SrcVal[0 + startSrcA + threadIdx.x];
@@ -233,7 +245,9 @@ __global__ void bitonicMergeElementaryIntervalsKernel(uint *d_DstKey,
 
     //"Extended" bitonic merge
     for (uint stride = SAMPLE_STRIDE; stride > 0; stride >>= 1) {
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         uint pos = 2 * threadIdx.x - (threadIdx.x & (stride - 1));
         ComparatorExtended<sortDir>(s_key[pos + 0],
                                     s_val[pos + 0],
@@ -245,10 +259,12 @@ __global__ void bitonicMergeElementaryIntervalsKernel(uint *d_DstKey,
     }
 
     // Store sorted data
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
     d_DstKey += startDst;
     d_DstVal += startDst;
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x < lenSrcA) {
         d_DstKey[threadIdx.x] = s_key[threadIdx.x];
         d_DstVal[threadIdx.x] = s_val[threadIdx.x];
@@ -276,6 +292,7 @@ extern "C" void bitonicMergeElementaryIntervals(uint *d_DstKey,
 
     if (sortDir) {
         bitonicMergeElementaryIntervalsKernel<1U>
+            // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
             <<<mergePairs, SAMPLE_STRIDE>>>(d_DstKey, d_DstVal, d_SrcKey, d_SrcVal, d_LimitsA, d_LimitsB, stride, N);
         getLastCudaError("mergeElementaryIntervalsKernel<1> failed\n");
     }

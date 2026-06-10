@@ -159,6 +159,7 @@ void display()
 
     // execute filter, writing results to pbo
     unsigned int *d_result;
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsMapResources(1, &cuda_vbo_resource, 0));
     size_t num_bytes;
     checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&d_result, &num_bytes, cuda_vbo_resource));
@@ -212,6 +213,7 @@ void cleanup()
     if (!runBenchmark) {
         if (pbo) {
             // unregister this buffer object with CUDA
+            // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
             checkCudaErrors(cudaGraphicsUnregisterResource(cuda_vbo_resource));
             glDeleteBuffers(1, &pbo);
         }
@@ -299,6 +301,7 @@ void initCudaBuffers()
     unsigned int size = width * height * sizeof(unsigned int);
 
     // allocate device memory
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&d_img, size));
     checkCudaErrors(cudaMalloc((void **)&d_temp, size));
 
@@ -316,6 +319,7 @@ void initGLBuffers()
     glBufferData(GL_PIXEL_UNPACK_BUFFER_ARB, width * height * sizeof(GLubyte) * 4, h_img, GL_STREAM_DRAW_ARB);
 
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, 0);
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsGLRegisterBuffer(&cuda_vbo_resource, pbo, cudaGraphicsRegisterFlagsWriteDiscard));
 
     // create texture for display
@@ -359,6 +363,7 @@ void benchmark(int iterations)
     // allocate memory for result
     unsigned int *d_result;
     unsigned int  size = width * height * sizeof(unsigned int);
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&d_result, size));
 
     // warm-up
@@ -382,6 +387,7 @@ void benchmark(int iterations)
     printf("Processing time: %f (ms)\n", sdkGetTimerValue(&timer));
     printf("%.2f Mpixels/sec\n", (width * height * iterations / (sdkGetTimerValue(&timer) / 1000.0f)) / 1e6);
 
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(d_result));
 }
 
@@ -391,11 +397,13 @@ bool runSingleTest(const char *ref_file, const char *exec_path)
     int           nTotalErrors = 0;
     unsigned int *d_result;
     unsigned int  size = width * height * sizeof(unsigned int);
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&d_result, size));
 
     // warm-up
     gaussianFilterRGBA(d_img, d_result, d_temp, width, height, sigma, order, nthreads);
 
+    // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
     sdkStartTimer(&timer);
 
@@ -405,6 +413,7 @@ bool runSingleTest(const char *ref_file, const char *exec_path)
     sdkStopTimer(&timer);
 
     unsigned char *h_result = (unsigned char *)malloc(width * height * 4);
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_result, d_result, width * height * 4, cudaMemcpyDeviceToHost));
 
     char dump_file[1024];
@@ -419,6 +428,7 @@ bool runSingleTest(const char *ref_file, const char *exec_path)
     printf("Processing time: %f (ms)\n", sdkGetTimerValue(&timer));
     printf("%.2f Mpixels/sec\n", (width * height / (sdkGetTimerValue(&timer) / 1000.0f)) / 1e6);
 
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(d_result));
     free(h_result);
 

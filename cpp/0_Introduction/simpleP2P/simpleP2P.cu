@@ -190,6 +190,7 @@ int main(int argc, char **argv)
     }
 
     checkCudaErrors(cudaSetDevice(gpuid[0]));
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(g0, h0, buf_size, cudaMemcpyDefault));
 
     // Kernel launch configuration
@@ -217,12 +218,15 @@ int main(int argc, char **argv)
            gpuid[1],
            gpuid[0]);
     checkCudaErrors(cudaSetDevice(gpuid[0]));
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     SimpleKernel<<<blocks, threads>>>(g1, g0);
 
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
 
     // Copy data back to host and verify
     printf("Copy data back to host from GPU%d and verify results...\n", gpuid[0]);
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h0, g0, buf_size, cudaMemcpyDefault));
 
     int error_count = 0;

@@ -77,9 +77,12 @@ void initResultDataLargeMatrix(ResultDataLarge &result, const unsigned int mat_s
 
     // number of (thread) blocks of intervals with multiple eigenvalues after
     // the first iteration
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&result.g_num_blocks_mult, sizeof(unsigned int)));
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(result.g_num_blocks_mult, &zero, sizeof(unsigned int), cudaMemcpyHostToDevice));
 
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&result.g_left_one, mat_size_f));
     checkCudaErrors(cudaMalloc((void **)&result.g_right_one, mat_size_f));
     checkCudaErrors(cudaMalloc((void **)&result.g_pos_one, mat_size_ui));
@@ -89,6 +92,7 @@ void initResultDataLargeMatrix(ResultDataLarge &result, const unsigned int mat_s
     checkCudaErrors(cudaMalloc((void **)&result.g_left_count_mult, mat_size_ui));
     checkCudaErrors(cudaMalloc((void **)&result.g_right_count_mult, mat_size_ui));
 
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(result.g_left_one, tempf, mat_size_f, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(result.g_right_one, tempf, mat_size_f, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(result.g_pos_one, tempui, mat_size_ui, cudaMemcpyHostToDevice));
@@ -98,14 +102,22 @@ void initResultDataLargeMatrix(ResultDataLarge &result, const unsigned int mat_s
     checkCudaErrors(cudaMemcpy(result.g_left_count_mult, tempui, mat_size_ui, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(result.g_right_count_mult, tempui, mat_size_ui, cudaMemcpyHostToDevice));
 
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&result.g_blocks_mult, mat_size_ui));
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(result.g_blocks_mult, tempui, mat_size_ui, cudaMemcpyHostToDevice));
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&result.g_blocks_mult_sum, mat_size_ui));
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(result.g_blocks_mult_sum, tempui, mat_size_ui, cudaMemcpyHostToDevice));
 
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&result.g_lambda_mult, mat_size_f));
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(result.g_lambda_mult, tempf, mat_size_f, cudaMemcpyHostToDevice));
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&result.g_pos_mult, mat_size_ui));
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(result.g_pos_mult, tempf, mat_size_ui, cudaMemcpyHostToDevice));
 }
 
@@ -195,6 +207,7 @@ void computeEigenvaluesLargeMatrix(const InputData       &input,
         // get the number of intervals containing one eigenvalue after the first
         // processing step
         unsigned int num_one_intervals;
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemcpy(&num_one_intervals, result.g_num_one, sizeof(unsigned int), cudaMemcpyDeviceToHost));
 
         dim3 grid_onei;
@@ -208,6 +221,7 @@ void computeEigenvaluesLargeMatrix(const InputData       &input,
         // after the first processing step
         sdkStartTimer(&timer_step2_one);
 
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         bisectKernelLarge_OneIntervals<<<grid_onei, threads_onei>>>(input.g_a,
                                                                     input.g_b,
                                                                     mat_size,
@@ -218,6 +232,7 @@ void computeEigenvaluesLargeMatrix(const InputData       &input,
                                                                     precision);
 
         getLastCudaError("bisectKernelLarge_OneIntervals() FAILED.");
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaDeviceSynchronize());
         sdkStopTimer(&timer_step2_one);
 
@@ -229,6 +244,7 @@ void computeEigenvaluesLargeMatrix(const InputData       &input,
         // MAX_THREADS_BLOCK threads
         unsigned int num_blocks_mult = 0;
         checkCudaErrors(
+            // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
             cudaMemcpy(&num_blocks_mult, result.g_num_blocks_mult, sizeof(unsigned int), cudaMemcpyDeviceToHost));
 
         // setup the execution environment
@@ -237,6 +253,7 @@ void computeEigenvaluesLargeMatrix(const InputData       &input,
 
         sdkStartTimer(&timer_step2_mult);
 
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         bisectKernelLarge_MultIntervals<<<grid_mult, threads_mult>>>(input.g_a,
                                                                      input.g_b,
                                                                      mat_size,
@@ -251,6 +268,7 @@ void computeEigenvaluesLargeMatrix(const InputData       &input,
                                                                      precision);
 
         getLastCudaError("bisectKernelLarge_MultIntervals() FAILED.");
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaDeviceSynchronize());
         sdkStopTimer(&timer_step2_mult);
     }
@@ -291,6 +309,7 @@ bool processResultDataLargeMatrix(const InputData       &input,
     // copy data from intervals that contained more than one eigenvalue after
     // the first processing step
     float *lambda_mult = (float *)malloc(sizeof(float) * mat_size);
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(lambda_mult, result.g_lambda_mult, sizeof(float) * mat_size, cudaMemcpyDeviceToHost));
     unsigned int *pos_mult = (unsigned int *)malloc(sizeof(unsigned int) * mat_size);
     checkCudaErrors(cudaMemcpy(pos_mult, result.g_pos_mult, sizeof(unsigned int) * mat_size, cudaMemcpyDeviceToHost));
@@ -309,6 +328,7 @@ bool processResultDataLargeMatrix(const InputData       &input,
     float        *left_one  = (float *)malloc(mat_size_f);
     float        *right_one = (float *)malloc(mat_size_f);
     unsigned int *pos_one   = (unsigned int *)malloc(mat_size_ui);
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(left_one, result.g_left_one, mat_size_f, cudaMemcpyDeviceToHost));
     checkCudaErrors(cudaMemcpy(right_one, result.g_right_one, mat_size_f, cudaMemcpyDeviceToHost));
     checkCudaErrors(cudaMemcpy(pos_one, result.g_pos_one, mat_size_ui, cudaMemcpyDeviceToHost));
@@ -352,6 +372,7 @@ bool processResultDataLargeMatrix(const InputData       &input,
         // additional offset necessary
         float tolerance = 1.0e-5f + 5.0e-6f;
 
+        // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
         if (sdkCompareL2fe(reference, eigenvals, mat_size, tolerance) == true) {
             bCompareResult = true;
         }

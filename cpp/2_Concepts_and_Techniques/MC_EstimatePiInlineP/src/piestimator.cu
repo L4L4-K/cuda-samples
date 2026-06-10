@@ -61,6 +61,7 @@ __device__ unsigned int reduce_sum(unsigned int in, cg::thread_block cta)
 
     // Perform first level of reduction:
     // - Write to shared memory
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned int ltid = threadIdx.x;
 
     sdata[ltid] = in;
@@ -73,12 +74,14 @@ __device__ unsigned int reduce_sum(unsigned int in, cg::thread_block cta)
             sdata[ltid] += sdata[ltid + s];
         }
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
     }
 
     return sdata[0];
 }
 
+// JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
 __device__ inline void getPoint(float &x, float &y, curandState &state)
 {
     x = curand_uniform(&state);
@@ -95,6 +98,7 @@ template <typename Real>
 __global__ void computeValue(unsigned int *const results, curandState *const rngStates, const unsigned int numSims)
 {
     // Handle to thread block group
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta = cg::this_thread_block();
     // Determine thread ID
     unsigned int bid  = blockIdx.x;
@@ -102,6 +106,7 @@ __global__ void computeValue(unsigned int *const results, curandState *const rng
     unsigned int step = gridDim.x * blockDim.x;
 
     // Initialise the RNG
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     curandState localState = rngStates[tid];
 
     // Count the number of points which lie inside the unit quarter-circle
@@ -122,6 +127,7 @@ __global__ void computeValue(unsigned int *const results, curandState *const rng
     pointsInside = reduce_sum(pointsInside, cta);
 
     // Store the result
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x == 0) {
         results[bid] = pointsInside;
     }
@@ -233,6 +239,7 @@ template <typename Real> Real PiEstimator<Real>::operator()()
     // Allocate memory for result
     // Each thread block will produce one result
     unsigned int *d_results = 0;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     cudaResult              = cudaMalloc((void **)&d_results, grid.x * sizeof(unsigned int));
 
     if (cudaResult != cudaSuccess) {

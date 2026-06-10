@@ -73,6 +73,7 @@ __global__ void ifGraphKernelC(void) { printf("GPU: Hello from the GPU! The cond
 // Setup and launch the graph
 void simpleIfGraph(void)
 {
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     cudaGraph_t     graph;
     cudaGraphExec_t graphExec;
     cudaGraphNode_t kernelNode;
@@ -101,6 +102,7 @@ void simpleIfGraph(void)
     params.kernel.kernelParams                                                  = kernelArgs;
     kernelArgs[0]                                                               = &dPtr;
     kernelArgs[1]                                                               = &handle;
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphAddNode(&kernelNode, graph, NULL, NULL, 0, &params));
 
     cudaGraphNodeParams cParams = {cudaGraphNodeTypeConditional};
@@ -130,7 +132,9 @@ void simpleIfGraph(void)
     // Initialize device memory and launch the graph
     checkCudaErrors(cudaMemset(dPtr, 1, 1)); // Set dPtr to 1
     printf("Host: Launching graph with device memory set to 1\n");
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphLaunch(graphExec, 0));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
 
     // Cleanup
@@ -161,6 +165,7 @@ __global__ void doWhileEmptyKernel(void)
     return;
 }
 
+// JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
 __global__ void doWhileLoopKernel(char *dPtr, cudaGraphConditionalHandle handle)
 {
     if (--(*dPtr) == 0) {
@@ -177,6 +182,7 @@ void simpleDoWhileGraph(void)
 
     // Allocate a byte of device memory to use as input
     char *dPtr;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&dPtr, 1));
 
     printf("simpleDoWhileGraph: Building graph...\n");
@@ -204,19 +210,26 @@ void simpleDoWhileGraph(void)
     doWhileEmptyKernel<<<1, 1, 0, captureStream>>>();
     doWhileLoopKernel<<<1, 1, 0, captureStream>>>(dPtr, handle);
     checkCudaErrors(cudaStreamEndCapture(captureStream, nullptr));
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamDestroy(captureStream));
 
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphInstantiate(&graphExec, graph, NULL, NULL, 0));
 
     // Initialize device memory and launch the graph
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemset(dPtr, 10, 1)); // Set dPtr to 10
     printf("Host: Launching graph with loop counter set to 10\n");
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphLaunch(graphExec, 0));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
 
     // Cleanup
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphExecDestroy(graphExec));
     checkCudaErrors(cudaGraphDestroy(graph));
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(dPtr));
 
     printf("simpleDoWhileGraph: Complete\n\n");
@@ -241,6 +254,7 @@ void simpleDoWhileGraph(void)
  * initialize the conditional value.
  */
 
+// JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
 __global__ void capturedWhileKernel(char *dPtr, cudaGraphConditionalHandle handle)
 {
     printf("GPU: counter = %d\n", *dPtr);
@@ -258,18 +272,23 @@ __global__ void capturedWhileEmptyKernel(void)
 
 void capturedWhileGraph(void)
 {
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     cudaGraph_t     graph;
     cudaGraphExec_t graphExec;
 
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaStreamCaptureStatus status;
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     const cudaGraphNode_t  *dependencies;
     size_t                  numDependencies;
 
     // Allocate a byte of device memory to use as input
     char *dPtr;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&dPtr, 1));
 
     printf("capturedWhileGraph: Building graph...\n");
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaStream_t captureStream;
     checkCudaErrors(cudaStreamCreate(&captureStream));
 
@@ -280,17 +299,21 @@ void capturedWhileGraph(void)
         cudaStreamGetCaptureInfo(captureStream, &status, NULL, &graph, &dependencies, NULL, &numDependencies));
 
     // Create the conditional handle
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     cudaGraphConditionalHandle handle;
     checkCudaErrors(cudaGraphConditionalHandleCreate(&handle, graph));
 
     // Insert kernel node A
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     capturedWhileKernel<<<1, 1, 0, captureStream>>>(dPtr, handle);
 
     // Obtain the handle for node A
     checkCudaErrors(
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         cudaStreamGetCaptureInfo(captureStream, &status, NULL, &graph, &dependencies, NULL, &numDependencies));
 
     // Insert conditional node B
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     cudaGraphNode_t     conditionalNode;
     cudaGraphNodeParams cParams = {cudaGraphNodeTypeConditional};
     cParams.conditional.handle  = handle;
@@ -301,12 +324,15 @@ void capturedWhileGraph(void)
     cudaGraph_t bodyGraph = cParams.conditional.phGraph_out[0];
 
     // Update stream capture dependencies to account for the node we manually added
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamUpdateCaptureDependencies(
         captureStream, &conditionalNode, NULL, 1, cudaStreamSetCaptureDependencies));
 
     // Insert kernel node D
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     capturedWhileEmptyKernel<<<1, 1, 0, captureStream>>>();
 
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamEndCapture(captureStream, &graph));
     checkCudaErrors(cudaStreamDestroy(captureStream));
 
@@ -318,28 +344,39 @@ void capturedWhileGraph(void)
         cudaStreamBeginCaptureToGraph(bodyStream, bodyGraph, nullptr, nullptr, 0, cudaStreamCaptureModeGlobal));
 
     // Insert kernel node C
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     capturedWhileKernel<<<1, 1, 0, bodyStream>>>(dPtr, handle);
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamEndCapture(bodyStream, nullptr));
     checkCudaErrors(cudaStreamDestroy(bodyStream));
 
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphInstantiate(&graphExec, graph, NULL, NULL, 0));
 
     // Initialize device memory and launch the graph
     // Device memory is zero, so the conditional node will not execute
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemset(dPtr, 0, 1)); // Set dPtr to 0
     printf("Host: Launching graph with loop counter set to 0\n");
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphLaunch(graphExec, 0));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
 
     // Initialize device memory and launch the graph
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemset(dPtr, 10, 1)); // Set dPtr to 10
     printf("Host: Launching graph with loop counter set to 10\n");
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphLaunch(graphExec, 0));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
 
     // Cleanup
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphExecDestroy(graphExec));
     checkCudaErrors(cudaGraphDestroy(graph));
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(dPtr));
 
     printf("capturedWhileGraph: Complete\n\n");
@@ -365,6 +402,7 @@ __global__ void ifGraphKernelD(void) { printf("GPU: Hello from the GPU! The cond
 // Setup and launch the graph
 void simpleIfElseGraph(void)
 {
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     cudaGraph_t     graph;
     cudaGraphExec_t graphExec;
     cudaGraphNode_t kernelNode;
@@ -374,9 +412,11 @@ void simpleIfElseGraph(void)
 
     // Allocate a byte of device memory to use as input
     char *dPtr;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&dPtr, 1));
 
     printf("simpleIfElseGraph: Building graph...\n");
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     cudaGraphCreate(&graph, 0);
 
     // Create conditional handle.
@@ -386,11 +426,13 @@ void simpleIfElseGraph(void)
     // Use a kernel upstream of the conditional to set the handle value
     cudaGraphNodeParams params = {cudaGraphNodeTypeKernel};
     params.kernel.func         = (void *)ifGraphKernelA;
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     params.kernel.blockDim.x = params.kernel.blockDim.y = params.kernel.blockDim.z = 1;
     params.kernel.gridDim.x = params.kernel.gridDim.y = params.kernel.gridDim.z = 1;
     params.kernel.kernelParams                                                  = kernelArgs;
     kernelArgs[0]                                                               = &dPtr;
     kernelArgs[1]                                                               = &handle;
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphAddNode(&kernelNode, graph, NULL, NULL, 0, &params));
 
     cudaGraphNodeParams cParams = {cudaGraphNodeTypeConditional};
@@ -418,20 +460,28 @@ void simpleIfElseGraph(void)
     checkCudaErrors(cudaGraphInstantiate(&graphExec, graph, NULL, NULL, 0));
 
     // Initialize device memory and launch the graph
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemset(dPtr, 0, 1)); // Set dPtr to 0
     printf("Host: Launching graph with device memory set to 0\n");
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphLaunch(graphExec, 0));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
 
     // Initialize device memory and launch the graph
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemset(dPtr, 1, 1)); // Set dPtr to 1
     printf("Host: Launching graph with device memory set to 1\n");
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphLaunch(graphExec, 0));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
 
     // Cleanup
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphExecDestroy(graphExec));
     checkCudaErrors(cudaGraphDestroy(graph));
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(dPtr));
 
     printf("simpleIfElseGraph: Complete\n\n");
@@ -451,6 +501,7 @@ void simpleIfElseGraph(void)
  * This example requires CUDA >= 12.8.
  */
 
+// JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
 __global__ void switchGraphKernelA(char *dPtr, cudaGraphConditionalHandle handle)
 {
     unsigned int value = *dPtr;
@@ -469,6 +520,7 @@ __global__ void switchGraphKernelF(void) { printf("GPU: Hello from switchGraphKe
 // Setup and launch the graph
 void simpleSwitchGraph(void)
 {
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     cudaGraph_t     graph;
     cudaGraphExec_t graphExec;
     cudaGraphNode_t kernelNode;
@@ -478,9 +530,11 @@ void simpleSwitchGraph(void)
 
     // Allocate a byte of device memory to use as input
     char *dPtr;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&dPtr, 1));
 
     printf("simpleSwitchGraph: Building graph...\n");
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     cudaGraphCreate(&graph, 0);
 
     // Create conditional handle.
@@ -490,11 +544,13 @@ void simpleSwitchGraph(void)
     // Use a kernel upstream of the conditional to set the handle value
     cudaGraphNodeParams params = {cudaGraphNodeTypeKernel};
     params.kernel.func         = (void *)switchGraphKernelA;
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     params.kernel.blockDim.x = params.kernel.blockDim.y = params.kernel.blockDim.z = 1;
     params.kernel.gridDim.x = params.kernel.gridDim.y = params.kernel.gridDim.z = 1;
     params.kernel.kernelParams                                                  = kernelArgs;
     kernelArgs[0]                                                               = &dPtr;
     kernelArgs[1]                                                               = &handle;
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphAddNode(&kernelNode, graph, NULL, NULL, 0, &params));
 
     cudaGraphNodeParams cParams = {cudaGraphNodeTypeConditional};
@@ -519,15 +575,20 @@ void simpleSwitchGraph(void)
 
     for (char i = 0; i < 5; i++) {
         // Initialize device memory and launch the graph
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemset(dPtr, i, 1));
         printf("Host: Launching graph with device memory set to %d\n", i);
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         checkCudaErrors(cudaGraphLaunch(graphExec, 0));
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaDeviceSynchronize());
     }
 
     // Cleanup
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphExecDestroy(graphExec));
     checkCudaErrors(cudaGraphDestroy(graph));
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(dPtr));
 
     printf("simpleSwitchGraph: Complete\n\n");

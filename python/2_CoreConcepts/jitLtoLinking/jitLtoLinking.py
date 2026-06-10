@@ -58,6 +58,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "Utilities"))
 
 try:
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     import cupy as cp
     import numpy as np
     from cuda.core import (
@@ -139,6 +140,7 @@ def link_lto(device):
     prog_opts = ProgramOptions(
         std="c++17", arch=f"sm_{device.arch}", link_time_optimization=True
     )
+    # JP: この連続する anchor 群では NVRTC/JIT compile/link output です。compile option、log、生成 code と後続 module/kernel の対応 を確認します。
     main_obj = Program(MAIN_SRC, "c++", options=prog_opts).compile("ltoir")
     user_obj = Program(USER_SRC, "c++", options=prog_opts).compile("ltoir")
 
@@ -185,6 +187,7 @@ def main() -> int:
     parser.add_argument("--device", type=int, default=0, help="CUDA device id")
     args = parser.parse_args()
 
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     device = Device(args.device)
     device.set_current()
     print_gpu_info(device)
@@ -220,6 +223,7 @@ def main() -> int:
         return 1
     finally:
         stream.close()
+        # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
         cp.cuda.Stream.null.use()
 
 

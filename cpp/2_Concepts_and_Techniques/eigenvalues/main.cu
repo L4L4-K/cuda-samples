@@ -137,6 +137,7 @@ void cleanupInputData(InputData &input)
     freePtr(input.a);
     freePtr(input.b);
 
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(input.g_a));
     input.g_a = NULL;
     checkCudaErrors(cudaFree(input.g_b_raw));

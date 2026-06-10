@@ -30,6 +30,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     if(CUDLA_LIB)
         # Source file
         # Add target for cuDLALayerwiseStatsHybrid
+        # JP: この連続する anchor 群では CMake CUDA target/link/architecture wiring です。source、target、optional dependency、platform condition を確認します。
         add_executable(cuDLALayerwiseStatsHybrid main.cu)
 
         target_compile_options(cuDLALayerwiseStatsHybrid PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)

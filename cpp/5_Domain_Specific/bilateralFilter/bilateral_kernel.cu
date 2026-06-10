@@ -257,11 +257,13 @@ extern "C" double bilateralFilterRGBA(uint               *dDest,
         }
 
         // sync host and stop computation timer
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaDeviceSynchronize());
         dKernelTime += sdkGetTimerValue(&timer);
 
         if (iterations > 1) {
             // copy result back from global memory to array
+            // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
             checkCudaErrors(cudaMemcpy2D(
                 dTemp, pitch, dDest, sizeof(int) * width, sizeof(int) * width, height, cudaMemcpyDeviceToDevice));
         }

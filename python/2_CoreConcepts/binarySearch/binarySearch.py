@@ -64,6 +64,7 @@ except ImportError as e:
 
 
 def run_binary_search(h_data: np.ndarray, h_values: np.ndarray) -> bool:
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     d_data = cp.asarray(h_data)
     d_values = cp.asarray(h_values)
 
@@ -116,6 +117,7 @@ def main():
     parser.add_argument("--device", type=int, default=0, help="CUDA device id")
     args = parser.parse_args()
 
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     device = Device(args.device)
     device.set_current()
     print_gpu_info(device)

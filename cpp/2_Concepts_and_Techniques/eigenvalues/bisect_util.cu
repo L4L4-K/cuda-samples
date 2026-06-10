@@ -182,6 +182,7 @@ __device__ inline unsigned int computeNumSmallerEigenvals(float             *g_d
         s_s[threadIdx.x] = *(g_s + threadIdx.x - 1);
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     // perform loop only for active threads
@@ -233,20 +234,25 @@ __device__ inline unsigned int computeNumSmallerEigenvalsLarge(float            
     unsigned int rem = n;
 
     // do until whole diagonal and superdiagonal has been loaded and processed
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     for (unsigned int i = 0; i < n; i += blockDim.x) {
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         // read new chunk of data into shared memory
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         if ((i + threadIdx.x) < n) {
             s_d[threadIdx.x] = *(g_d + i + threadIdx.x);
             s_s[threadIdx.x] = *(g_s + i + threadIdx.x - 1);
         }
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         if (tid < num_intervals_active) {
             // perform (optimized) Gaussian elimination to determine the number
             // of eigenvalues that are smaller than n
+            // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             for (unsigned int k = 0; k < min(rem, blockDim.x); ++k) {
                 delta = s_d[k] - x - (s_s[k] * s_s[k]) / delta;
                 // delta = (abs( delta) < (1.0e-10)) ? -(1.0e-10) : delta;
@@ -312,6 +318,7 @@ __device__ void storeNonEmptyIntervals(unsigned int       addr,
         // mark that a second interval has been generated, only stored after
         // stream compaction of second chunk
         is_active_second                   = 1;
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         s_compaction_list_exc[threadIdx.x] = 1;
         atomicExch(&compact_second_chunk, 1);
     }
@@ -348,10 +355,12 @@ __device__ void
 createIndicesCompaction(T *s_compaction_list_exc, unsigned int num_threads_compaction, cg::thread_block cta)
 {
     unsigned int       offset = 1;
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const unsigned int tid    = threadIdx.x;
 
     // higher levels of scan tree
     for (int d = (num_threads_compaction >> 1); d > 0; d >>= 1) {
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         if (tid < d) {
@@ -367,6 +376,7 @@ createIndicesCompaction(T *s_compaction_list_exc, unsigned int num_threads_compa
     // traverse down tree: first down to level 2 across
     for (int d = 2; d < num_threads_compaction; d <<= 1) {
         offset >>= 1;
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         if (tid < (d - 1)) {
@@ -377,6 +387,7 @@ createIndicesCompaction(T *s_compaction_list_exc, unsigned int num_threads_compa
         }
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 }
 
@@ -410,6 +421,7 @@ __device__ void compactIntervals(float       *s_left,
                                  unsigned int num_threads_active,
                                  unsigned int is_active_second)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const unsigned int tid = threadIdx.x;
 
     // perform compaction / copy data for all threads where the second
@@ -460,6 +472,7 @@ __device__ void storeIntervalConverged(float             *s_left,
                                        unsigned int      &compact_second_chunk,
                                        const unsigned int num_threads_active)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const unsigned int tid          = threadIdx.x;
     const unsigned int multiplicity = right_count - left_count;
 
@@ -510,6 +523,7 @@ __device__ void storeIntervalConverged(float             *s_left,
                                        const unsigned int num_threads_active,
                                        unsigned int      &is_active_second)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const unsigned int tid          = threadIdx.x;
     const unsigned int multiplicity = right_count - left_count;
 

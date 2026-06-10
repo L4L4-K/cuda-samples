@@ -120,6 +120,7 @@ int parseCmdLine(int argc, char *argv[], TestArgs *args)
         }
 
         int      iGPUexists = 0;
+        // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
         CUdevice dev;
         for (dev = 0; dev < deviceCount; ++dev) {
             int      integrated   = 0;

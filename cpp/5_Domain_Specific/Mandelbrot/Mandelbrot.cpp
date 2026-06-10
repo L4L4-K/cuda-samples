@@ -266,6 +266,7 @@ void renderImage(bool bUseOpenGL, bool fp64, int mode)
             if (bUseOpenGL) {
                 // DEPRECATED: checkCudaErrors(cudaGLMapBufferObject((void**)&d_dst,
                 // gl_PBO));
+                // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
                 checkCudaErrors(cudaGraphicsMapResources(1, &cuda_pbo_resource, 0));
                 size_t num_bytes;
                 checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&d_dst, &num_bytes, cuda_pbo_resource));
@@ -347,6 +348,7 @@ void renderImage(bool bUseOpenGL, bool fp64, int mode)
 
             if (bUseOpenGL) {
                 // DEPRECATED: checkCudaErrors(cudaGLUnmapBufferObject(gl_PBO));
+                // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
                 checkCudaErrors(cudaGraphicsUnmapResources(1, &cuda_pbo_resource, 0));
             }
 
@@ -362,6 +364,7 @@ void renderImage(bool bUseOpenGL, bool fp64, int mode)
             if (bUseOpenGL) {
                 // DEPRECATED: checkCudaErrors(cudaGLMapBufferObject((void**)&d_dst,
                 // gl_PBO));
+                // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
                 checkCudaErrors(cudaGraphicsMapResources(1, &cuda_pbo_resource, 0));
                 size_t num_bytes;
                 checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&d_dst, &num_bytes, cuda_pbo_resource));
@@ -423,6 +426,7 @@ void renderImage(bool bUseOpenGL, bool fp64, int mode)
 
             if (bUseOpenGL) {
                 // DEPRECATED: checkCudaErrors(cudaGLUnmapBufferObject(gl_PBO));
+                // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
                 checkCudaErrors(cudaGraphicsUnmapResources(1, &cuda_pbo_resource, 0));
             }
 
@@ -507,6 +511,7 @@ void cleanup()
     sdkDeleteTimer(&hTimer);
 
     // DEPRECATED: checkCudaErrors(cudaGLUnregisterBufferObject(gl_PBO));
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsUnregisterResource(cuda_pbo_resource));
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, 0);
 
@@ -955,6 +960,7 @@ void initOpenGLBuffers(int w, int h)
 
     if (gl_PBO) {
         // DEPRECATED: checkCudaErrors(cudaGLUnregisterBufferObject(gl_PBO));
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         cudaGraphicsUnregisterResource(cuda_pbo_resource);
         glDeleteBuffers(1, &gl_PBO);
         gl_PBO = 0;
@@ -985,6 +991,7 @@ void initOpenGLBuffers(int w, int h)
     // so we need to register/unregister it only once.
 
     // DEPRECATED: checkCudaErrors( cudaGLRegisterBufferObject(gl_PBO) );
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsGLRegisterBuffer(&cuda_pbo_resource, gl_PBO, cudaGraphicsMapFlagsWriteDiscard));
     printf("PBO created.\n");
 
@@ -1115,6 +1122,7 @@ int runSingleTest(int argc, char **argv)
             renderImage(false, haveDouble, 0);
         }
 
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemcpy(h_dst, d_dst, imageW * imageH * sizeof(uchar4), cudaMemcpyDeviceToHost));
         sdkSavePPM4ub(dump_file, h_dst, imageW, imageH);
     }
@@ -1124,6 +1132,7 @@ int runSingleTest(int argc, char **argv)
             renderImage(false, haveDouble, 0);
         }
 
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemcpy(h_dst, d_dst, imageW * imageH * sizeof(uchar4), cudaMemcpyDeviceToHost));
         sdkSavePPM4ub(dump_file, h_dst, imageW, imageH);
     }
@@ -1142,6 +1151,7 @@ int runSingleTest(int argc, char **argv)
         printf("Images \"%s\", \"%s\" are matching\n", ref_file, dump_file);
     }
 
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(d_dst));
     free(h_dst);
 
@@ -1162,6 +1172,7 @@ void runBenchmark(int argc, char **argv)
 
     // Allocate memory for renderImage (to be able to render into a CUDA memory
     // buffer)
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&d_dst, (imageW * imageH * sizeof(uchar4))));
 
     float xs, ys;
@@ -1207,6 +1218,7 @@ void runBenchmark(int argc, char **argv)
 
     printf("\nMegaPixels Per Second %.4f\n", PixelsPerSecond / 1e6);
 
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(d_dst));
     sdkDeleteTimer(&kernel_timer);
 }

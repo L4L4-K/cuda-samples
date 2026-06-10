@@ -113,6 +113,7 @@ __global__ void cudaProcess(unsigned int       *g_odata,
     SMEM(r + tx, r + ty) = getPixel(x, y, inTex);
 
     // borders
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x < r) {
         // left
         SMEM(tx, r + ty) = getPixel(x - r, y, inTex);
@@ -256,6 +257,7 @@ extern "C" void launch_cudaProcess(dim3          grid,
 #ifdef GPU_PROFILING
     }
 
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     cudaDeviceSynchronize();
     sdkStopTimer(&timer);
     double dSeconds   = sdkGetTimerValue(&timer) / ((double)nIter * 1000.0);

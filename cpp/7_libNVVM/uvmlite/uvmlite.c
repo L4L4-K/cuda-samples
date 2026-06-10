@@ -153,6 +153,7 @@ static char *loadProgramSource(const char *filename, size_t *size)
 }
 
 // Return the device compute capability in major and minor.
+// JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
 static CUdevice cudaDeviceInit(int *major, int *minor)
 {
     assert(major && minor);
@@ -167,6 +168,7 @@ static CUdevice cudaDeviceInit(int *major, int *minor)
     }
 
     // Get the first device discovered (device 0) and print its name.
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     CUdevice cuDevice = 0;
     checkCudaErrors(cuDeviceGet(&cuDevice, 0));
     char name[128] = {0};
@@ -203,6 +205,7 @@ static CUdevice cudaDeviceInit(int *major, int *minor)
     return cuDevice;
 }
 
+// JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
 static CUresult buildKernel(CUcontext *phContext, CUdevice *phDevice, CUmodule *phModule, CUfunction *phKernel)
 {
     assert(phContext && phDevice && phModule && phKernel);
@@ -212,6 +215,7 @@ static CUresult buildKernel(CUcontext *phContext, CUdevice *phDevice, CUmodule *
     *phDevice = cudaDeviceInit(&major, &minor);
 
     // Create a context on the device.
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuCtxCreate(phContext, NULL, 0, *phDevice));
 
     // Get the NVVM IR from file.
@@ -226,6 +230,7 @@ static CUresult buildKernel(CUcontext *phContext, CUdevice *phDevice, CUmodule *
     fprintf(stdout, "%s\n", ptx);
 
     // Load module from PTX.
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuModuleLoadDataEx(phModule, ptx, 0, NULL, NULL));
 
     // Locate the kernel entry point.
@@ -248,6 +253,7 @@ int main(void)
     int        *p_xxx, *p_yyy;
 
     // Initialize the device and get a handle to the kernel
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     CUcontext  hContext = 0;
     CUdevice   hDevice  = 0;
     CUmodule   hModule  = 0;
@@ -315,6 +321,7 @@ int main(void)
     printf("The final value checked in the host: xxx = %d, yyy = %d\n", *p_xxx, *p_yyy);
 
     if (hModule) {
+        // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
         checkCudaErrors(cuModuleUnload(hModule));
         hModule = 0;
     }

@@ -85,6 +85,7 @@ __global__ void generateSpectrumKernel(float2      *h0,
 // update height map values based on output of FFT
 __global__ void updateHeightmapKernel(float *heightMap, float2 *ht, unsigned int width)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
     unsigned int i = y * width + x;
@@ -98,6 +99,7 @@ __global__ void updateHeightmapKernel(float *heightMap, float2 *ht, unsigned int
 // update height map values based on output of FFT
 __global__ void updateHeightmapKernel_y(float *heightMap, float2 *ht, unsigned int width)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
     unsigned int i = y * width + x;
@@ -111,6 +113,7 @@ __global__ void updateHeightmapKernel_y(float *heightMap, float2 *ht, unsigned i
 // generate slope by partial differences in spatial domain
 __global__ void calculateSlopeKernel(float *h, float2 *slopeOut, unsigned int width, unsigned int height)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
     unsigned int i = y * width + x;
@@ -146,6 +149,7 @@ cudaUpdateHeightmapKernel(float *d_heightMap, float2 *d_ht, unsigned int width, 
     dim3 block(8, 8, 1);
     dim3 grid(cuda_iDivUp(width, block.x), cuda_iDivUp(height, block.y), 1);
     if (autoTest) {
+        // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         updateHeightmapKernel_y<<<grid, block>>>(d_heightMap, d_ht, width);
     }
     else {

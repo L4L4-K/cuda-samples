@@ -136,6 +136,7 @@ int main(int argc, char *argv[])
     printf("GPU time: %f ms; GOP/s: %f\n", gpuTime, NOPS / (gpuTime * 0.001 * 1E+9));
 
     printf("Reading back GPU results...\n");
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_ResultGPU, d_Data, DATA_SIZE, cudaMemcpyDeviceToHost));
 
     printf("Running straightforward CPU dyadic convolution...\n");

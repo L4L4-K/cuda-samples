@@ -145,6 +145,7 @@ int main(int argc, const char **argv)
     checkCudaErrors(cudaMemcpyAsync(h_numOfOdds, d_numOfOdds, sizeof(int), cudaMemcpyDeviceToHost, stream));
     checkCudaErrors(
         cudaMemcpyAsync(h_sumOfOddEvenElems, d_sumOfOddEvenElems, 2 * sizeof(int), cudaMemcpyDeviceToHost, stream));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaStreamSynchronize(stream));
 
     printf("Array size = %d Num of Odds = %d Sum of Odds = %d Sum of Evens %d\n",

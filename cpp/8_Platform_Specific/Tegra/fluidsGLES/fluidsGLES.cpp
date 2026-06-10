@@ -322,6 +322,7 @@ static void InitGraphicsState(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsGLRegisterBuffer(&cuda_vbo_resource, vbo, cudaGraphicsMapFlagsNone));
 
     // GLSL stuff
@@ -587,6 +588,7 @@ void keyboard(unsigned char key, int x, int y, int argc, char **argv)
 
         initParticles(particles, DIM, DIM);
 
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         checkCudaErrors(cudaGraphicsUnregisterResource(cuda_vbo_resource));
 
         getLastCudaError("cudaGraphicsUnregisterBuffer failed");
@@ -606,6 +608,7 @@ void keyboard(unsigned char key, int x, int y, int argc, char **argv)
 
 void cleanup(void)
 {
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsUnregisterResource(cuda_vbo_resource));
 
     deleteTexture();
@@ -664,10 +667,13 @@ int main(int argc, char **argv)
     memset(hvfield, 0, sizeof(cData) * DS);
 
     // Allocate and initialize device data
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMallocPitch((void **)&dvfield, &tPitch, sizeof(cData) * DIM, DIM));
 
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(dvfield, hvfield, sizeof(cData) * DS, cudaMemcpyHostToDevice));
     // Temporary complex velocity field data
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&vxfield, sizeof(cData) * PDS));
     checkCudaErrors(cudaMalloc((void **)&vyfield, sizeof(cData) * PDS));
 
@@ -680,6 +686,7 @@ int main(int argc, char **argv)
     initParticles(particles, DIM, DIM);
 
     // Create CUFFT transform plan configuration
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cufftPlan2d(&planr2c, DIM, DIM, CUFFT_R2C));
     checkCudaErrors(cufftPlan2d(&planc2r, DIM, DIM, CUFFT_C2R));
 

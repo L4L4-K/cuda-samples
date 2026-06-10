@@ -116,6 +116,7 @@ __global__ void copySharedMem(float *odata, float *idata, int width, int height)
 
     for (int i = 0; i < TILE_DIM; i += BLOCK_ROWS) {
         if (xIndex < height && yIndex < width) {
+            // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             odata[index + i * width] = tile[threadIdx.y + i][threadIdx.x];
             odata[index + i * width] = tile[threadIdx.y + i][threadIdx.x];
         }
@@ -129,6 +130,7 @@ __global__ void copySharedMem(float *odata, float *idata, int width, int height)
 
 __global__ void transposeNaive(float *odata, float *idata, int width, int height)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int xIndex = blockIdx.x * TILE_DIM + threadIdx.x;
     int yIndex = blockIdx.y * TILE_DIM + threadIdx.y;
 
@@ -145,9 +147,12 @@ __global__ void transposeNaive(float *odata, float *idata, int width, int height
 __global__ void transposeCoalesced(float *odata, float *idata, int width, int height)
 {
     // Handle to thread block group
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta = cg::this_thread_block();
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ float tile[TILE_DIM][TILE_DIM];
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int xIndex   = blockIdx.x * TILE_DIM + threadIdx.x;
     int yIndex   = blockIdx.y * TILE_DIM + threadIdx.y;
     int index_in = xIndex + (yIndex)*width;
@@ -160,9 +165,11 @@ __global__ void transposeCoalesced(float *odata, float *idata, int width, int he
         tile[threadIdx.y + i][threadIdx.x] = idata[index_in + i * width];
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     for (int i = 0; i < TILE_DIM; i += BLOCK_ROWS) {
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         odata[index_out + i * height] = tile[threadIdx.x][threadIdx.y + i];
     }
 }
@@ -172,9 +179,12 @@ __global__ void transposeCoalesced(float *odata, float *idata, int width, int he
 __global__ void transposeNoBankConflicts(float *odata, float *idata, int width, int height)
 {
     // Handle to thread block group
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta = cg::this_thread_block();
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ float tile[TILE_DIM][TILE_DIM + 1];
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int xIndex   = blockIdx.x * TILE_DIM + threadIdx.x;
     int yIndex   = blockIdx.y * TILE_DIM + threadIdx.y;
     int index_in = xIndex + (yIndex)*width;
@@ -187,9 +197,11 @@ __global__ void transposeNoBankConflicts(float *odata, float *idata, int width, 
         tile[threadIdx.y + i][threadIdx.x] = idata[index_in + i * width];
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     for (int i = 0; i < TILE_DIM; i += BLOCK_ROWS) {
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         odata[index_out + i * height] = tile[threadIdx.x][threadIdx.y + i];
     }
 }
@@ -209,13 +221,16 @@ __global__ void transposeNoBankConflicts(float *odata, float *idata, int width, 
 __global__ void transposeDiagonal(float *odata, float *idata, int width, int height)
 {
     // Handle to thread block group
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta = cg::this_thread_block();
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ float tile[TILE_DIM][TILE_DIM + 1];
 
     int blockIdx_x, blockIdx_y;
 
     // do diagonal reordering
     if (width == height) {
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         blockIdx_y = blockIdx.x;
         blockIdx_x = (blockIdx.x + blockIdx.y) % gridDim.x;
     }
@@ -240,9 +255,11 @@ __global__ void transposeDiagonal(float *odata, float *idata, int width, int hei
         tile[threadIdx.y + i][threadIdx.x] = idata[index_in + i * width];
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     for (int i = 0; i < TILE_DIM; i += BLOCK_ROWS) {
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         odata[index_out + i * height] = tile[threadIdx.x][threadIdx.y + i];
     }
 }
@@ -259,9 +276,12 @@ __global__ void transposeDiagonal(float *odata, float *idata, int width, int hei
 __global__ void transposeFineGrained(float *odata, float *idata, int width, int height)
 {
     // Handle to thread block group
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta = cg::this_thread_block();
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ float block[TILE_DIM][TILE_DIM + 1];
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int xIndex = blockIdx.x * TILE_DIM + threadIdx.x;
     int yIndex = blockIdx.y * TILE_DIM + threadIdx.y;
     int index  = xIndex + (yIndex)*width;
@@ -270,9 +290,11 @@ __global__ void transposeFineGrained(float *odata, float *idata, int width, int 
         block[threadIdx.y + i][threadIdx.x] = idata[index + i * width];
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     for (int i = 0; i < TILE_DIM; i += BLOCK_ROWS) {
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         odata[index + i * height] = block[threadIdx.x][threadIdx.y + i];
     }
 }
@@ -281,8 +303,10 @@ __global__ void transposeCoarseGrained(float *odata, float *idata, int width, in
 {
     // Handle to thread block group
     cg::thread_block cta = cg::this_thread_block();
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ float block[TILE_DIM][TILE_DIM + 1];
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int xIndex   = blockIdx.x * TILE_DIM + threadIdx.x;
     int yIndex   = blockIdx.y * TILE_DIM + threadIdx.y;
     int index_in = xIndex + (yIndex)*width;
@@ -295,9 +319,11 @@ __global__ void transposeCoarseGrained(float *odata, float *idata, int width, in
         block[threadIdx.y + i][threadIdx.x] = idata[index_in + i * width];
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     for (int i = 0; i < TILE_DIM; i += BLOCK_ROWS) {
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         odata[index_out + i * height] = block[threadIdx.y + i][threadIdx.x];
     }
 }
@@ -493,6 +519,7 @@ int main(int argc, char **argv)
            BLOCK_ROWS);
 
     // initialize events
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaEventCreate(&start));
     checkCudaErrors(cudaEventCreate(&stop));
 
@@ -569,11 +596,13 @@ int main(int argc, char **argv)
         checkCudaErrors(cudaEventRecord(start, 0));
 
         for (int i = 0; i < NUM_REPS; i++) {
+            // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
             kernel<<<grid, threads>>>(d_odata, d_idata, size_x, size_y);
             // Ensure no launch failure
             checkCudaErrors(cudaGetLastError());
         }
 
+        // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaEventRecord(stop, 0));
         checkCudaErrors(cudaEventSynchronize(stop));
         float kernelTime;
@@ -589,7 +618,9 @@ int main(int argc, char **argv)
         }
 
         // take measurements for loop inside kernel
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemcpy(h_odata, d_odata, mem_size, cudaMemcpyDeviceToHost));
+        // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
         res = compareData(gold, h_odata, size_x * size_y, 0.01f, 0.0f);
 
         if (res == false) {
@@ -617,6 +648,7 @@ int main(int argc, char **argv)
             h_odata[i] = 0;
         }
         // copy host data to device
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemcpy(d_odata, h_odata, mem_size, cudaMemcpyHostToDevice));
 
         // Reset d_odata to zero before starting the next loop iteration to avoid
@@ -628,6 +660,7 @@ int main(int argc, char **argv)
             h_odata[i] = 0;
         }
         // copy host data to device
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemcpy(d_odata, h_odata, mem_size, cudaMemcpyHostToDevice));
     }
 

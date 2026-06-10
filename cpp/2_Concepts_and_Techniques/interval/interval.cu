@@ -105,6 +105,7 @@ int main(int argc, char *argv[])
     interval_gpu<T> i(0.01f, 4.0f);
     std::cout << "Searching for roots in [" << i.lower() << ", " << i.upper() << "]...\n";
 
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     CHECKED_CALL(cudaEventRecord(start, 0));
 
     for (int it = 0; it < NUM_RUNS; ++it) {
@@ -131,6 +132,7 @@ int main(int argc, char *argv[])
     }
 
     float time;
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     CHECKED_CALL(cudaEventElapsedTime(&time, start, stop));
     std::cout << "Number of equations solved: " << THREADS << "\n";
     std::cout << "Time per equation: " << 1000000.0f * (time / (float)(THREADS)) / NUM_RUNS << " us\n";

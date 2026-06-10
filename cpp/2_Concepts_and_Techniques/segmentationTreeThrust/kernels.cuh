@@ -64,6 +64,7 @@ __global__ void addScalar(uint *array, int scalar, uint size)
 
 __global__ void markSegments(const uint *verticesOffsets, uint *flags, uint verticesCount)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     uint tid = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (tid < verticesCount) {
@@ -76,6 +77,7 @@ __global__ void getVerticesMapping(const uint *clusteredVerticesIDs,
                                    uint       *verticesMapping,
                                    uint        verticesCount)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     uint tid = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (tid < verticesCount) {
@@ -90,6 +92,7 @@ __global__ void getSuccessors(const uint *verticesOffsets,
                               uint        verticesCount,
                               uint        edgesCount)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     uint tid = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (tid < verticesCount) {
@@ -101,6 +104,7 @@ __global__ void getSuccessors(const uint *verticesOffsets,
 
 __global__ void removeCycles(uint *successors, uint verticesCount)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     uint tid = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (tid < verticesCount) {
@@ -120,6 +124,7 @@ __global__ void removeCycles(uint *successors, uint verticesCount)
 
 __global__ void getRepresentatives(const uint *successors, uint *representatives, uint verticesCount)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     uint tid = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (tid < verticesCount) {
@@ -137,6 +142,7 @@ __global__ void getRepresentatives(const uint *successors, uint *representatives
 
 __global__ void invalidateLoops(const uint *startpoints, const uint *verticesMapping, uint *edges, uint edgesCount)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     uint tid = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (tid < edgesCount) {
@@ -161,6 +167,7 @@ __global__ void calculateEdgesInfo(const uint  *startpoints,
                                    uint         edgesCount,
                                    uint         newVerticesCount)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     uint tid = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (tid < edgesCount) {
@@ -182,6 +189,7 @@ __global__ void makeNewEdges(const uint  *survivedEdgesIDs,
                              float       *newWeights,
                              uint         edgesCount)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     uint tid = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (tid < edgesCount) {

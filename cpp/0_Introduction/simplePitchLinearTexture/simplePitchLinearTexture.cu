@@ -88,6 +88,7 @@ shiftPitchLinear(float *odata, int pitch, int width, int height, int shiftX, int
 __global__ void
 shiftArray(float *odata, int pitch, int width, int height, int shiftX, int shiftY, cudaTextureObject_t texRefArray)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int xid = blockIdx.x * blockDim.x + threadIdx.x;
     int yid = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -224,6 +225,7 @@ void runTest(int argc, char **argv)
     // Run ShiftPitchLinear kernel
     checkCudaErrors(cudaMemset2D(d_odata, d_pitchBytes, 0, nx * sizeof(float), ny));
 
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaEventRecord(start, 0));
 
     for (int i = 0; i < NUM_REPS; ++i) {
@@ -254,13 +256,16 @@ void runTest(int argc, char **argv)
 
     // Run ShiftArray kernel
     checkCudaErrors(cudaMemset2D(d_odata, d_pitchBytes, 0, nx * sizeof(float), ny));
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaEventRecord(start, 0));
 
     for (int i = 0; i < NUM_REPS; ++i) {
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         shiftArray<<<dimGrid, dimBlock>>>(
             d_odata, (int)(d_pitchBytes / sizeof(float)), nx, ny, x_shift, y_shift, texRefArray);
     }
 
+    // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaEventRecord(stop, 0));
     checkCudaErrors(cudaEventSynchronize(stop));
     float timeArray;
@@ -268,7 +273,9 @@ void runTest(int argc, char **argv)
 
     // Check results
     checkCudaErrors(
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         cudaMemcpy2D(h_odata, h_pitchBytes, d_odata, d_pitchBytes, nx * sizeof(float), ny, cudaMemcpyDeviceToHost));
+    // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
     res = compareData(gold, h_odata, nx * ny, 0.0f, 0.15f);
 
     if (res == false) {
@@ -295,6 +302,7 @@ void runTest(int argc, char **argv)
     free(h_odata);
     free(gold);
 
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaDestroyTextureObject(texRefPL));
     checkCudaErrors(cudaDestroyTextureObject(texRefArray));
     checkCudaErrors(cudaFree(d_idataPL));

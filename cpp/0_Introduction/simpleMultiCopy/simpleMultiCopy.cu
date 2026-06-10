@@ -183,6 +183,7 @@ int main(int argc, char *argv[])
         checkCudaErrors(cudaHostAlloc(&h_data_out[i], memsize, cudaHostAllocDefault));
         checkCudaErrors(cudaMalloc(&d_data_out[i], memsize));
 
+        // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         checkCudaErrors(cudaStreamCreate(&stream[i]));
         checkCudaErrors(cudaEventCreate(&cycleDone[i]));
 
@@ -208,8 +209,11 @@ int main(int argc, char *argv[])
     float memcpy_h2d_time;
     cudaEventElapsedTime(&memcpy_h2d_time, start, stop);
 
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaEventRecord(start, 0);
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpyAsync(h_data_out[0], d_data_out[0], memsize, cudaMemcpyDeviceToHost, 0));
+    // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     cudaEventRecord(stop, 0);
     cudaEventSynchronize(stop);
 
@@ -217,7 +221,9 @@ int main(int argc, char *argv[])
     cudaEventElapsedTime(&memcpy_d2h_time, start, stop);
 
     cudaEventRecord(start, 0);
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     incKernel<<<grid, block, 0, 0>>>(d_data_out[0], d_data_in[0], N, inner_reps);
+    // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     cudaEventRecord(stop, 0);
     cudaEventSynchronize(stop);
 
@@ -275,6 +281,7 @@ int main(int argc, char *argv[])
     free(h_data_sink);
 
     for (int i = 0; i < STREAM_COUNT; ++i) {
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         cudaFreeHost(h_data_in[i]);
         cudaFree(d_data_in[i]);
 
@@ -305,6 +312,7 @@ float processWithStreams(int streams_used)
     // which the copy and kernel commands are enqueued in the stream
     // has an influence on the achieved overlap.
 
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaEventRecord(start, 0);
 
     for (int i = 0; i < nreps; ++i) {
@@ -319,13 +327,16 @@ float processWithStreams(int streams_used)
 #endif
 
         // Ensure that processing and copying of the last cycle has finished
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         cudaEventSynchronize(cycleDone[next_stream]);
 
         // Process current frame
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         incKernel<<<grid, block, 0, stream[current_stream]>>>(
             d_data_out[current_stream], d_data_in[current_stream], N, inner_reps);
 
         // Upload next frame
+        // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemcpyAsync(
             d_data_in[next_stream], h_data_in[next_stream], memsize, cudaMemcpyHostToDevice, stream[next_stream]));
 
@@ -336,6 +347,7 @@ float processWithStreams(int streams_used)
                                         cudaMemcpyDeviceToHost,
                                         stream[current_stream]));
 
+        // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         checkCudaErrors(cudaEventRecord(cycleDone[current_stream], stream[current_stream]));
 
         current_stream = next_stream;
@@ -343,8 +355,10 @@ float processWithStreams(int streams_used)
 
     cudaEventRecord(stop, 0);
 
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     cudaDeviceSynchronize();
 
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaEventElapsedTime(&time, start, stop);
 
     return time;

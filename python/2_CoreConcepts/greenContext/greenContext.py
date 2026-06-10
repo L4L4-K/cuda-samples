@@ -466,6 +466,7 @@ def run_baseline(
     """Both kernels on the primary context, two non-blocking streams."""
     long_stream = device.create_stream()
     critical_stream = device.create_stream()
+    # JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     out = device.allocate(critical_n * 4, stream=critical_stream)
     total_sm = device.resources.sm.sm_count
     try:
@@ -519,6 +520,7 @@ def run_green_context(
 
         long_stream = ctx_long.create_stream()
         critical_stream = ctx_crit.create_stream()
+        # JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         out = device.allocate(critical_n * 4, stream=critical_stream)
 
         return _run_one(
@@ -672,6 +674,7 @@ def main():
     args = parser.parse_args()
 
     try:
+        # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
         device = Device(args.device)
         device.set_current()
     except Exception as e:

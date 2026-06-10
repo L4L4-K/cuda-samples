@@ -170,6 +170,7 @@ bool fdtdGPU(float       *output,
 #ifdef GPU_PROFILING
 
     // Create the events
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaEventCreate(&profileStart));
     checkCudaErrors(cudaEventCreate(&profileEnd));
 
@@ -182,6 +183,7 @@ bool fdtdGPU(float       *output,
 
 #ifdef GPU_PROFILING
     // Enqueue start event
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaEventRecord(profileStart, 0));
 #endif
 
@@ -205,6 +207,7 @@ bool fdtdGPU(float       *output,
 
 #ifdef GPU_PROFILING
     // Enqueue end event
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaEventRecord(profileEnd, 0));
 #endif
 
@@ -220,6 +223,7 @@ bool fdtdGPU(float       *output,
     float elapsedTimeMS = 0;
 
     if (profileTimesteps > 0) {
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         checkCudaErrors(cudaEventElapsedTime(&elapsedTimeMS, profileStart, profileEnd));
     }
 

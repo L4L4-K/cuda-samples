@@ -174,6 +174,7 @@ void processResultSmallMatrix(const InputData       &input,
     float        *left       = (float *)malloc(mat_size_f);
     unsigned int *left_count = (unsigned int *)malloc(mat_size_ui);
 
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(left, result.g_left, mat_size_f, cudaMemcpyDeviceToHost));
     checkCudaErrors(cudaMemcpy(left_count, result.g_left_count, mat_size_ui, cudaMemcpyDeviceToHost));
 

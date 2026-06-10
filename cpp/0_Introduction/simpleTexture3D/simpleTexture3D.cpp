@@ -134,6 +134,7 @@ void render()
 {
     // map PBO to get CUDA device pointer
     g_GraphicsMapFlag++;
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsMapResources(1, &cuda_pbo_resource, 0));
     size_t num_bytes;
     checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&d_output, &num_bytes, cuda_pbo_resource));
@@ -145,6 +146,7 @@ void render()
     getLastCudaError("render_kernel failed");
 
     if (g_GraphicsMapFlag) {
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         checkCudaErrors(cudaGraphicsUnmapResources(1, &cuda_pbo_resource, 0));
         g_GraphicsMapFlag--;
     }
@@ -238,6 +240,7 @@ void cleanup()
 
     // add extra check to unmap the resource before unregistering it
     if (g_GraphicsMapFlag) {
+        // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         checkCudaErrors(cudaGraphicsUnmapResources(1, &cuda_pbo_resource, 0));
         g_GraphicsMapFlag--;
     }
@@ -257,6 +260,7 @@ void initGLBuffers()
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, 0);
 
     // register this buffer object with CUDA
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsGLRegisterBuffer(&cuda_pbo_resource, pbo, cudaGraphicsMapFlagsWriteDiscard));
 }
 

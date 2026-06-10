@@ -94,6 +94,7 @@ __global__ void CUDAkernelQuantizationFloat(float *SrcDst, int Stride)
 __global__ void CUDAkernelQuantizationShort(short *SrcDst, int Stride)
 {
     // Handle to thread block group
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta = cg::this_thread_block();
     // Block index
     int bx = blockIdx.x;

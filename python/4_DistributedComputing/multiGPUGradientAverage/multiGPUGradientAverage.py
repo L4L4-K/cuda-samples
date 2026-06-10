@@ -64,6 +64,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "Utilities"))
 from cuda_samples_utils import verify_array_result  # noqa: E402
 
 try:
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     import cupy as cp
     from cuda.core import (
         Device,
@@ -74,6 +75,7 @@ try:
         launch,
         system,
     )
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     from mpi4py import MPI
 except ImportError as e:
     print(f"Error: Required package not found: {e}")
@@ -106,6 +108,7 @@ def init_device(rank: int):
     dev_id = rank % num_gpus  # simple mapping: rank -> GPU in round-robin
 
     try:
+        # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
         device = Device(dev_id)
     except (RuntimeError, ValueError) as e:
         if rank == 0:
@@ -166,6 +169,7 @@ def get_init_kernel(device: Device):
 
 def compute_local_gradients(
     num_elements: int, device: Device, stream: object, rank: int
+# JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
 ) -> cp.ndarray:
     """
     Compute a local "gradient" vector on the current GPU.
@@ -190,6 +194,7 @@ def compute_local_gradients(
         Gradient vector on GPU.
     """
     # Create gradient array (CuPy uses the stream set at device initialization)
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     grad = cp.empty(num_elements, dtype=cp.float32)
 
     # Use a CUDA kernel compiled with cuda.core to fill the array
@@ -212,6 +217,7 @@ def compute_local_gradients(
 
 
 def average_gradients(
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     local_grad: cp.ndarray, comm: object, world_size: int
 ) -> cp.ndarray:
     """
@@ -239,6 +245,7 @@ def average_gradients(
     avg_host /= world_size
 
     # CPU -> GPU
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     avg_grad = cp.asarray(avg_host)
 
     return avg_grad
@@ -374,6 +381,7 @@ def main():
             print(f"  expected[{i2}] = {expected2:.6f}")
 
         # All ranks perform a full-array correctness check on GPU
+        # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
         expected_full = expected_base + 0.001 * cp.arange(
             num_elements, dtype=cp.float32
         )
@@ -413,6 +421,7 @@ def main():
         # Clean up stream resources
         if stream is not None:
             stream.close()
+            # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
             cp.cuda.Stream.null.use()  # Reset CuPy's current stream to the null stream
 
 

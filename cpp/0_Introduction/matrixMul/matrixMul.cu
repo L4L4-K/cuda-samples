@@ -105,7 +105,7 @@ template <int BLOCK_SIZE> __global__ void MatrixMulCUDA(float *C, float *A, floa
         Bs[ty][tx] = B[b + wB * ty + tx];
 
         // Synchronize to make sure the matrices are loaded
-        // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         __syncthreads();
 
         // Multiply the two matrices together;
@@ -120,6 +120,7 @@ template <int BLOCK_SIZE> __global__ void MatrixMulCUDA(float *C, float *A, floa
         // Synchronize to make sure that the preceding
         // computation is done before loading two new
         // sub-matrices of A and B in the next iteration
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         __syncthreads();
     }
 
@@ -166,6 +167,7 @@ int MatrixMultiply(int argc, char **argv, int block_size, const dim3 &dimsA, con
     dim3         dimsC(dimsB.x, dimsA.y, 1);
     unsigned int mem_size_C = dimsC.x * dimsC.y * sizeof(float);
     float       *h_C;
+    // JP: この anchor では pinned host memory の登録/確保/解放です。async transfer や overlap の条件と lifetime を確認します。
     checkCudaErrors(cudaMallocHost(&h_C, mem_size_C));
 
     if (h_C == NULL) {
@@ -178,6 +180,7 @@ int MatrixMultiply(int argc, char **argv, int block_size, const dim3 &dimsA, con
     checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&d_B), mem_size_B));
     checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&d_C), mem_size_C));
     // Allocate CUDA events that we'll use for timing
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaEvent_t start, stop;
     checkCudaErrors(cudaEventCreate(&start));
     checkCudaErrors(cudaEventCreate(&stop));
@@ -206,6 +209,7 @@ int MatrixMultiply(int argc, char **argv, int block_size, const dim3 &dimsA, con
     }
 
     printf("done\n");
+    // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaStreamSynchronize(stream));
 
     // Record the start event
@@ -216,6 +220,7 @@ int MatrixMultiply(int argc, char **argv, int block_size, const dim3 &dimsA, con
 
     for (int j = 0; j < nIter; j++) {
         if (block_size == 16) {
+            // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
             MatrixMulCUDA<16><<<grid, threads, 0, stream>>>(d_C, d_A, d_B, dimsA.x, dimsB.x);
         }
         else {
@@ -224,6 +229,7 @@ int MatrixMultiply(int argc, char **argv, int block_size, const dim3 &dimsA, con
     }
 
     // Record the stop event
+    // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaEventRecord(stop, stream));
 
     // Wait for the stop event to complete
@@ -245,7 +251,9 @@ int MatrixMultiply(int argc, char **argv, int block_size, const dim3 &dimsA, con
            threads.x * threads.y);
 
     // Copy result from device to host
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpyAsync(h_C, d_C, mem_size_C, cudaMemcpyDeviceToHost, stream));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaStreamSynchronize(stream));
 
     printf("Checking computed result for correctness: ");

@@ -41,6 +41,7 @@ This sample implements a custom square operation (y = x²) to demonstrate:
 import sys
 
 try:
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     import torch
     from cuda.core import Device, LaunchConfig, Program, ProgramOptions, launch
 except ImportError as e:
@@ -124,6 +125,7 @@ def get_square_kernel(device):
 # This integrates the CUDA kernel with PyTorch's automatic differentiation
 
 
+# JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
 class SquareOp(torch.autograd.Function):
     """
     Custom square operation using cuda.core.
@@ -152,6 +154,7 @@ class SquareOp(torch.autograd.Function):
         # Validate input requirements
         if not x.is_cuda:
             raise RuntimeError("SquareOp only supports CUDA tensors")
+        # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
         if x.dtype != torch.float32:
             raise RuntimeError("SquareOp only supports float32 tensors")
 
@@ -161,6 +164,7 @@ class SquareOp(torch.autograd.Function):
         device = Device()
         # Use PyTorch's current stream to ensure proper ordering with other PyTorch ops
         # Create a cuda.core Stream from PyTorch's stream wrapper
+        # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
         torch_stream = torch.cuda.current_stream(device=x.device)
         stream = device.create_stream(PyTorchStreamWrapper(torch_stream))
 
@@ -170,6 +174,7 @@ class SquareOp(torch.autograd.Function):
             kernel = get_square_kernel(device)
 
             # Allocate output tensor
+            # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
             y = torch.empty_like(x)
 
             # Configure kernel launch
@@ -288,6 +293,7 @@ def main():
     print("Test 1: Forward Pass")
     print("-" * 70)
 
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     x = torch.randn(args.size, dtype=torch.float32, device="cuda")
 
     # Custom square operation
@@ -316,6 +322,7 @@ def main():
     print("-" * 70)
 
     # Test with requires_grad
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     x_custom = torch.randn(
         args.size, dtype=torch.float32, device="cuda", requires_grad=True
     )
@@ -326,6 +333,7 @@ def main():
     y_reference = x_reference**2
 
     # Create upstream gradient
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     grad_output = torch.randn_like(y_custom)
 
     # Backward pass
@@ -351,6 +359,7 @@ def main():
     print("-" * 70)
 
     # Test with 2D tensor
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     x_2d = torch.randn(100, 100, dtype=torch.float32, device="cuda")
     y_2d_custom = square(x_2d)
     y_2d_reference = x_2d**2

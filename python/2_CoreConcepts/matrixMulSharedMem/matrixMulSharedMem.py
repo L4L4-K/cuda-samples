@@ -116,6 +116,7 @@ def run_matmul_benchmark(
     print("=" * 60)
 
     # Initialize device and stream
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     device = Device(device_id)
     device.set_current()
     stream = device.create_stream()
@@ -143,6 +144,7 @@ def run_matmul_benchmark(
     event_opts = EventOptions(enable_timing=True)
 
     # Allocate matrices
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     rng = cp.random.default_rng(42)
     d_A = rng.random((m, k), dtype=cp.float32)
     d_B = rng.random((k, n), dtype=cp.float32)

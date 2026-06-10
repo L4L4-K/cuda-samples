@@ -124,7 +124,9 @@ __global__ void cdp_simple_quicksort(unsigned int *data, int left, int right, in
     if ((lptr - data) < right) {
         cudaStream_t s1;
         cudaStreamCreateWithFlags(&s1, cudaStreamNonBlocking);
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         cdp_simple_quicksort<<<1, 1, 0, s1>>>(data, nleft, right, depth + 1);
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         cudaStreamDestroy(s1);
     }
 }
@@ -246,6 +248,7 @@ int main(int argc, char **argv)
     check_results(num_items, d_data);
 
     free(h_data);
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(d_data));
 
     exit(EXIT_SUCCESS);

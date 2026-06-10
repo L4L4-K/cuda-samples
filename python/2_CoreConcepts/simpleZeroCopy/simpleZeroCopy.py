@@ -225,6 +225,7 @@ def run(num_elements=1048576):
     finally:
         for h in reversed(mapped_host_ptrs):
             if h:
+                # JP: この anchor では pinned host memory の登録/確保/解放です。async transfer や overlap の条件と lifetime を確認します。
                 cuda_rt.cudaFreeHost(h)
         stream.close()
 

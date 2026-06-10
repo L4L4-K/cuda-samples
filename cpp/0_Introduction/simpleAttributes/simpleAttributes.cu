@@ -73,7 +73,7 @@ static __global__ void kernCacheSegmentTest(int *data, int dataSize, int *trash,
     uint32_t                psRand = tID;
 
     atomicExch(&hit, 0);
-    // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
     while (hit < hitCount) {
         psRand ^= psRand << 13;
@@ -141,6 +141,7 @@ void runTest(int argc, char **argv)
     }
 
     // Create stream to assiocate with window
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamCreate(&stream));
 
     // Set the amount of l2 cache that will be persisting to maximum the device
@@ -189,6 +190,7 @@ void runTest(int argc, char **argv)
     streamAttrValue.accessPolicyWindow = accessPolicyWindow;
 
     // Assign window to stream
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamSetAttribute(stream, streamAttrID, &streamAttrValue));
 
     // Demote any previous persisting lines

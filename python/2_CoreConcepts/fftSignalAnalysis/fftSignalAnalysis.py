@@ -90,6 +90,7 @@ def generate_composite_signal(
 
 
 def find_dominant_frequencies(
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     fft_magnitude: cp.ndarray,
     frequencies: cp.ndarray,
     num_peaks: int = 5,
@@ -119,6 +120,7 @@ def find_dominant_frequencies(
         List of (frequency, magnitude) tuples for detected peaks
     """
     # Find peaks above threshold
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     max_magnitude = float(cp.max(fft_magnitude))
     threshold = max_magnitude * threshold_ratio
 
@@ -173,6 +175,7 @@ def run_fft_analysis(
     print("=" * 60)
 
     # Initialize device
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     device = Device(device_id)
     device.set_current()
     stream = device.create_stream()
@@ -182,6 +185,7 @@ def run_fft_analysis(
         print(f"Compute Capability: sm_{device.arch}")
 
         # Make CuPy use our cuda.core stream
+        # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
         cp.cuda.Stream.from_external(stream).use()
 
         # Define test signal: composite of multiple frequencies
@@ -201,6 +205,7 @@ def run_fft_analysis(
         )
 
         # Transfer to GPU
+        # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
         d_signal = cp.asarray(h_signal)
 
         # ---------------------------------------------------------------------
@@ -214,6 +219,7 @@ def run_fft_analysis(
         event_opts = EventOptions(timing_enabled=True)
 
         # Warmup
+        # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
         d_fft_result = cp.fft.rfft(d_signal)
         stream.sync()
 
@@ -277,6 +283,7 @@ def run_fft_analysis(
 
         # Compare GPU and CPU results
         h_magnitude = (
+            # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
             cp.asarray(np.abs(h_fft_result).astype(np.float32)) * 2 / num_samples
         )
 
@@ -304,6 +311,7 @@ def run_fft_analysis(
 
     finally:
         # Cleanup - always close resources
+        # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
         cp.cuda.Stream.null.use()
         stream.close()
 

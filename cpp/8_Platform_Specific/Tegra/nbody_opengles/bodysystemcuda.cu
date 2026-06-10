@@ -126,6 +126,7 @@ template <typename T>
 __device__ typename vec3<T>::Type
 computeBodyAccel(typename vec4<T>::Type bodyPos, typename vec4<T>::Type *positions, int numTiles)
 {
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     typename vec4<T>::Type *sharedPos = SharedMemory<typename vec4<T>::Type>();
 
     typename vec3<T>::Type acc = {0.0f, 0.0f, 0.0f};
@@ -134,16 +135,17 @@ computeBodyAccel(typename vec4<T>::Type bodyPos, typename vec4<T>::Type *positio
         // JP: `threadIdx`, `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
         sharedPos[threadIdx.x] = positions[tile * blockDim.x + threadIdx.x];
 
-        // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         __syncthreads();
 
         // This is the "tile_calculation" from the GPUG3 article.
 #pragma unroll 128
 
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         for (unsigned int counter = 0; counter < blockDim.x; counter++) {
             acc = bodyBodyInteraction<T>(acc, bodyPos, sharedPos[counter]);
         }
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         __syncthreads();
     }
 
@@ -160,6 +162,7 @@ __global__ void integrateBodies(typename vec4<T>::Type *__restrict__ newPos,
                                 float                   damping,
                                 int                     numTiles)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int index = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (index >= deviceNumBodies) {
@@ -208,6 +211,7 @@ void integrateNbodySystem(DeviceData<T>         *deviceData,
                           bool                   bUsePBO)
 {
     if (bUsePBO) {
+        // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         checkCudaErrors(cudaGraphicsResourceSetMapFlags(pgres[currentRead], cudaGraphicsMapFlagsReadOnly));
         checkCudaErrors(cudaGraphicsResourceSetMapFlags(pgres[1 - currentRead], cudaGraphicsMapFlagsWriteDiscard));
         checkCudaErrors(cudaGraphicsMapResources(2, pgres, 0));
@@ -239,6 +243,7 @@ void integrateNbodySystem(DeviceData<T>         *deviceData,
                                                       numTiles);
 
         if (numDevices > 1) {
+            // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
             checkCudaErrors(cudaEventRecord(deviceData[dev].event));
             // MJH: Hack on older driver versions to force kernel launches to flush!
             cudaStreamQuery(0);
@@ -250,11 +255,13 @@ void integrateNbodySystem(DeviceData<T>         *deviceData,
 
     if (numDevices > 1) {
         for (unsigned int dev = 0; dev < numDevices; dev++) {
+            // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
             checkCudaErrors(cudaEventSynchronize(deviceData[dev].event));
         }
     }
 
     if (bUsePBO) {
+        // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         checkCudaErrors(cudaGraphicsUnmapResources(2, pgres, 0));
     }
 }
@@ -271,6 +278,7 @@ template void integrateNbodySystem<float>(DeviceData<float>     *deviceData,
                                           bool                   bUsePBO);
 
 template void integrateNbodySystem<double>(DeviceData<double>    *deviceData,
+                                           // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
                                            cudaGraphicsResource **pgres,
                                            unsigned int           currentRead,
                                            float                  deltaTime,

@@ -99,10 +99,13 @@ static __global__ void MonteCarloOneBlockPerOption(curandState *__restrict rngSt
     __shared__ real s_Sum2Call[SUM_N];
 
     // determine global thread id
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
 
     // Copy random number state to local memory for efficiency
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     curandState localState = rngStates[tid];
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     for (int optionIndex = blockIdx.x; optionIndex < optionN; optionIndex += gridDim.x) {
         const real S        = d_OptionData[optionIndex].S;
         const real X        = d_OptionData[optionIndex].X;
@@ -112,11 +115,13 @@ static __global__ void MonteCarloOneBlockPerOption(curandState *__restrict rngSt
         // Cycle through the entire samples array:
         // derive end stock price for each path
         // accumulate partial integrals into intermediate shared memory buffer
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         for (int iSum = threadIdx.x; iSum < SUM_N; iSum += blockDim.x) {
             __TOptionValue sumCall = {0, 0};
 
 #pragma unroll 8
             for (int i = iSum; i < pathN; i += SUM_N) {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 real r         = curand_normal(&localState);
                 real callValue = endCallValue(S, X, r, MuByT, VBySqrtT);
                 sumCall.Expected += callValue;
@@ -135,9 +140,11 @@ static __global__ void MonteCarloOneBlockPerOption(curandState *__restrict rngSt
     }
 }
 
+// JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
 static __global__ void rngSetupStates(curandState *rngState, int device_id)
 {
     // determine global thread id
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
     // Each threadblock gets different seed,
     // Threads within a threadblock get different sequence numbers
@@ -217,6 +224,7 @@ extern "C" void MonteCarloGPU(TOptionPlan *plan, cudaStream_t stream)
         h_OptionData[i].VBySqrtT = (real)VBySqrtT;
     }
 
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpyAsync(
         plan->d_OptionData, h_OptionData, plan->optionCount * sizeof(__TOptionData), cudaMemcpyHostToDevice, stream));
 
@@ -227,6 +235,7 @@ extern "C" void MonteCarloGPU(TOptionPlan *plan, cudaStream_t stream)
                                                                          plan->optionCount);
     getLastCudaError("MonteCarloOneBlockPerOption() execution failed\n");
 
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpyAsync(
         h_CallValue, plan->d_CallValue, plan->optionCount * sizeof(__TOptionValue), cudaMemcpyDeviceToHost, stream));
 

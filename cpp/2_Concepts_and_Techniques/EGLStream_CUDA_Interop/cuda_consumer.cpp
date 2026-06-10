@@ -179,6 +179,7 @@ CUresult cudaConsumerTest(test_cuda_consumer_s *data, const char *fileName)
                     cpdesc.Height       = copyHeight;       // data->height;
                     cpdesc.Depth        = 1;
 
+                    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                     cuStatus = cuMemcpy3D(&cpdesc);
                     if (cuStatus != CUDA_SUCCESS) {
                         printf("Cuda consumer: cuMemCpy3D failed,  copyWidthInBytes=%d, "
@@ -286,6 +287,7 @@ int checkbuf(FILE *fp1, FILE *fp2)
     return match;
 }
 
+// JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
 CUresult cudaDeviceCreateConsumer(test_cuda_consumer_s *cudaConsumer, CUdevice device)
 {
     CUresult status = CUDA_SUCCESS;
@@ -298,6 +300,7 @@ CUresult cudaDeviceCreateConsumer(test_cuda_consumer_s *cudaConsumer, CUdevice d
     char deviceName[256];
     checkCudaErrors(cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device));
     checkCudaErrors(cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device));
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuDeviceGetName(deviceName, 256, device));
     printf("CUDA Consumer on GPU Device %d: \"%s\" with compute capability "
            "%d.%d\n\n",

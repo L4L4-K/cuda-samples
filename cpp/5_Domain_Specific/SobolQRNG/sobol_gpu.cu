@@ -75,6 +75,7 @@ __global__ void sobolGPU_kernel(unsigned n_vectors, unsigned n_dimensions, unsig
 
     // Offset into the correct dimension as specified by the
     // block y coordinate
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     d_directions = d_directions + n_directions * blockIdx.y;
     d_output     = d_output + n_vectors * blockIdx.y;
 
@@ -91,6 +92,7 @@ __global__ void sobolGPU_kernel(unsigned n_vectors, unsigned n_dimensions, unsig
     // Set initial index (i.e. which vector this thread is
     // computing first) and stride (i.e. step to the next vector
     // for this thread)
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int i0     = threadIdx.x + blockIdx.x * blockDim.x;
     int stride = gridDim.x * blockDim.x;
 

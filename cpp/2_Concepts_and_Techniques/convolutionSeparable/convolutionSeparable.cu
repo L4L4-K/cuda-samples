@@ -70,6 +70,7 @@ __global__ void convolutionRowsKernel(float *d_Dst, float *d_Src, int imageW, in
 #pragma unroll
 
     for (int i = ROWS_HALO_STEPS; i < ROWS_HALO_STEPS + ROWS_RESULT_STEPS; i++) {
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         s_Data[threadIdx.y][threadIdx.x + i * ROWS_BLOCKDIM_X] = d_Src[i * ROWS_BLOCKDIM_X];
     }
 
@@ -100,6 +101,7 @@ __global__ void convolutionRowsKernel(float *d_Dst, float *d_Src, int imageW, in
 #pragma unroll
 
         for (int j = -KERNEL_RADIUS; j <= KERNEL_RADIUS; j++) {
+            // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             sum += c_Kernel[KERNEL_RADIUS - j] * s_Data[threadIdx.y][threadIdx.x + i * ROWS_BLOCKDIM_X + j];
         }
 
@@ -133,11 +135,14 @@ extern "C" void convolutionRowsGPU(float *d_Dst, float *d_Src, int imageW, int i
 __global__ void convolutionColumnsKernel(float *d_Dst, float *d_Src, int imageW, int imageH, int pitch)
 {
     // Handle to thread block group
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta = cg::this_thread_block();
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ float s_Data[COLUMNS_BLOCKDIM_X]
                            [(COLUMNS_RESULT_STEPS + 2 * COLUMNS_HALO_STEPS) * COLUMNS_BLOCKDIM_Y + 1];
 
     // Offset to the upper halo edge
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const int baseX = blockIdx.x * COLUMNS_BLOCKDIM_X + threadIdx.x;
     const int baseY = (blockIdx.y * COLUMNS_RESULT_STEPS - COLUMNS_HALO_STEPS) * COLUMNS_BLOCKDIM_Y + threadIdx.y;
     d_Src += baseY * pitch + baseX;
@@ -164,11 +169,13 @@ __global__ void convolutionColumnsKernel(float *d_Dst, float *d_Src, int imageW,
     for (int i = COLUMNS_HALO_STEPS + COLUMNS_RESULT_STEPS;
          i < COLUMNS_HALO_STEPS + COLUMNS_RESULT_STEPS + COLUMNS_HALO_STEPS;
          i++) {
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         s_Data[threadIdx.x][threadIdx.y + i * COLUMNS_BLOCKDIM_Y] =
             (imageH - baseY > i * COLUMNS_BLOCKDIM_Y) ? d_Src[i * COLUMNS_BLOCKDIM_Y * pitch] : 0;
     }
 
     // Compute and store results
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 #pragma unroll
 
@@ -177,6 +184,7 @@ __global__ void convolutionColumnsKernel(float *d_Dst, float *d_Src, int imageW,
 #pragma unroll
 
         for (int j = -KERNEL_RADIUS; j <= KERNEL_RADIUS; j++) {
+            // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             sum += c_Kernel[KERNEL_RADIUS - j] * s_Data[threadIdx.x][threadIdx.y + i * COLUMNS_BLOCKDIM_Y + j];
         }
 
@@ -193,6 +201,7 @@ extern "C" void convolutionColumnsGPU(float *d_Dst, float *d_Src, int imageW, in
     dim3 blocks(imageW / COLUMNS_BLOCKDIM_X, imageH / (COLUMNS_RESULT_STEPS * COLUMNS_BLOCKDIM_Y));
     dim3 threads(COLUMNS_BLOCKDIM_X, COLUMNS_BLOCKDIM_Y);
 
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     convolutionColumnsKernel<<<blocks, threads>>>(d_Dst, d_Src, imageW, imageH, imageW);
     getLastCudaError("convolutionColumnsKernel() execution failed\n");
 }

@@ -53,6 +53,7 @@ namespace npp
             Npp8u *
             Malloc1D(size_t nSize)
             {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 Npp8u *pResult = nppsMalloc_8u(static_cast<int>(nSize));
                 NPP_ASSERT(pResult != 0);
 
@@ -63,6 +64,7 @@ namespace npp
             void
             Free1D(Npp8u *pValues)
             {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 nppsFree(pValues);
             };
 
@@ -81,6 +83,7 @@ namespace npp
             HostToDeviceCopy1D(Npp8u *pDst, const Npp8u *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp8u), cudaMemcpyHostToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -90,6 +93,7 @@ namespace npp
             DeviceToHostCopy1D(Npp8u *pDst, const Npp8u *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp8u), cudaMemcpyDeviceToHost);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -103,6 +107,7 @@ namespace npp
             Npp16s *
             Malloc1D(size_t nSize)
             {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 Npp16s *pResult = nppsMalloc_16s(static_cast<int>(nSize));
                 NPP_ASSERT(pResult != 0);
 
@@ -113,6 +118,7 @@ namespace npp
             void
             Free1D(Npp16s *pValues)
             {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 nppsFree(pValues);
             };
 
@@ -121,6 +127,7 @@ namespace npp
             Copy1D(Npp16s *pDst, const Npp16s *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp16s),cudaMemcpyDeviceToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -130,6 +137,7 @@ namespace npp
             HostToDeviceCopy1D(Npp16s *pDst, const Npp16s *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp16s), cudaMemcpyHostToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -139,6 +147,7 @@ namespace npp
             DeviceToHostCopy1D(Npp16s *pDst, const Npp16s *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp16s), cudaMemcpyDeviceToHost);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -152,6 +161,7 @@ namespace npp
             Npp16u *
             Malloc1D(size_t nSize)
             {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 Npp16u *pResult = nppsMalloc_16u(static_cast<int>(nSize));
                 NPP_ASSERT(pResult != 0);
 
@@ -162,6 +172,7 @@ namespace npp
             void
             Free1D(Npp16u *pValues)
             {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 nppsFree(pValues);
             };
 
@@ -170,6 +181,7 @@ namespace npp
             Copy1D(Npp16u *pDst, const Npp16u *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp16u),cudaMemcpyDeviceToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -179,6 +191,7 @@ namespace npp
             HostToDeviceCopy1D(Npp16u *pDst, const Npp16u *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp16u), cudaMemcpyHostToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -188,6 +201,7 @@ namespace npp
             DeviceToHostCopy1D(Npp16u *pDst, const Npp16u *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp16u), cudaMemcpyDeviceToHost);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -201,6 +215,7 @@ namespace npp
             Npp16sc *
             Malloc1D(size_t nSize)
             {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 Npp16sc *pResult = nppsMalloc_16sc(static_cast<int>(nSize));
                 NPP_ASSERT(pResult != 0);
 
@@ -211,6 +226,7 @@ namespace npp
             void
             Free1D(Npp16sc *pValues)
             {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 nppsFree(pValues);
             };
 
@@ -219,6 +235,7 @@ namespace npp
             Copy1D(Npp16sc *pDst, const Npp16sc *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp16sc),cudaMemcpyDeviceToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -228,6 +245,7 @@ namespace npp
             HostToDeviceCopy1D(Npp16sc *pDst, const Npp16sc *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp16sc), cudaMemcpyHostToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -237,6 +255,7 @@ namespace npp
             DeviceToHostCopy1D(Npp16sc *pDst, const Npp16sc *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp16sc), cudaMemcpyDeviceToHost);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -250,6 +269,7 @@ namespace npp
             Npp32u *
             Malloc1D(size_t nSize)
             {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 Npp32u *pResult = nppsMalloc_32u(static_cast<int>(nSize));
                 NPP_ASSERT(pResult != 0);
 
@@ -260,6 +280,7 @@ namespace npp
             void
             Free1D(Npp32u *pValues)
             {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 nppsFree(pValues);
             };
 
@@ -268,6 +289,7 @@ namespace npp
             Copy1D(Npp32u *pDst, const Npp32u *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp32u),cudaMemcpyDeviceToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -277,6 +299,7 @@ namespace npp
             HostToDeviceCopy1D(Npp32u *pDst, const Npp32u *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp32u), cudaMemcpyHostToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -286,6 +309,7 @@ namespace npp
             DeviceToHostCopy1D(Npp32u *pDst, const Npp32u *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp32u), cudaMemcpyDeviceToHost);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -299,6 +323,7 @@ namespace npp
             Npp32s *
             Malloc1D(size_t nSize)
             {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 Npp32s *pResult = nppsMalloc_32s(static_cast<int>(nSize));
                 NPP_ASSERT(pResult != 0);
 
@@ -309,6 +334,7 @@ namespace npp
             void
             Free1D(Npp32s *pValues)
             {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 nppsFree(pValues);
             };
 
@@ -317,6 +343,7 @@ namespace npp
             Copy1D(Npp32s *pDst, const Npp32s *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp32s),cudaMemcpyDeviceToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -326,6 +353,7 @@ namespace npp
             HostToDeviceCopy1D(Npp32s *pDst, const Npp32s *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp32s), cudaMemcpyHostToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -335,6 +363,7 @@ namespace npp
             DeviceToHostCopy1D(Npp32s *pDst, const Npp32s *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp32s), cudaMemcpyDeviceToHost);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -348,6 +377,7 @@ namespace npp
             Npp32sc *
             Malloc1D(size_t nSize)
             {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 Npp32sc *pResult = nppsMalloc_32sc(static_cast<int>(nSize));
                 NPP_ASSERT(pResult != 0);
 
@@ -358,6 +388,7 @@ namespace npp
             void
             Free1D(Npp32sc *pValues)
             {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 nppsFree(pValues);
             };
 
@@ -366,6 +397,7 @@ namespace npp
             Copy1D(Npp32sc *pDst, const Npp32sc *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp32sc),cudaMemcpyDeviceToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -375,6 +407,7 @@ namespace npp
             HostToDeviceCopy1D(Npp32sc *pDst, const Npp32sc *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp32sc), cudaMemcpyHostToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -384,6 +417,7 @@ namespace npp
             DeviceToHostCopy1D(Npp32sc *pDst, const Npp32sc *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp32sc), cudaMemcpyDeviceToHost);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -397,6 +431,7 @@ namespace npp
             Npp32f *
             Malloc1D(size_t nSize)
             {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 Npp32f *pResult = nppsMalloc_32f(static_cast<int>(nSize));
                 NPP_ASSERT(pResult != 0);
 
@@ -407,6 +442,7 @@ namespace npp
             void
             Free1D(Npp32f *pValues)
             {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 nppsFree(pValues);
             };
 
@@ -415,6 +451,7 @@ namespace npp
             Copy1D(Npp32f *pDst, const Npp32f *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp32f),cudaMemcpyDeviceToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -424,6 +461,7 @@ namespace npp
             HostToDeviceCopy1D(Npp32f *pDst, const Npp32f *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp32f), cudaMemcpyHostToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -433,6 +471,7 @@ namespace npp
             DeviceToHostCopy1D(Npp32f *pDst, const Npp32f *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp32f), cudaMemcpyDeviceToHost);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -446,6 +485,7 @@ namespace npp
             Npp32fc *
             Malloc1D(size_t nSize)
             {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 Npp32fc *pResult = nppsMalloc_32fc(static_cast<int>(nSize));
                 NPP_ASSERT(pResult != 0);
 
@@ -456,6 +496,7 @@ namespace npp
             void
             Free1D(Npp32fc *pValues)
             {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 nppsFree(pValues);
             };
 
@@ -464,6 +505,7 @@ namespace npp
             Copy1D(Npp32fc *pDst, const Npp32fc *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp32fc),cudaMemcpyDeviceToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -473,6 +515,7 @@ namespace npp
             HostToDeviceCopy1D(Npp32fc *pDst, const Npp32fc *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp32fc), cudaMemcpyHostToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -482,6 +525,7 @@ namespace npp
             DeviceToHostCopy1D(Npp32fc *pDst, const Npp32fc *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp32fc), cudaMemcpyDeviceToHost);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -495,6 +539,7 @@ namespace npp
             Npp64s *
             Malloc1D(size_t nSize)
             {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 Npp64s *pResult = nppsMalloc_64s(static_cast<int>(nSize));
                 NPP_ASSERT(pResult != 0);
 
@@ -505,6 +550,7 @@ namespace npp
             void
             Free1D(Npp64s *pValues)
             {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 nppsFree(pValues);
             };
 
@@ -513,6 +559,7 @@ namespace npp
             Copy1D(Npp64s *pDst, const Npp64s *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp64s),cudaMemcpyDeviceToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -522,6 +569,7 @@ namespace npp
             HostToDeviceCopy1D(Npp64s *pDst, const Npp64s *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp64s), cudaMemcpyHostToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -531,6 +579,7 @@ namespace npp
             DeviceToHostCopy1D(Npp64s *pDst, const Npp64s *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp64s), cudaMemcpyDeviceToHost);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -544,6 +593,7 @@ namespace npp
             Npp64sc *
             Malloc1D(size_t nSize)
             {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 Npp64sc *pResult = nppsMalloc_64sc(static_cast<int>(nSize));
                 NPP_ASSERT(pResult != 0);
 
@@ -554,6 +604,7 @@ namespace npp
             void
             Free1D(Npp64sc *pValues)
             {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 nppsFree(pValues);
             };
 
@@ -562,6 +613,7 @@ namespace npp
             Copy1D(Npp64sc *pDst, const Npp64sc *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp64sc),cudaMemcpyDeviceToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -571,6 +623,7 @@ namespace npp
             HostToDeviceCopy1D(Npp64sc *pDst, const Npp64sc *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp64sc), cudaMemcpyHostToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -580,6 +633,7 @@ namespace npp
             DeviceToHostCopy1D(Npp64sc *pDst, const Npp64sc *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp64sc), cudaMemcpyDeviceToHost);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -593,6 +647,7 @@ namespace npp
             Npp64f *
             Malloc1D(size_t nSize)
             {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 Npp64f *pResult = nppsMalloc_64f(static_cast<int>(nSize));
                 NPP_ASSERT(pResult != 0);
 
@@ -603,6 +658,7 @@ namespace npp
             void
             Free1D(Npp64f *pValues)
             {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 nppsFree(pValues);
             };
 
@@ -611,6 +667,7 @@ namespace npp
             Copy1D(Npp64f *pDst, const Npp64f *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp64f),cudaMemcpyDeviceToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -620,6 +677,7 @@ namespace npp
             HostToDeviceCopy1D(Npp64f *pDst, const Npp64f *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp64f), cudaMemcpyHostToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -629,6 +687,7 @@ namespace npp
             DeviceToHostCopy1D(Npp64f *pDst, const Npp64f *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp64f), cudaMemcpyDeviceToHost);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -642,6 +701,7 @@ namespace npp
             Npp64fc *
             Malloc1D(size_t nSize)
             {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 Npp64fc *pResult = nppsMalloc_64fc(static_cast<int>(nSize));
                 NPP_ASSERT(pResult != 0);
 
@@ -652,6 +712,7 @@ namespace npp
             void
             Free1D(Npp64fc *pValues)
             {
+                // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 nppsFree(pValues);
             };
 
@@ -660,6 +721,7 @@ namespace npp
             Copy1D(Npp64fc *pDst, const Npp64fc *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp64fc),cudaMemcpyDeviceToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -669,6 +731,7 @@ namespace npp
             HostToDeviceCopy1D(Npp64fc *pDst, const Npp64fc *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp64fc), cudaMemcpyHostToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };
@@ -678,6 +741,7 @@ namespace npp
             DeviceToHostCopy1D(Npp64fc *pDst, const Npp64fc *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp64fc), cudaMemcpyDeviceToHost);
                 NPP_ASSERT(cudaSuccess == eResult);
             };

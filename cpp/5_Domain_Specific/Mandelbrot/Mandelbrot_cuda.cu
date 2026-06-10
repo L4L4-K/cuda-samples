@@ -126,6 +126,7 @@ __global__ void MandelbrotDS0(uchar4      *dst,
                               const bool   isJ)
 {
     // loop until all blocks completed
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     for (unsigned int blockIndex = blockIdx.x; blockIndex < numBlocks; blockIndex += gridDim.x) {
         unsigned int blockX = blockIndex % gridWidth;
         unsigned int blockY = blockIndex / gridWidth;
@@ -199,6 +200,7 @@ __global__ void Mandelbrot1(uchar4      *dst,
                             const bool   isJ)
 {
     // loop until all blocks completed
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     for (unsigned int blockIndex = blockIdx.x; blockIndex < numBlocks; blockIndex += gridDim.x) {
         unsigned int blockX = blockIndex % gridWidth;
         unsigned int blockY = blockIndex / gridWidth;
@@ -287,6 +289,7 @@ __global__ void MandelbrotDS1(uchar4      *dst,
                               const bool   isJ)
 {
     // loop until all blocks completed
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     for (unsigned int blockIndex = blockIdx.x; blockIndex < numBlocks; blockIndex += gridDim.x) {
         unsigned int blockX = blockIndex % gridWidth;
         unsigned int blockY = blockIndex / gridWidth;
@@ -405,6 +408,7 @@ void RunMandelbrot0(uchar4      *dst,
         float x0, x1, y0, y1;
         dsdeq(x0, x1, xOff);
         dsdeq(y0, y1, yOff);
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         MandelbrotDS0<<<numWorkerBlocks, threads>>>(dst,
                                                     imageW,
                                                     imageH,
@@ -424,6 +428,7 @@ void RunMandelbrot0(uchar4      *dst,
                                                     isJ);
         break;
     case 2:
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         Mandelbrot0<double><<<numWorkerBlocks, threads>>>(dst,
                                                           imageW,
                                                           imageH,
@@ -471,6 +476,7 @@ void RunMandelbrot1(uchar4      *dst,
     switch (mode) {
     default:
     case 0:
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         Mandelbrot1<float><<<numWorkerBlocks, threads>>>(dst,
                                                          imageW,
                                                          imageH,
@@ -491,6 +497,7 @@ void RunMandelbrot1(uchar4      *dst,
         float x0, x1, y0, y1;
         dsdeq(x0, x1, xOff);
         dsdeq(y0, y1, yOff);
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         MandelbrotDS1<<<numWorkerBlocks, threads>>>(dst,
                                                     imageW,
                                                     imageH,
@@ -510,6 +517,7 @@ void RunMandelbrot1(uchar4      *dst,
                                                     isJ);
         break;
     case 2:
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         Mandelbrot1<double><<<numWorkerBlocks, threads>>>(dst,
                                                           imageW,
                                                           imageH,

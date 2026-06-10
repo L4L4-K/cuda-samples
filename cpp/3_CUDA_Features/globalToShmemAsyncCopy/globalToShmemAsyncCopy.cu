@@ -115,6 +115,7 @@ __global__ void MatrixMulAsyncCopyMultiStageLargeChunk(float *__restrict__ C,
     int aStep = BLOCK_SIZE;
 
     // Index of the first sub-matrix of B processed by the block
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const int bBegin = BLOCK_SIZE * blockIdx.x;
 
     // Step size used to iterate through the sub-matrices of B
@@ -136,6 +137,7 @@ __global__ void MatrixMulAsyncCopyMultiStageLargeChunk(float *__restrict__ C,
             if (aStage <= aEnd && t4x < BLOCK_SIZE) {
                 // Rotating buffer
                 const int j = iStage % maxPipelineStages;
+                // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
                 cuda::memcpy_async(&As[j][threadIdx.y][t4x], &A[aStage + wA * threadIdx.y + t4x], shape4, pipe);
                 cuda::memcpy_async(&Bs[j][threadIdx.y][t4x], &B[aStage + wA * threadIdx.y + t4x], shape4, pipe);
             }
@@ -144,7 +146,7 @@ __global__ void MatrixMulAsyncCopyMultiStageLargeChunk(float *__restrict__ C,
 
         pipe.consumer_wait();
         // Synchronize to make sure the matrices are loaded
-        // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         __syncthreads();
 
         // Rotating buffer
@@ -155,6 +157,7 @@ __global__ void MatrixMulAsyncCopyMultiStageLargeChunk(float *__restrict__ C,
 // of the block sub-matrix
 #pragma unroll
         for (int k = 0; k < BLOCK_SIZE; ++k) {
+            // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             Csub += As[j][threadIdx.y][k] * Bs[j][k][threadIdx.x];
         }
         pipe.consumer_release();
@@ -165,6 +168,7 @@ __global__ void MatrixMulAsyncCopyMultiStageLargeChunk(float *__restrict__ C,
 
     // Write the block sub-matrix to device memory;
     // each thread writes four element
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int c                                 = wB * BLOCK_SIZE * blockIdx.y + BLOCK_SIZE * blockIdx.x;
     C[c + wB * threadIdx.y + threadIdx.x] = Csub;
 }
@@ -181,6 +185,7 @@ __global__ void MatrixMulAsyncCopyLargeChunk(float *__restrict__ C,
 
     // Declaration of the shared memory array As used to
     // store the sub-matrix of A
+    // JP: この連続する anchor 群では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ alignas(alignof(float4)) float As[BLOCK_SIZE][BLOCK_SIZE];
 
     // Declaration of the shared memory array Bs used to
@@ -188,6 +193,7 @@ __global__ void MatrixMulAsyncCopyLargeChunk(float *__restrict__ C,
     __shared__ alignas(alignof(float4)) float Bs[BLOCK_SIZE][BLOCK_SIZE];
 
     // Index of the first sub-matrix of A processed by the block
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int aBegin = wA * BLOCK_SIZE * blockIdx.y;
 
     // Index of the last sub-matrix of A processed by the block
@@ -197,6 +203,7 @@ __global__ void MatrixMulAsyncCopyLargeChunk(float *__restrict__ C,
     int aStep = BLOCK_SIZE;
 
     // Index of the first sub-matrix of B processed by the block
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int bBegin = BLOCK_SIZE * blockIdx.x;
 
     // Step size used to iterate through the sub-matrices of B
@@ -223,6 +230,7 @@ __global__ void MatrixMulAsyncCopyLargeChunk(float *__restrict__ C,
         if (t4x < BLOCK_SIZE) {
             pipe.producer_acquire();
 
+            // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             cuda::memcpy_async(&As[threadIdx.y][t4x], &A[a + wA * threadIdx.y + t4x], shape4, pipe);
             cuda::memcpy_async(&Bs[threadIdx.y][t4x], &B[a + wA * threadIdx.y + t4x], shape4, pipe);
 
@@ -231,6 +239,7 @@ __global__ void MatrixMulAsyncCopyLargeChunk(float *__restrict__ C,
         }
 
         // Synchronize to make sure the matrices are loaded
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         __syncthreads();
 
 // Multiply the two matrices together;
@@ -238,6 +247,7 @@ __global__ void MatrixMulAsyncCopyLargeChunk(float *__restrict__ C,
 // of the block sub-matrix
 #pragma unroll
         for (int k = 0; k < BLOCK_SIZE; ++k) {
+            // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             Csub += As[threadIdx.y][k] * Bs[k][threadIdx.x];
         }
 
@@ -246,11 +256,13 @@ __global__ void MatrixMulAsyncCopyLargeChunk(float *__restrict__ C,
         // Synchronize to make sure that the preceding
         // computation is done before overwriting the
         // shared memory sub-matrix buffers As and Bs in the next iteration.
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         __syncthreads();
     }
 
     // Write the block sub-matrix to device memory;
     // each thread writes four element
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int c                                 = wB * BLOCK_SIZE * blockIdx.y + BLOCK_SIZE * blockIdx.x;
     C[c + wB * threadIdx.y + threadIdx.x] = Csub;
 }
@@ -268,6 +280,7 @@ __global__ void MatrixMulAsyncCopyLargeChunkAWBarrier(float *__restrict__ C,
 #pragma diag_suppress static_var_with_dynamic_init
     // Requires BLOCK_SIZE % 4 == 0
 
+    // JP: この連続する anchor 群では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ cuda::barrier<cuda::thread_scope_block> bar;
 
     // Declaration of the shared memory array As used to
@@ -278,12 +291,15 @@ __global__ void MatrixMulAsyncCopyLargeChunkAWBarrier(float *__restrict__ C,
     // store the sub-matrix of B
     __shared__ alignas(alignof(float4)) float Bs[BLOCK_SIZE][BLOCK_SIZE];
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x == 0) {
         init(&bar, blockDim.x * blockDim.y);
     }
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
 
     // Index of the first sub-matrix of A processed by the block
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int aBegin = wA * BLOCK_SIZE * blockIdx.y;
 
     // Index of the last sub-matrix of A processed by the block
@@ -293,6 +309,7 @@ __global__ void MatrixMulAsyncCopyLargeChunkAWBarrier(float *__restrict__ C,
     int aStep = BLOCK_SIZE;
 
     // Index of the first sub-matrix of B processed by the block
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int bBegin = BLOCK_SIZE * blockIdx.x;
 
     // Step size used to iterate through the sub-matrices of B
@@ -310,6 +327,7 @@ __global__ void MatrixMulAsyncCopyLargeChunkAWBarrier(float *__restrict__ C,
 
         // Now, one fourth of the threads load four elements of each matrix
         if (t4x < BLOCK_SIZE) {
+            // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             float4 *const       A4s = reinterpret_cast<float4 *>(&As[threadIdx.y][t4x]);
             float4 *const       B4s = reinterpret_cast<float4 *>(&Bs[threadIdx.y][t4x]);
             const float4 *const A4  = reinterpret_cast<const float4 *>(&A[a + wA * threadIdx.y + t4x]);
@@ -327,6 +345,7 @@ __global__ void MatrixMulAsyncCopyLargeChunkAWBarrier(float *__restrict__ C,
 // of the block sub-matrix
 #pragma unroll
         for (int k = 0; k < BLOCK_SIZE; ++k) {
+            // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             Csub += As[threadIdx.y][k] * Bs[k][threadIdx.x];
         }
 
@@ -338,6 +357,7 @@ __global__ void MatrixMulAsyncCopyLargeChunkAWBarrier(float *__restrict__ C,
 
     // Write the block sub-matrix to device memory;
     // each thread writes four element
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int c                                 = wB * BLOCK_SIZE * blockIdx.y + BLOCK_SIZE * blockIdx.x;
     C[c + wB * threadIdx.y + threadIdx.x] = Csub;
 #endif
@@ -349,6 +369,7 @@ __global__ void MatrixMulAsyncCopySingleStage(float *C, const float *A, const fl
 {
     // Declaration of the shared memory array As used to
     // store the sub-matrix of A
+    // JP: この連続する anchor 群では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ float As[BLOCK_SIZE][BLOCK_SIZE];
 
     // Declaration of the shared memory array Bs used to
@@ -356,6 +377,7 @@ __global__ void MatrixMulAsyncCopySingleStage(float *C, const float *A, const fl
     __shared__ float Bs[BLOCK_SIZE][BLOCK_SIZE];
 
     // Index of the first sub-matrix of A processed by the block
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int aBegin = wA * BLOCK_SIZE * blockIdx.y;
 
     // Index of the last sub-matrix of A processed by the block
@@ -365,6 +387,7 @@ __global__ void MatrixMulAsyncCopySingleStage(float *C, const float *A, const fl
     int aStep = BLOCK_SIZE;
 
     // Index of the first sub-matrix of B processed by the block
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int bBegin = BLOCK_SIZE * blockIdx.x;
 
     // Step size used to iterate through the sub-matrices of B
@@ -384,6 +407,7 @@ __global__ void MatrixMulAsyncCopySingleStage(float *C, const float *A, const fl
         {
             pipe.producer_acquire();
 
+            // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             cuda::memcpy_async(&As[threadIdx.y][threadIdx.x], &A[a + wA * threadIdx.y + threadIdx.x], shape1, pipe);
             cuda::memcpy_async(&Bs[threadIdx.y][threadIdx.x], &B[b + wB * threadIdx.y + threadIdx.x], shape1, pipe);
 
@@ -392,6 +416,7 @@ __global__ void MatrixMulAsyncCopySingleStage(float *C, const float *A, const fl
 
         pipe.consumer_wait();
         // Synchronize to make sure the matrices are loaded
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         __syncthreads();
 
 // Multiply the two matrices together;
@@ -399,17 +424,20 @@ __global__ void MatrixMulAsyncCopySingleStage(float *C, const float *A, const fl
 // of the block sub-matrix
 #pragma unroll
         for (int k = 0; k < BLOCK_SIZE; ++k) {
+            // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             Csub += As[threadIdx.y][k] * Bs[k][threadIdx.x];
         }
 
         // Synchronize to make sure that the preceding
         // computation is done before overwriting the
         // shared memory sub-matrix buffers As and Bs in the next iteration.
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         __syncthreads();
     }
 
     // Write the block sub-matrix to device memory;
     // each thread writes four element
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int c                                 = wB * BLOCK_SIZE * blockIdx.y + BLOCK_SIZE * blockIdx.x;
     C[c + wB * threadIdx.y + threadIdx.x] = Csub;
 }
@@ -428,6 +456,7 @@ __global__ void MatrixMulAsyncCopyMultiStage(float *__restrict__ C,
 
     // Declaration of the shared memory array As used to
     // store the sub-matrix of A for each stage
+    // JP: この連続する anchor 群では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ float As[maxPipelineStages][BLOCK_SIZE][BLOCK_SIZE];
 
     // Declaration of the shared memory array Bs used to
@@ -437,6 +466,7 @@ __global__ void MatrixMulAsyncCopyMultiStage(float *__restrict__ C,
     float Csub = 0.0;
 
     // Index of the first sub-matrix of A processed by the block
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const int aBegin = wA * BLOCK_SIZE * blockIdx.y;
 
     // Index of the last sub-matrix of A processed by the block
@@ -446,6 +476,7 @@ __global__ void MatrixMulAsyncCopyMultiStage(float *__restrict__ C,
     int aStep = BLOCK_SIZE;
 
     // Index of the first sub-matrix of B processed by the block
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const int bBegin = BLOCK_SIZE * blockIdx.x;
 
     // Step size used to iterate through the sub-matrices of B
@@ -469,6 +500,7 @@ __global__ void MatrixMulAsyncCopyMultiStage(float *__restrict__ C,
                 pipe.producer_acquire();
 
                 cuda::memcpy_async(
+                    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
                     &As[j][threadIdx.y][threadIdx.x], &A[aStage + wA * threadIdx.y + threadIdx.x], shape1, pipe);
                 cuda::memcpy_async(
                     &Bs[j][threadIdx.y][threadIdx.x], &B[bStage + wB * threadIdx.y + threadIdx.x], shape1, pipe);
@@ -479,6 +511,7 @@ __global__ void MatrixMulAsyncCopyMultiStage(float *__restrict__ C,
         pipe.consumer_wait();
 
         // Synchronize to make sure the matrices are loaded
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         __syncthreads();
 
         const int j = i % maxPipelineStages;
@@ -487,6 +520,7 @@ __global__ void MatrixMulAsyncCopyMultiStage(float *__restrict__ C,
         // each thread computes one element
         // of the block sub-matrix
         for (int k = 0; k < BLOCK_SIZE; ++k) {
+            // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             Csub += As[j][threadIdx.y][k] * Bs[j][k][threadIdx.x];
         }
 
@@ -497,6 +531,7 @@ __global__ void MatrixMulAsyncCopyMultiStage(float *__restrict__ C,
 
     // Write the block sub-matrix to device memory;
     // each thread writes four element
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int c                                 = wB * BLOCK_SIZE * blockIdx.y + BLOCK_SIZE * blockIdx.x;
     C[c + wB * threadIdx.y + threadIdx.x] = Csub;
 }
@@ -518,6 +553,7 @@ __global__ void MatrixMulAsyncCopyMultiStageSharedState(float *__restrict__ C,
 
     // Declaration of the shared memory array As used to
     // store the sub-matrix of A for each stage
+    // JP: この連続する anchor 群では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ float As[maxPipelineStages][BLOCK_SIZE_X][BLOCK_SIZE_X];
 
     // Declaration of the shared memory array Bs used to
@@ -527,6 +563,7 @@ __global__ void MatrixMulAsyncCopyMultiStageSharedState(float *__restrict__ C,
     float Csub = 0.0;
 
     // Index of the first sub-matrix of A processed by the block
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const int aBegin = wA * BLOCK_SIZE_X * blockIdx.y;
 
     // Index of the last sub-matrix of A processed by the block
@@ -536,6 +573,7 @@ __global__ void MatrixMulAsyncCopyMultiStageSharedState(float *__restrict__ C,
     constexpr int aStep = BLOCK_SIZE_X;
 
     // Index of the first sub-matrix of B processed by the block
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const int bBegin = BLOCK_SIZE_X * blockIdx.x;
 
     // Step size used to iterate through the sub-matrices of B
@@ -544,6 +582,7 @@ __global__ void MatrixMulAsyncCopyMultiStageSharedState(float *__restrict__ C,
     auto cta = cg::this_thread_block();
 
     const auto shape1 = cuda::aligned_size_t<alignof(float)>(sizeof(float));
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ cuda::pipeline_shared_state<cuda::thread_scope_block, maxPipelineStages> shared_state;
     constexpr int consumer_row_count = BLOCK_SIZE_X;
 
@@ -555,6 +594,7 @@ __global__ void MatrixMulAsyncCopyMultiStageSharedState(float *__restrict__ C,
     // required to compute the block sub-matrix
     for (int a = aBegin, b = bBegin, i = 0, aStage = aBegin, bStage = bBegin, iStage = 0; a <= aEnd;
          a += aStep, b += bStep, ++i) {
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         if (threadIdx.y >= consumer_row_count) {
             // this is a whole producer warp because threadIdx.y >= 16 where 16 ==
             // consumer_row_count,
@@ -589,6 +629,7 @@ __global__ void MatrixMulAsyncCopyMultiStageSharedState(float *__restrict__ C,
 // of the block sub-matrix
 #pragma unroll
             for (int k = 0; k < BLOCK_SIZE_X; ++k) {
+                // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
                 Csub += As[j][threadIdx.y][k] * Bs[j][k][threadIdx.x];
             }
             pipe.consumer_release();
@@ -611,6 +652,7 @@ template <int BLOCK_SIZE> __global__ void MatrixMulNaive(float *C, float *A, flo
 {
     // Declaration of the shared memory array As used to
     // store the sub-matrix of A
+    // JP: この連続する anchor 群では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ float As[BLOCK_SIZE][BLOCK_SIZE];
 
     // Declaration of the shared memory array Bs used to
@@ -618,6 +660,7 @@ template <int BLOCK_SIZE> __global__ void MatrixMulNaive(float *C, float *A, flo
     __shared__ float Bs[BLOCK_SIZE][BLOCK_SIZE];
 
     // Index of the first sub-matrix of A processed by the block
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int aBegin = wA * BLOCK_SIZE * blockIdx.y;
 
     // Index of the last sub-matrix of A processed by the block
@@ -627,6 +670,7 @@ template <int BLOCK_SIZE> __global__ void MatrixMulNaive(float *C, float *A, flo
     int aStep = BLOCK_SIZE;
 
     // Index of the first sub-matrix of B processed by the block
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int bBegin = BLOCK_SIZE * blockIdx.x;
 
     // Step size used to iterate through the sub-matrices of B
@@ -642,10 +686,12 @@ template <int BLOCK_SIZE> __global__ void MatrixMulNaive(float *C, float *A, flo
         // Load the matrices from device memory
         // to shared memory; each thread loads
         // one element of each matrix
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         As[threadIdx.y][threadIdx.x] = A[a + wA * threadIdx.y + threadIdx.x];
         Bs[threadIdx.y][threadIdx.x] = B[b + wB * threadIdx.y + threadIdx.x];
 
         // Synchronize to make sure the matrices are loaded
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         __syncthreads();
 
 // Multiply the two matrices together;
@@ -653,17 +699,20 @@ template <int BLOCK_SIZE> __global__ void MatrixMulNaive(float *C, float *A, flo
 // of the block sub-matrix
 #pragma unroll
         for (int k = 0; k < BLOCK_SIZE; ++k) {
+            // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             Csub += As[threadIdx.y][k] * Bs[k][threadIdx.x];
         }
 
         // Synchronize to make sure that the preceding
         // computation is done before loading two new
         // sub-matrices of A and B in the next iteration
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         __syncthreads();
     }
 
     // Write the block sub-matrix to device memory;
     // each thread writes one element
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int c                                 = wB * BLOCK_SIZE * blockIdx.y + BLOCK_SIZE * blockIdx.x;
     C[c + wB * threadIdx.y + threadIdx.x] = Csub;
 }
@@ -672,12 +721,14 @@ template <int BLOCK_SIZE> __global__ void MatrixMulNaiveLargeChunk(float *C, flo
 {
     // Declaration of the shared memory array As used to
     // store the sub-matrix of A
+    // JP: この連続する anchor 群では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ alignas(alignof(float4)) float As[BLOCK_SIZE][BLOCK_SIZE];
 
     // Declaration of the shared memory array Bs used to
     // store the sub-matrix of B
     __shared__ alignas(alignof(float4)) float Bs[BLOCK_SIZE][BLOCK_SIZE];
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int t4x = threadIdx.x * 4;
 
     // Index of the first sub-matrix of A processed by the block
@@ -690,6 +741,7 @@ template <int BLOCK_SIZE> __global__ void MatrixMulNaiveLargeChunk(float *C, flo
     int aStep = BLOCK_SIZE;
 
     // Index of the first sub-matrix of B processed by the block
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int bBegin = BLOCK_SIZE * blockIdx.x;
 
     // Step size used to iterate through the sub-matrices of B
@@ -707,6 +759,7 @@ template <int BLOCK_SIZE> __global__ void MatrixMulNaiveLargeChunk(float *C, flo
 
         // One fourth of the threads load four elements of each matrix
         if (t4x < BLOCK_SIZE) {
+            // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             float4 *const       A4s = reinterpret_cast<float4 *>(&As[threadIdx.y][t4x]);
             float4 *const       B4s = reinterpret_cast<float4 *>(&Bs[threadIdx.y][t4x]);
             const float4 *const A4  = reinterpret_cast<float4 *>(&A[a + wA * threadIdx.y + t4x]);
@@ -716,6 +769,7 @@ template <int BLOCK_SIZE> __global__ void MatrixMulNaiveLargeChunk(float *C, flo
         }
 
         // Synchronize to make sure the matrices are loaded
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         __syncthreads();
 
 // Multiply the two matrices together;
@@ -723,17 +777,20 @@ template <int BLOCK_SIZE> __global__ void MatrixMulNaiveLargeChunk(float *C, flo
 // of the block sub-matrix
 #pragma unroll
         for (int k = 0; k < BLOCK_SIZE; ++k) {
+            // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             Csub += As[threadIdx.y][k] * Bs[k][threadIdx.x];
         }
 
         // Synchronize to make sure that the preceding
         // computation is done before loading two new
         // sub-matrices of A and B in the next iteration
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         __syncthreads();
     }
 
     // Write the block sub-matrix to device memory;
     // each thread writes one element
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int c                                 = wB * BLOCK_SIZE * blockIdx.y + BLOCK_SIZE * blockIdx.x;
     C[c + wB * threadIdx.y + threadIdx.x] = Csub;
 }
@@ -775,6 +832,7 @@ int MatrixMultiply(int argc, char **argv, const dim3 &dimsA, const dim3 &dimsB, 
     dim3         dimsC(dimsB.x, dimsA.y, 1);
     unsigned int mem_size_C = dimsC.x * dimsC.y * sizeof(float);
     float       *h_C;
+    // JP: この anchor では pinned host memory の登録/確保/解放です。async transfer や overlap の条件と lifetime を確認します。
     checkCudaErrors(cudaMallocHost(&h_C, mem_size_C));
 
     if (h_C == NULL) {
@@ -787,6 +845,7 @@ int MatrixMultiply(int argc, char **argv, const dim3 &dimsA, const dim3 &dimsB, 
     checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&d_B), mem_size_B));
     checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&d_C), mem_size_C));
     // Allocate CUDA events that we'll use for timing
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaEvent_t start, stop;
     checkCudaErrors(cudaEventCreate(&start));
     checkCudaErrors(cudaEventCreate(&stop));
@@ -845,6 +904,7 @@ int MatrixMultiply(int argc, char **argv, const dim3 &dimsA, const dim3 &dimsB, 
     }
 
     printf("done\n");
+    // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaStreamSynchronize(stream));
 
     // Execute the kernel
@@ -858,6 +918,7 @@ int MatrixMultiply(int argc, char **argv, const dim3 &dimsA, const dim3 &dimsB, 
         case AsyncCopyMultiStageLargeChunk:
         default:
             MatrixMulAsyncCopyMultiStageLargeChunk<blockSize>
+                // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
                 <<<grid, threads, 0, stream>>>(d_C, d_A, d_B, dimsA.x, dimsB.x);
             break;
         case AsyncCopyLargeChunk:
@@ -887,6 +948,7 @@ int MatrixMultiply(int argc, char **argv, const dim3 &dimsA, const dim3 &dimsB, 
     }
 
     // Record the stop event
+    // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaEventRecord(stop, stream));
 
     // Wait for the stop event to complete
@@ -908,7 +970,9 @@ int MatrixMultiply(int argc, char **argv, const dim3 &dimsA, const dim3 &dimsB, 
            threads.x * threads.y);
 
     // Copy result from device to host
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpyAsync(h_C, d_C, mem_size_C, cudaMemcpyDeviceToHost, stream));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaStreamSynchronize(stream));
 
     printf("Checking computed result for correctness: ");

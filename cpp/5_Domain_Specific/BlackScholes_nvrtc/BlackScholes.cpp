@@ -219,6 +219,7 @@ int main(int argc, char **argv)
     printf("\nReading back GPU results...\n");
 
     // Read back GPU results to compare them to CPU results
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cuMemcpyDtoH(h_CallResultGPU, d_CallResult, OPT_SZ));
     checkCudaErrors(cuMemcpyDtoH(h_PutResultGPU, d_PutResult, OPT_SZ));
 

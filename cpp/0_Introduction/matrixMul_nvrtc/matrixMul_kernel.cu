@@ -114,6 +114,7 @@ template <int BLOCK_SIZE> __device__ void matrixMulCUDA(float *C, float *A, floa
         // Synchronize to make sure that the preceding
         // computation is done before loading two new
         // sub-matrices of A and B in the next iteration
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cooperative_groups::sync(cta);
     }
 

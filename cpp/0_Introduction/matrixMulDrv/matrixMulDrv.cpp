@@ -84,6 +84,7 @@ static int initCUDA(int argc, char **argv, CUfunction *pMatrixMul, int *blk_size
 ////////////////////////////////////////////////////////////////////////////////
 // Globals
 ////////////////////////////////////////////////////////////////////////////////
+// JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
 CUdevice  cuDevice;
 CUcontext cuContext;
 CUmodule  cuModule;
@@ -114,6 +115,7 @@ int main(int argc, char **argv)
 void runTest(int argc, char **argv)
 {
     // initialize CUDA
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     CUfunction matrixMul  = NULL;
     int        block_size = 0;
 
@@ -152,6 +154,7 @@ void runTest(int argc, char **argv)
     size_t mem_size_C = sizeof(float) * size_C;
 
     CUdeviceptr d_C;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cuMemAlloc(&d_C, mem_size_C));
 
     // allocate mem for the result on host side
@@ -217,6 +220,7 @@ void runTest(int argc, char **argv)
             CU_LAUNCH_PARAM_BUFFER_POINTER, argBuffer, CU_LAUNCH_PARAM_BUFFER_SIZE, &offset, CU_LAUNCH_PARAM_END};
 
         // new CUDA 4.0 Driver API Kernel launch call
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         checkCudaErrors(cuLaunchKernel(matrixMul,
                                        grid.x,
                                        grid.y,
@@ -231,6 +235,7 @@ void runTest(int argc, char **argv)
     }
 
     // copy result from device to host
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cuMemcpyDtoH(reinterpret_cast<void *>(h_C), d_C, mem_size_C));
 
     // stop and destroy timer
@@ -274,6 +279,7 @@ void randomInit(float *data, int size)
     }
 }
 
+// JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
 static int initCUDA(int argc, char **argv, CUfunction *pMatrixMul, int *blk_size)
 {
     CUfunction        cuFunction = 0;
@@ -286,6 +292,7 @@ static int initCUDA(int argc, char **argv, CUfunction *pMatrixMul, int *blk_size
     // get compute capabilities and the devicename
     checkCudaErrors(cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, cuDevice));
     checkCudaErrors(cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, cuDevice));
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuDeviceGetName(deviceName, sizeof(deviceName), cuDevice));
     printf("> GPU Device has SM %d.%d compute capability\n", major, minor);
 

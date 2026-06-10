@@ -26,6 +26,7 @@
 
 # JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
 
+# JP: この連続する anchor 群では CMake CUDA target/link/architecture wiring です。source、target、optional dependency、platform condition を確認します。
 add_executable(ptxgen ptxgen.c)
 
 add_test(NAME ptxgenTest
@@ -42,6 +43,7 @@ else ()
 endif ()
 
 if (WIN32)
+  # JP: この連続する anchor 群では CMake CUDA target/link/architecture wiring です。source、target、optional dependency、platform condition を確認します。
   set_target_properties(ptxgen PROPERTIES
                         COMPILE_FLAGS "/wd4996 -DLIBNVVM_HOME=\"${LIBNVVM_HOME}\"")
 else (WIN32)

@@ -91,6 +91,7 @@ extern "C" void initTexture(int imageWidth, int imageHeight, uchar *h_data)
 
 extern "C" void freeTexture()
 {
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaDestroyTextureObject(texObjPoint));
     checkCudaErrors(cudaDestroyTextureObject(texObjLinear));
     checkCudaErrors(cudaFreeArray(d_imageArray));

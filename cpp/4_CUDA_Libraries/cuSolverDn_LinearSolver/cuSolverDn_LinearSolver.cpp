@@ -125,8 +125,10 @@ int linearSolverCHOL(cusolverDnHandle_t handle, int n, const double *Acopy, int 
     start = second();
     start = second();
 
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusolverDnDpotrf(handle, uplo, n, A, lda, buffer, bufferSize, info));
 
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(&h_info, info, sizeof(int), cudaMemcpyDeviceToHost));
 
     if (0 != h_info) {
@@ -162,6 +164,7 @@ int linearSolverCHOL(cusolverDnHandle_t handle, int n, const double *Acopy, int 
  *  solve A*x = b by LU with partial pivoting
  *
  */
+// JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
 int linearSolverLU(cusolverDnHandle_t handle, int n, const double *Acopy, int lda, const double *b, double *x)
 {
     int     bufferSize = 0;
@@ -173,21 +176,26 @@ int linearSolverLU(cusolverDnHandle_t handle, int n, const double *Acopy, int ld
     double  start, stop;
     double  time_solve;
 
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusolverDnDgetrf_bufferSize(handle, n, n, (double *)Acopy, lda, &bufferSize));
 
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc(&info, sizeof(int)));
     checkCudaErrors(cudaMalloc(&buffer, sizeof(double) * bufferSize));
     checkCudaErrors(cudaMalloc(&A, sizeof(double) * lda * n));
     checkCudaErrors(cudaMalloc(&ipiv, sizeof(int) * n));
 
     // prepare a copy of A because getrf will overwrite A with L
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(A, Acopy, sizeof(double) * lda * n, cudaMemcpyDeviceToDevice));
     checkCudaErrors(cudaMemset(info, 0, sizeof(int)));
 
     start = second();
     start = second();
 
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusolverDnDgetrf(handle, n, n, A, lda, buffer, ipiv, info));
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(&h_info, info, sizeof(int), cudaMemcpyDeviceToHost));
 
     if (0 != h_info) {
@@ -195,7 +203,9 @@ int linearSolverLU(cusolverDnHandle_t handle, int n, const double *Acopy, int ld
     }
 
     checkCudaErrors(cudaMemcpy(x, b, sizeof(double) * n, cudaMemcpyDeviceToDevice));
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusolverDnDgetrs(handle, CUBLAS_OP_N, n, 1, A, lda, ipiv, x, n, info));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
     stop = second();
 
@@ -203,6 +213,7 @@ int linearSolverLU(cusolverDnHandle_t handle, int n, const double *Acopy, int ld
     fprintf(stdout, "timing: LU = %10.6f sec\n", time_solve);
 
     if (info) {
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         checkCudaErrors(cudaFree(info));
     }
     if (buffer) {
@@ -222,6 +233,7 @@ int linearSolverLU(cusolverDnHandle_t handle, int n, const double *Acopy, int ld
  *  solve A*x = b by QR
  *
  */
+// JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
 int linearSolverQR(cusolverDnHandle_t handle, int n, const double *Acopy, int lda, const double *b, double *x)
 {
     cublasHandle_t cublasHandle     = NULL; // used in residual evaluation
@@ -237,6 +249,7 @@ int linearSolverQR(cusolverDnHandle_t handle, int n, const double *Acopy, int ld
     double         time_solve;
     const double   one = 1.0;
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cublasCreate(&cublasHandle));
 
     checkCudaErrors(cusolverDnDgeqrf_bufferSize(handle, n, n, (double *)Acopy, lda, &bufferSize_geqrf));
@@ -247,12 +260,14 @@ int linearSolverQR(cusolverDnHandle_t handle, int n, const double *Acopy, int ld
 
     bufferSize = (bufferSize_geqrf > bufferSize_ormqr) ? bufferSize_geqrf : bufferSize_ormqr;
 
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc(&info, sizeof(int)));
     checkCudaErrors(cudaMalloc(&buffer, sizeof(double) * bufferSize));
     checkCudaErrors(cudaMalloc(&A, sizeof(double) * lda * n));
     checkCudaErrors(cudaMalloc((void **)&tau, sizeof(double) * n));
 
     // prepare a copy of A because getrf will overwrite A with L
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(A, Acopy, sizeof(double) * lda * n, cudaMemcpyDeviceToDevice));
 
     checkCudaErrors(cudaMemset(info, 0, sizeof(int)));
@@ -261,8 +276,10 @@ int linearSolverQR(cusolverDnHandle_t handle, int n, const double *Acopy, int ld
     start = second();
 
     // compute QR factorization
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusolverDnDgeqrf(handle, n, n, A, lda, tau, buffer, bufferSize, info));
 
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(&h_info, info, sizeof(int), cudaMemcpyDeviceToHost));
 
     if (0 != h_info) {
@@ -273,6 +290,7 @@ int linearSolverQR(cusolverDnHandle_t handle, int n, const double *Acopy, int ld
 
     // compute Q^T*b
     checkCudaErrors(
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         cusolverDnDormqr(handle, CUBLAS_SIDE_LEFT, CUBLAS_OP_T, n, 1, n, A, lda, tau, x, n, buffer, bufferSize, info));
 
     // x = R \ Q^T*b
@@ -288,16 +306,19 @@ int linearSolverQR(cusolverDnHandle_t handle, int n, const double *Acopy, int ld
                                 lda,
                                 x,
                                 n));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
     stop = second();
 
     time_solve = stop - start;
     fprintf(stdout, "timing: QR = %10.6f sec\n", time_solve);
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     if (cublasHandle) {
         checkCudaErrors(cublasDestroy(cublasHandle));
     }
     if (info) {
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         checkCudaErrors(cudaFree(info));
     }
     if (buffer) {
@@ -495,19 +516,24 @@ int main(int argc, char *argv[])
         }
     }
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusolverDnCreate(&handle));
     checkCudaErrors(cublasCreate(&cublasHandle));
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamCreate(&stream));
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusolverDnSetStream(handle, stream));
     checkCudaErrors(cublasSetStream(cublasHandle, stream));
 
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&d_A, sizeof(double) * lda * colsA));
     checkCudaErrors(cudaMalloc((void **)&d_x, sizeof(double) * colsA));
     checkCudaErrors(cudaMalloc((void **)&d_b, sizeof(double) * rowsA));
     checkCudaErrors(cudaMalloc((void **)&d_r, sizeof(double) * rowsA));
 
     printf("step 4: prepare data on device\n");
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(d_A, h_A, sizeof(double) * lda * colsA, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_b, h_b, sizeof(double) * rowsA, cudaMemcpyHostToDevice));
 
@@ -527,12 +553,15 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
     printf("step 6: evaluate residual\n");
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(d_r, d_b, sizeof(double) * rowsA, cudaMemcpyDeviceToDevice));
 
     // r = b - A*x
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cublasDgemm_v2(
         cublasHandle, CUBLAS_OP_N, CUBLAS_OP_N, rowsA, 1, colsA, &minus_one, d_A, lda, d_x, rowsA, &one, d_r, rowsA));
 
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_x, d_x, sizeof(double) * colsA, cudaMemcpyDeviceToHost));
     checkCudaErrors(cudaMemcpy(h_r, d_r, sizeof(double) * rowsA, cudaMemcpyDeviceToHost));
 
@@ -546,12 +575,14 @@ int main(int argc, char *argv[])
     printf("|b - A*x|/(|A|*|x|) = %E \n", r_inf / (A_inf * x_inf));
 
     if (handle) {
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         checkCudaErrors(cusolverDnDestroy(handle));
     }
     if (cublasHandle) {
         checkCudaErrors(cublasDestroy(cublasHandle));
     }
     if (stream) {
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         checkCudaErrors(cudaStreamDestroy(stream));
     }
 
@@ -579,6 +610,7 @@ int main(int argc, char *argv[])
     }
 
     if (d_A) {
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         checkCudaErrors(cudaFree(d_A));
     }
     if (d_x) {

@@ -84,6 +84,7 @@ int main(int argc, char **argv)
     float          error_norm;
     float          ref_norm;
     float          diff;
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cublasHandle_t handle;
 
     int dev = findCudaDevice(argc, (const char **)argv);
@@ -95,6 +96,7 @@ int main(int argc, char **argv)
     /* Initialize CUBLAS */
     printf("simpleCUBLAS test running..\n");
 
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     status = cublasCreate(&handle);
 
     if (status != CUBLAS_STATUS_SUCCESS) {
@@ -149,6 +151,7 @@ int main(int argc, char **argv)
     }
 
     /* Initialize the device matrices with the host matrices */
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     status = cublasSetVector(n2, sizeof(h_A[0]), h_A, 1, d_A, 1);
 
     if (status != CUBLAS_STATUS_SUCCESS) {
@@ -175,6 +178,7 @@ int main(int argc, char **argv)
     h_C_ref = h_C;
 
     /* Performs operation using cublas */
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     status = cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, N, N, &alpha, d_A, N, d_B, N, &beta, d_C, N);
 
     if (status != CUBLAS_STATUS_SUCCESS) {
@@ -191,6 +195,7 @@ int main(int argc, char **argv)
     }
 
     /* Read the result back */
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     status = cublasGetVector(n2, sizeof(h_C[0]), d_C, 1, h_C, 1);
 
     if (status != CUBLAS_STATUS_SUCCESS) {
@@ -223,6 +228,7 @@ int main(int argc, char **argv)
     free(h_C);
     free(h_C_ref);
 
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     if (cudaFree(d_A) != cudaSuccess) {
         fprintf(stderr, "!!!! memory free error (A)\n");
         return EXIT_FAILURE;
@@ -239,6 +245,7 @@ int main(int argc, char **argv)
     }
 
     /* Shutdown */
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     status = cublasDestroy(handle);
 
     if (status != CUBLAS_STATUS_SUCCESS) {

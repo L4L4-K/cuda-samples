@@ -109,6 +109,7 @@ static const char *_cudaGetErrorEnum(cublasStatus_t error) {
 
 #ifdef _CUFFT_H_
 // cuFFT API errors
+// JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
 static const char *_cudaGetErrorEnum(cufftResult error) {
   switch (error) {
     case CUFFT_SUCCESS:
@@ -172,6 +173,7 @@ static const char *_cudaGetErrorEnum(cufftResult error) {
 
 #ifdef CUSPARSEAPI
 // cuSPARSE API errors
+// JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
 static const char *_cudaGetErrorEnum(cusparseStatus_t error) {
   switch (error) {
     case CUSPARSE_STATUS_SUCCESS:
@@ -208,6 +210,7 @@ static const char *_cudaGetErrorEnum(cusparseStatus_t error) {
 
 #ifdef CUSOLVER_COMMON_H_
 // cuSOLVER API errors
+// JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
 static const char *_cudaGetErrorEnum(cusolverStatus_t error) {
   switch (error) {
     case CUSOLVER_STATUS_SUCCESS:
@@ -242,6 +245,7 @@ static const char *_cudaGetErrorEnum(cusolverStatus_t error) {
 
 #ifdef CURAND_H_
 // cuRAND API errors
+// JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
 static const char *_cudaGetErrorEnum(curandStatus_t error) {
   switch (error) {
     case CURAND_STATUS_SUCCESS:
@@ -290,6 +294,7 @@ static const char *_cudaGetErrorEnum(curandStatus_t error) {
 
 #ifdef NVJPEGAPI
 // nvJPEG API errors
+// JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
 static const char *_cudaGetErrorEnum(nvjpegStatus_t error) {
   switch (error) {
     case NVJPEG_STATUS_SUCCESS:

@@ -79,6 +79,7 @@ cudaError_t allocateCompressible(void **adr, size_t size, bool UseCompressibleMe
         }
     }
 
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     if (cuMemMap(dptr, size, 0, allocationHandle, 0) != CUDA_SUCCESS)
         return cudaErrorMemoryAllocation;
 

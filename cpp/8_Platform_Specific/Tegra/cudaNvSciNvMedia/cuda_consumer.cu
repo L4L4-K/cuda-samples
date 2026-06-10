@@ -93,6 +93,7 @@ static void waitExternalSemaphore(cudaExternalSemaphore_t &waitSem, NvSciSyncFen
     checkCudaErrors(cudaWaitExternalSemaphoresAsync(&waitSem, &waitParams, 1, stream));
 }
 
+// JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
 static void signalExternalSemaphore(cudaExternalSemaphore_t &signalSem, NvSciSyncFence *fence, cudaStream_t stream)
 {
     cudaExternalSemaphoreSignalParams signalParams;
@@ -240,6 +241,7 @@ static cudaSurfaceObject_t createCudaSurface(cudaArray_t &d_mipLevelArray)
     return surfaceObject;
 }
 
+// JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
 static cudaStream_t createCudaStream(int deviceId)
 {
     checkCudaErrors(cudaSetDevice(deviceId));
@@ -281,6 +283,7 @@ void setupCuda(cudaExternalResInterop &cudaExtResObj,
 void cleanupCuda(cudaExternalResInterop &cudaExtResObj)
 {
     for (int i = 0; i < cudaExtResObj.planeCount; i++) {
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         checkCudaErrors(cudaDestroySurfaceObject(cudaExtResObj.cudaSurfaceNvmediaBuf[i]));
         checkCudaErrors(cudaFreeMipmappedArray(cudaExtResObj.d_mipmapArray[i]));
     }
@@ -318,6 +321,7 @@ void runCudaOperation(cudaExternalResInterop &cudaExtResObj,
         signalExternalSemaphore(cudaExtResObj.signalSem, cudaSignalFence, cudaExtResObj.stream);
     }
     else {
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaStreamSynchronize(cudaExtResObj.stream));
     }
     launch++;
@@ -338,6 +342,7 @@ void setupCuda(Blit2DTest *ctx, cudaResources &cudaResObj, int deviceId)
     }
 
     for (int k = 0; k < ctx->numSurfaces; k++) {
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         checkCudaErrors(cudaMallocArray(&cudaResObj.d_yuvArray[k],
                                         &channelDesc,
                                         ctx->widthSurface * ctx->xScalePtr[k] * ctx->bytesPerPixel,
@@ -354,6 +359,7 @@ void setupCuda(Blit2DTest *ctx, cudaResources &cudaResObj, int deviceId)
 void cleanupCuda(Blit2DTest *ctx, cudaResources &cudaResObj)
 {
     for (int k = 0; k < ctx->numSurfaces; k++) {
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         checkCudaErrors(cudaDestroySurfaceObject(cudaResObj.cudaSurfaceNvmediaBuf[k]));
         checkCudaErrors(cudaFreeArray(cudaResObj.d_yuvArray[k]));
     }
@@ -369,20 +375,24 @@ yuvToGrayscaleCudaKernelNonNvSci(cudaResources &cudaResObj, int deviceId, int32_
 {
 #if WRITE_OUTPUT_IMAGE
     unsigned int *h_dstImage;
+    // JP: この anchor では pinned host memory の登録/確保/解放です。async transfer や overlap の条件と lifetime を確認します。
     checkCudaErrors(cudaMallocHost(&h_dstImage, sizeof(unsigned int) * imageHeight * imageWidth));
 #endif
     dim3 block(16, 16, 1);
     dim3 grid((imageWidth / block.x) + 1, (imageHeight / block.y) + 1, 1);
 
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     yuvToGrayscale<<<grid, block, 0, cudaResObj.stream>>>(
         cudaResObj.cudaSurfaceNvmediaBuf[0], cudaResObj.d_outputImage, imageWidth, imageHeight);
 
 #if WRITE_OUTPUT_IMAGE
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpyAsync(h_dstImage,
                                     cudaResObj.d_outputImage,
                                     sizeof(unsigned int) * imageHeight * imageWidth,
                                     cudaMemcpyDeviceToHost,
                                     cudaResObj.stream));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaStreamSynchronize(cudaResObj.stream));
     char        outputFilename[1024];
     std::string image_filename = "Grayscale";
@@ -390,8 +400,10 @@ yuvToGrayscaleCudaKernelNonNvSci(cudaResources &cudaResObj, int deviceId, int32_
     strcpy(outputFilename + image_filename.length(), "_non-nvsci_out.ppm");
     sdkSavePPM4ub(outputFilename, (unsigned char *)h_dstImage, imageWidth, imageHeight);
     printf("Wrote '%s'\n", outputFilename);
+    // JP: この anchor では pinned host memory の登録/確保/解放です。async transfer や overlap の条件と lifetime を確認します。
     checkCudaErrors(cudaFreeHost(h_dstImage));
 #else
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaStreamSynchronize(cudaResObj.stream));
 #endif
 }
@@ -407,6 +419,7 @@ void runCudaOperation(Blit2DTest *ctx, cudaResources &cudaResObj, int deviceId)
                                             ctx->widthSurface * ctx->xScalePtr[k] * ctx->bytesPerPixel,
                                             ctx->widthSurface * ctx->xScalePtr[k] * ctx->bytesPerPixel,
                                             ctx->heightSurface * ctx->yScalePtr[k],
+                                            // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                                             cudaMemcpyHostToDevice));
     }
     // run cuda kernel over surface object of the LUMA surface part to extract

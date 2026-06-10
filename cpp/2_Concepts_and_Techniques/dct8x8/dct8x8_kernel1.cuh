@@ -128,6 +128,7 @@ CUDAkernel1DCT(float *Dst, int ImgWidth, int OffsetXBlocks, int OffsetYBlocks, c
 
     // synchronize threads to make sure the first 2 matrices are multiplied and
     // the result is stored in the second block
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     // calculate the multiplication of (DCTv8matrixT * A) * DCTv8matrix and place
@@ -147,6 +148,7 @@ CUDAkernel1DCT(float *Dst, int ImgWidth, int OffsetXBlocks, int OffsetYBlocks, c
 
     // synchronize threads to make sure the matrices are multiplied and the result
     // is stored back in the first block
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     // copy current coefficient to its place in the result array
@@ -173,6 +175,7 @@ __global__ void
 CUDAkernel1IDCT(float *Dst, int ImgWidth, int OffsetXBlocks, int OffsetYBlocks, cudaTextureObject_t TexSrc)
 {
     // Handle to thread block group
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta = cg::this_thread_block();
     // Block index
     int bx = blockIdx.x + OffsetXBlocks;
@@ -190,6 +193,7 @@ CUDAkernel1IDCT(float *Dst, int ImgWidth, int OffsetXBlocks, int OffsetYBlocks, 
     CurBlockLocal1[(ty << BLOCK_SIZE_LOG2) + tx] = tex2D<float>(TexSrc, tex_x, tex_y);
 
     // synchronize threads to make sure the block is copied
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     // calculate the multiplication of DCTv8matrix * A and place it in the second
@@ -209,6 +213,7 @@ CUDAkernel1IDCT(float *Dst, int ImgWidth, int OffsetXBlocks, int OffsetYBlocks, 
 
     // synchronize threads to make sure the first 2 matrices are multiplied and
     // the result is stored in the second block
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     // calculate the multiplication of (DCTv8matrix * A) * DCTv8matrixT and place
@@ -228,6 +233,7 @@ CUDAkernel1IDCT(float *Dst, int ImgWidth, int OffsetXBlocks, int OffsetYBlocks, 
 
     // synchronize threads to make sure the matrices are multiplied and the result
     // is stored back in the first block
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     // copy current coefficient to its place in the result array

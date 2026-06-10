@@ -93,8 +93,10 @@ __global__ void normVecByDotProductAWBarrier(float *vecA, float *vecB, double *p
     ;
     cg::thread_block_tile<32> tile32 = cg::tiled_partition<32>(cta);
 
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ cuda::barrier<cuda::thread_scope_block> barrier;
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x == 0) {
         init(&barrier, blockDim.x);
     }
@@ -109,12 +111,15 @@ __global__ void normVecByDotProductAWBarrier(float *vecA, float *vecB, double *p
 
     // Each thread block performs reduction of partial dotProducts and writes to
     // global mem.
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     reduceBlockData<false>(barrier, tile32, threadSum, &partialResults[blockIdx.x]);
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(grid);
 
     // One block performs the final summation of partial dot products
     // of all the thread blocks and writes the sqrt of final dot product.
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (blockIdx.x == 0) {
         threadSum = 0.0;
         for (int i = cta.thread_rank(); i < gridDim.x; i += cta.size()) {
@@ -123,6 +128,7 @@ __global__ void normVecByDotProductAWBarrier(float *vecA, float *vecB, double *p
         reduceBlockData<true>(barrier, tile32, threadSum, &partialResults[0]);
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(grid);
 
     const double finalValue = partialResults[0];
@@ -216,6 +222,7 @@ int runNormVecByDotProductAWBarrier(int argc, char **argv, int deviceId)
     checkCudaErrors(cudaDeviceGetAttribute(&multiProcessorCount, cudaDevAttrMultiProcessorCount, deviceId));
 
     minGridSize = multiProcessorCount * numBlocksPerSm;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc(&d_partialResults, minGridSize * sizeof(double)));
 
     printf("Launching normVecByDotProductAWBarrier kernel with numBlocks = %d "
@@ -230,7 +237,9 @@ int runNormVecByDotProductAWBarrier(int argc, char **argv, int deviceId)
     checkCudaErrors(cudaLaunchCooperativeKernel(
         (void *)normVecByDotProductAWBarrier, dimGrid, dimBlock, kernelArgs, smemSize, stream));
 
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpyAsync(vecA, d_vecA, sizeof(float) * size, cudaMemcpyDeviceToHost, stream));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaStreamSynchronize(stream));
 
     float        expectedResult = (baseVal / sqrt(size * baseVal * baseVal));

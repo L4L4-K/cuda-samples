@@ -81,8 +81,10 @@ __global__ void histogram256Kernel(uint *d_PartialHistograms, uint *d_Data, uint
     }
 
     // Merge per-warp histograms into per-block and write to global memory
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     for (uint bin = threadIdx.x; bin < HISTOGRAM256_BIN_COUNT; bin += HISTOGRAM256_THREADBLOCK_SIZE) {
         uint sum = 0;
 
@@ -105,6 +107,7 @@ __global__ void histogram256Kernel(uint *d_PartialHistograms, uint *d_Data, uint
 __global__ void mergeHistogram256Kernel(uint *d_Histogram, uint *d_PartialHistograms, uint histogramCount)
 {
     // Handle to thread block group
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta = cg::this_thread_block();
 
     uint sum = 0;
@@ -113,12 +116,16 @@ __global__ void mergeHistogram256Kernel(uint *d_Histogram, uint *d_PartialHistog
         sum += d_PartialHistograms[blockIdx.x + i * HISTOGRAM256_BIN_COUNT];
     }
 
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ uint data[MERGE_THREADBLOCK_SIZE];
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     data[threadIdx.x] = sum;
 
     for (uint stride = MERGE_THREADBLOCK_SIZE / 2; stride > 0; stride >>= 1) {
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         if (threadIdx.x < stride) {
             data[threadIdx.x] += data[threadIdx.x + stride];
         }

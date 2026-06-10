@@ -238,6 +238,7 @@ int runTest(int argc, char **argv)
 
         // Compute visibility results based on the array of view angles
         // and its scanned version
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         computeVisibilities_kernel<<<grid, block>>>(thrust::raw_pointer_cast(&d_angles[0]),
                                                     thrust::raw_pointer_cast(&d_scannedAngles[0]),
                                                     ray.length,
@@ -298,6 +299,7 @@ __global__ void computeAngles_kernel(const Ray ray, float *angles, cudaTextureOb
 __global__ void
 computeVisibilities_kernel(const float *angles, const float *scannedAngles, int numAngles, Bool *visibilities)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     uint i = blockDim.x * blockIdx.x + threadIdx.x;
 
     if (i < numAngles) {

@@ -104,6 +104,7 @@ def run(num_elements=1024 * 1024 * 16):
         return 2
 
     # Get device properties
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     devices = [Device(i) for i in range(num_devices)]
 
     # Check for P2P capability
@@ -180,6 +181,7 @@ def run(num_elements=1024 * 1024 * 16):
 
     # Allocate pinned host memory
     pinned_mr = PinnedMemoryResource()
+    # JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     h0 = pinned_mr.allocate(buf_size, stream=dev0.default_stream)
 
     print("  Memory allocated successfully")
@@ -245,6 +247,7 @@ def run(num_elements=1024 * 1024 * 16):
 
         # Copy to GPU 0
         dev0.set_current()
+        # JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         g0.copy_from(h0, stream=stream0)
         stream0.sync()
 
@@ -295,6 +298,7 @@ def run(num_elements=1024 * 1024 * 16):
 
         # Copy data back to host and verify
         print(f"\nCopy data back to host from GPU{gpuid[0]} and verify results...")
+        # JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         g0.copy_to(h0, stream=stream0)
         stream0.sync()
 

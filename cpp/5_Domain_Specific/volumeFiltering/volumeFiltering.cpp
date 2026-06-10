@@ -226,6 +226,7 @@ void render()
     // map PBO to get CUDA device pointer
     uint *d_output;
     // map PBO to get CUDA device pointer
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsMapResources(1, &cuda_pbo_resource, 0));
     size_t num_bytes;
     checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&d_output, &num_bytes, cuda_pbo_resource));
@@ -249,6 +250,7 @@ void render()
 
     getLastCudaError("render kernel failed");
 
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsUnmapResources(1, &cuda_pbo_resource, 0));
 }
 
@@ -491,6 +493,7 @@ void initPixelBuffer()
 {
     if (pbo) {
         // unregister this buffer object from CUDA C
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         checkCudaErrors(cudaGraphicsUnregisterResource(cuda_pbo_resource));
 
         // delete old buffer
@@ -505,6 +508,7 @@ void initPixelBuffer()
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, 0);
 
     // register this buffer object with CUDA
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsGLRegisterBuffer(&cuda_pbo_resource, pbo, cudaGraphicsMapFlagsWriteDiscard));
 
     // create texture for display
@@ -529,6 +533,7 @@ void cleanup()
     VolumeRender_deinit();
 
     if (pbo) {
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         cudaGraphicsUnregisterResource(cuda_pbo_resource);
         glDeleteBuffers(1, &pbo);
         glDeleteTextures(1, &volumeTex);
@@ -667,6 +672,7 @@ void runSingleTest(const char *ref_file, const char *exec_path)
                             volumeOriginal.volumeTex);
     }
 
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     cudaDeviceSynchronize();
     sdkStopTimer(&timer);
     // Get elapsed time and throughput, then log to sample and master logs
@@ -681,9 +687,11 @@ void runSingleTest(const char *ref_file, const char *exec_path)
 
 
     getLastCudaError("Error: kernel execution FAILED");
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
 
     unsigned char *h_output = (unsigned char *)malloc(width * height * 4);
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_output, d_output, width * height * 4, cudaMemcpyDeviceToHost));
 
     sdkSavePPM4ub("volumefilter.ppm", h_output, width, height);

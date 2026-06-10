@@ -27,6 +27,7 @@ include_directories(../../../Common)
 # Add target for cudaGraphsPerfScaling
 add_executable(cudaGraphsPerfScaling cudaGraphPerfScaling.cu)
 
+# JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
 target_compile_options(cudaGraphsPerfScaling PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
 
 target_compile_features(cudaGraphsPerfScaling PRIVATE cxx_std_17 cuda_std_17)

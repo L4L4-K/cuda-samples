@@ -135,6 +135,7 @@ def reduction_stage_output_counts(n: int, block_size: int) -> list[int]:
 def reduce_custom(
     stream: Stream,
     kernel: Kernel,
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     d_input: cp.ndarray,
     block_size: int = 256,
     sync: bool = True,
@@ -177,6 +178,7 @@ def reduce_custom(
             if d_output.size != num_blocks:
                 d_output = d_output[:num_blocks]
         else:
+            # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
             d_output = cp.empty(num_blocks, dtype=cp.float32)
 
         config = LaunchConfig(
@@ -208,6 +210,7 @@ def reduce_custom(
 def benchmark_custom(
     stream: Stream,
     kernel: Kernel,
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     d_input: cp.ndarray,
     num_runs: int = 10,
     block_size: int = 256,
@@ -249,6 +252,7 @@ def benchmark_custom(
 
 def benchmark_cuda_compute(
     stream: Stream,
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     d_input: cp.ndarray,
     num_runs: int = 10,
 ) -> tuple[float, float]:
@@ -268,6 +272,7 @@ def benchmark_cuda_compute(
     )
     stream.sync()
 
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     d_output = cp.empty(1, dtype=cp.float32)
     event_opts = {"timing_enabled": True}
     start_event = stream.device.create_event(options=event_opts)
@@ -284,6 +289,7 @@ def benchmark_cuda_compute(
             op=OpKind.PLUS,
             num_items=len(d_input),
             h_init=h_init,
+            # JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
             stream=stream,
         )
         stream.record(end_event)
@@ -301,6 +307,7 @@ def main() -> bool:
     print("Parallel Reduction - Efficient GPU Array Summation")
     print("=" * 70)
 
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     device = Device(0)
     device.set_current()
     stream = device.create_stream()
@@ -321,6 +328,7 @@ def main() -> bool:
 
     try:
         with cp_stream:
+            # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
             d_input = cp.asarray(h_input)
 
         # ======================================================================
@@ -351,6 +359,7 @@ def main() -> bool:
 
         # Verify both results using principled rtol/atol
         with cp_stream:
+            # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
             d_expected = cp.array([expected_sum], dtype=cp.float32)
             custom_ok = verify_array_result(
                 cp.array([result], dtype=cp.float32),

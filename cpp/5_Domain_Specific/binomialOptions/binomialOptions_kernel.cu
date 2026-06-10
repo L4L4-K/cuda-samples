@@ -119,6 +119,7 @@ __global__ void binomialOptionsKernel()
     }
 
     if (tid == 0) {
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         d_CallValue[blockIdx.x] = call[0];
     }
 }

@@ -55,6 +55,7 @@ __global__ void fwtBatch1Kernel(float *d_Output, float *d_Input, int log2N)
     float                  *d_Src = d_Input + base;
     float                  *d_Dst = d_Output + base;
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     for (int pos = threadIdx.x; pos < N; pos += blockDim.x) {
         s_data[pos] = d_Src[pos];
     }
@@ -93,8 +94,10 @@ __global__ void fwtBatch1Kernel(float *d_Output, float *d_Input, int log2N)
 
     // Do single radix-2 stage for odd power of two
     if (log2N & 1) {
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         for (int pos = threadIdx.x; pos < N / 2; pos += blockDim.x) {
             int i0 = pos << 1;
             int i1 = i0 + 1;
@@ -106,8 +109,10 @@ __global__ void fwtBatch1Kernel(float *d_Output, float *d_Input, int log2N)
         }
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     for (int pos = threadIdx.x; pos < N; pos += blockDim.x) {
         d_Dst[pos] = s_data[pos];
     }
@@ -119,6 +124,7 @@ __global__ void fwtBatch1Kernel(float *d_Output, float *d_Input, int log2N)
 ////////////////////////////////////////////////////////////////////////////////
 __global__ void fwtBatch2Kernel(float *d_Output, float *d_Input, int stride)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const int pos = blockIdx.x * blockDim.x + threadIdx.x;
     const int N   = blockDim.x * gridDim.x * 4;
 
@@ -176,6 +182,7 @@ void fwtBatchGPU(float *d_Data, int M, int log2N)
 ////////////////////////////////////////////////////////////////////////////////
 __global__ void modulateKernel(float *d_A, float *d_B, int N)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int   tid        = blockIdx.x * blockDim.x + threadIdx.x;
     int   numThreads = blockDim.x * gridDim.x;
     float rcpN       = 1.0f / (float)N;
@@ -186,6 +193,7 @@ __global__ void modulateKernel(float *d_A, float *d_B, int N)
 }
 
 // Interface to modulateKernel()
+// JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
 void modulateGPU(float *d_A, float *d_B, int N) { modulateKernel<<<128, 256>>>(d_A, d_B, N); }
 
 #endif

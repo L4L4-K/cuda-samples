@@ -156,6 +156,7 @@ template <typename T, bool floatKeys> bool testSort(int argc, char **argv)
         if (!keysOnly)
             d_values = h_values;
 
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         checkCudaErrors(cudaEventRecord(start_event, 0));
 
         if (keysOnly)

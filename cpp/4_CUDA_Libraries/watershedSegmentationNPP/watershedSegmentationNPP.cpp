@@ -172,6 +172,7 @@ int main(int argc, char **argv)
     int    aSegmentLabelsOutputBufferSize[NUMBER_OF_IMAGES];
 
     cudaError_t      cudaError;
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     NppStatus        nppStatus;
     NppStreamContext nppStreamCtx;
     FILE            *bmpFile;
@@ -187,6 +188,7 @@ int main(int argc, char **argv)
         pSegmentsHost[j]                  = 0;
     }
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     nppStreamCtx.hStream =
         0; // The NULL stream by default, set this to whatever your stream ID is if not the NULL stream.
 
@@ -207,6 +209,7 @@ int main(int argc, char **argv)
     printf("CUDA Driver  Version: %d.%d\n", driverVersion / 1000, (driverVersion % 100) / 10);
     printf("CUDA Runtime Version: %d.%d\n\n", runtimeVersion / 1000, (runtimeVersion % 100) / 10);
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cudaError = cudaDeviceGetAttribute(&nppStreamCtx.nCudaDevAttrComputeCapabilityMajor,
                                        cudaDevAttrComputeCapabilityMajor,
                                        nppStreamCtx.nCudaDeviceId);
@@ -224,6 +227,7 @@ int main(int argc, char **argv)
 
     cudaDeviceProp oDeviceProperties;
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cudaError = cudaGetDeviceProperties(&oDeviceProperties, nppStreamCtx.nCudaDeviceId);
 
     nppStreamCtx.nMultiProcessorCount         = oDeviceProperties.multiProcessorCount;
@@ -249,6 +253,7 @@ int main(int argc, char **argv)
 
         // cudaMallocPitch OR cudaMalloc can be used here, in this sample case width == pitch.
 
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         cudaError = cudaMalloc((void **)&pInputImageDev[nImage],
                                oSizeROI[nImage].width * sizeof(Npp8u) * oSizeROI[nImage].height);
         if (cudaError != cudaSuccess)
@@ -264,8 +269,10 @@ int main(int argc, char **argv)
         pSegmentsHost[nImage] =
             reinterpret_cast<Npp8u *>(malloc(oSizeROI[nImage].width * sizeof(Npp32u) * oSizeROI[nImage].height));
 
+        // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         nppStatus = nppiSegmentWatershedGetBufferSize_8u_C1R(oSizeROI[nImage], &aSegmentationScratchBufferSize[nImage]);
 
+        // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         cudaError = cudaMalloc((void **)&pSegmentationScratchBufferDev[nImage], aSegmentationScratchBufferSize[nImage]);
         if (cudaError != cudaSuccess)
             return NPP_MEMORY_ALLOCATION_ERR;
@@ -277,6 +284,7 @@ int main(int argc, char **argv)
 
         aSegmentLabelsOutputBufferSize[nImage] = oSizeROI[nImage].width * sizeof(Npp32u) * oSizeROI[nImage].height;
 
+        // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         cudaError = cudaMalloc((void **)&pSegmentLabelsOutputBufferDev[nImage], aSegmentLabelsOutputBufferSize[nImage]);
         if (cudaError != cudaSuccess)
             return NPP_MEMORY_ALLOCATION_ERR;
@@ -295,10 +303,12 @@ int main(int argc, char **argv)
                                           oSizeROI[nImage].width * sizeof(Npp8u),
                                           oSizeROI[nImage].height,
                                           cudaMemcpyHostToDevice,
+                                          // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                                           nppStreamCtx.hStream);
 
             // Make a second copy of the unaltered input image since this function works in place and we want to reuse
             // the input image multiple times.
+            // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
             cudaError = cudaMemcpy2DAsync(pSegmentsDev[nImage],
                                           oSizeROI[nImage].width * sizeof(Npp8u),
                                           pInputImageHost[nImage],
@@ -306,6 +316,7 @@ int main(int argc, char **argv)
                                           oSizeROI[nImage].width * sizeof(Npp8u),
                                           oSizeROI[nImage].height,
                                           cudaMemcpyHostToDevice,
+                                          // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                                           nppStreamCtx.hStream);
 
             nppStatus = nppiSegmentWatershed_8u_C1IR_Ctx(pSegmentsDev[nImage],
@@ -333,17 +344,20 @@ int main(int argc, char **argv)
             int    nCompressedLabelsScratchBufferSize;
             Npp8u *pCompressedLabelsScratchBufferDev;
 
+            // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
             nppStatus = nppiCompressMarkerLabelsGetBufferSize_32u_C1R(oSizeROI[nImage].width * oSizeROI[nImage].height,
                                                                       &nCompressedLabelsScratchBufferSize);
             if (nppStatus != NPP_NO_ERROR)
                 return nppStatus;
 
+            // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
             cudaError = cudaMalloc((void **)&pCompressedLabelsScratchBufferDev, nCompressedLabelsScratchBufferSize);
             if (cudaError != cudaSuccess)
                 return NPP_MEMORY_ALLOCATION_ERR;
 
             int nCompressedLabelCount = 0;
 
+            // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
             nppStatus = nppiCompressMarkerLabelsUF_32u_C1IR_Ctx(pSegmentLabelsOutputBufferDev[nImage],
                                                                 oSizeROI[nImage].width * sizeof(Npp32u),
                                                                 oSizeROI[nImage],
@@ -364,6 +378,7 @@ int main(int argc, char **argv)
             }
 
             // Copy segmented image to host
+            // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
             cudaError = cudaMemcpy2DAsync(pSegmentsHost[nImage],
                                           oSizeROI[nImage].width * sizeof(Npp8u),
                                           pSegmentsDev[nImage],
@@ -371,9 +386,11 @@ int main(int argc, char **argv)
                                           oSizeROI[nImage].width * sizeof(Npp8u),
                                           oSizeROI[nImage].height,
                                           cudaMemcpyDeviceToHost,
+                                          // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                                           nppStreamCtx.hStream);
 
             // Copy segment labels image to host
+            // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
             cudaError = cudaMemcpy2DAsync(pSegmentLabelsOutputBufferHost[nImage],
                                           oSizeROI[nImage].width * sizeof(Npp32u),
                                           pSegmentLabelsOutputBufferDev[nImage],
@@ -381,6 +398,7 @@ int main(int argc, char **argv)
                                           oSizeROI[nImage].width * sizeof(Npp32u),
                                           oSizeROI[nImage].height,
                                           cudaMemcpyDeviceToHost,
+                                          // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                                           nppStreamCtx.hStream);
 
             // Wait host image read backs to complete, not necessary if no need to synchronize
@@ -392,6 +410,7 @@ int main(int argc, char **argv)
             }
 
             // Free single image scratch buffer
+            // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
             cudaFree(pCompressedLabelsScratchBufferDev);
 
             // Save default segments file.
@@ -448,6 +467,7 @@ int main(int argc, char **argv)
 
             // Make a second copy of the unaltered input image since this function works in place and we want to reuse
             // the input image multiple times.
+            // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
             cudaError = cudaMemcpy2DAsync(pSegmentsDev[nImage],
                                           oSizeROI[nImage].width * sizeof(Npp8u),
                                           pInputImageHost[nImage],
@@ -455,6 +475,7 @@ int main(int argc, char **argv)
                                           oSizeROI[nImage].width * sizeof(Npp8u),
                                           oSizeROI[nImage].height,
                                           cudaMemcpyHostToDevice,
+                                          // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                                           nppStreamCtx.hStream);
 
             // We already generated segment labels images to skip that this time
@@ -480,6 +501,7 @@ int main(int argc, char **argv)
             }
 
             // Copy segment boundaries image to host
+            // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
             cudaError = cudaMemcpy2DAsync(pSegmentsHost[nImage],
                                           oSizeROI[nImage].width * sizeof(Npp8u),
                                           pSegmentsDev[nImage],
@@ -487,6 +509,7 @@ int main(int argc, char **argv)
                                           oSizeROI[nImage].width * sizeof(Npp8u),
                                           oSizeROI[nImage].height,
                                           cudaMemcpyDeviceToHost,
+                                          // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
                                           nppStreamCtx.hStream);
 
             // Wait host image read backs to complete, not necessary if no need to synchronize
@@ -523,6 +546,7 @@ int main(int argc, char **argv)
 
             // Make a second copy of the unaltered input image since this function works in place and we want to reuse
             // the input image multiple times.
+            // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
             cudaError = cudaMemcpy2DAsync(pSegmentsDev[nImage],
                                           oSizeROI[nImage].width * sizeof(Npp8u),
                                           pInputImageHost[nImage],
@@ -530,6 +554,7 @@ int main(int argc, char **argv)
                                           oSizeROI[nImage].width * sizeof(Npp8u),
                                           oSizeROI[nImage].height,
                                           cudaMemcpyHostToDevice,
+                                          // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                                           nppStreamCtx.hStream);
 
             // We already generated segment labels images to skip that this time
@@ -555,6 +580,7 @@ int main(int argc, char **argv)
             }
 
             // Copy segment boundaries image to host
+            // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
             cudaError = cudaMemcpy2DAsync(pSegmentsHost[nImage],
                                           oSizeROI[nImage].width * sizeof(Npp8u),
                                           pSegmentsDev[nImage],
@@ -562,6 +588,7 @@ int main(int argc, char **argv)
                                           oSizeROI[nImage].width * sizeof(Npp8u),
                                           oSizeROI[nImage].height,
                                           cudaMemcpyDeviceToHost,
+                                          // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
                                           nppStreamCtx.hStream);
 
             // Wait host image read backs to complete, not necessary if no need to synchronize

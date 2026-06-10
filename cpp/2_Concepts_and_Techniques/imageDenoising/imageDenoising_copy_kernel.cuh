@@ -28,6 +28,7 @@
 
 __global__ void Copy(TColor *dst, int imageW, int imageH, cudaTextureObject_t texImage)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const int ix = blockDim.x * blockIdx.x + threadIdx.x;
     const int iy = blockDim.y * blockIdx.y + threadIdx.y;
     // Add half of a texel to always address exact texel centers

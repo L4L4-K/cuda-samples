@@ -92,7 +92,7 @@ __device__ void matrixMul(float *C, float *A, float *B, size_type wA, size_type 
         BS(ty, tx) = B[b + wB * ty + tx];
 
         // Synchronize to make sure the matrices are loaded
-        // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         __syncthreads();
 
         // Multiply the two matrices together;
@@ -106,6 +106,7 @@ __device__ void matrixMul(float *C, float *A, float *B, size_type wA, size_type 
         // Synchronize to make sure that the preceding
         // computation is done before loading two new
         // sub-matrices of A and B in the next iteration
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         __syncthreads();
     }
 

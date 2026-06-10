@@ -140,6 +140,7 @@ static CUT_THREADPROC solverThread(TOptionPlan *plan)
 static void multiSolver(TOptionPlan *plan, int nPlans)
 {
     // allocate and initialize an array of stream handles
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaStream_t *streams = (cudaStream_t *)malloc(nPlans * sizeof(cudaStream_t));
     cudaEvent_t  *events  = (cudaEvent_t *)malloc(nPlans * sizeof(cudaEvent_t));
 
@@ -167,6 +168,7 @@ static void multiSolver(TOptionPlan *plan, int nPlans)
 
     for (int i = 0; i < nPlans; i++) {
         checkCudaErrors(cudaSetDevice(plan[i].device));
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaDeviceSynchronize());
     }
 
@@ -180,6 +182,7 @@ static void multiSolver(TOptionPlan *plan, int nPlans)
         // Main computations
         MonteCarloGPU(&plan[i], streams[i]);
 
+        // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaEventRecord(events[i], streams[i]));
     }
 

@@ -125,6 +125,7 @@ int main(int argc, char **argv)
             DoneCons(consumerStatus, send_fd);
         }
 
+        // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
         cuCtxPushCurrent(cudaConsumer.context);
 
         launchProducer(&args);
@@ -147,6 +148,7 @@ int main(int argc, char **argv)
             DoneCons(consumerStatus, send_fd);
         }
 
+        // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
         cuCtxPushCurrent(cudaConsumer.context);
         cudaConsumer.eglStream  = g_consumerEglStream;
         cudaConsumer.eglDisplay = g_consumerEglDisplay;
@@ -280,6 +282,7 @@ int main(int argc, char **argv)
         }
 
         args.charCnt = WIDTH * HEIGHT * 4;
+        // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
         cuCtxPushCurrent(cudaProducer.context);
         curesult = cudaProducerInit(&cudaProducer, &args);
         if (curesult != CUDA_SUCCESS) {

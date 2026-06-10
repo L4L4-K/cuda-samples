@@ -89,6 +89,7 @@ void randomInit(float *data, size_t size)
 ////////////////////////////////////////////////////////////////////////////////
 // CUDA driver runtime linking and initialization
 ////////////////////////////////////////////////////////////////////////////////
+// JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
 CUresult initCUDA(int argc, char **argv, CUfunction *pMatrixMul, int *block_size_out)
 {
     CUresult   status;
@@ -137,6 +138,7 @@ CUresult initCUDA(int argc, char **argv, CUfunction *pMatrixMul, int *block_size
         fprintf(stderr, "initCUDA (Device=%d) invalid GPU device.  %d GPU device(s) detected.\n\n", devID, deviceCount);
         status = CUDA_ERROR_NOT_FOUND;
 
+        // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
         cuCtxDestroy(g_cuContext);
         exit(EXIT_FAILURE);
     }
@@ -146,6 +148,7 @@ CUresult initCUDA(int argc, char **argv, CUfunction *pMatrixMul, int *block_size
 
     // get compute capabilities and the devicename
     checkCudaErrors(cuDeviceComputeCapability(&major, &minor, cuDevice));
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuDeviceGetName(deviceName, 256, cuDevice));
     printf("> Device %d: \"%s\" with Compute %d.%d capability\n", cuDevice, deviceName, major, minor);
 
@@ -156,6 +159,7 @@ CUresult initCUDA(int argc, char **argv, CUfunction *pMatrixMul, int *block_size
     status = cuCtxCreate(&g_cuContext, 0, cuDevice);
 
     if (CUDA_SUCCESS != status) {
+        // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
         cuCtxDestroy(g_cuContext);
         exit(EXIT_SUCCESS);
     }
@@ -202,6 +206,7 @@ CUresult initCUDA(int argc, char **argv, CUfunction *pMatrixMul, int *block_size
 
     if (CUDA_SUCCESS != status) {
         printf("Error while compiling PTX\n");
+        // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
         cuCtxDestroy(g_cuContext);
         exit(EXIT_FAILURE);
     }
@@ -211,6 +216,7 @@ CUresult initCUDA(int argc, char **argv, CUfunction *pMatrixMul, int *block_size
         &cuFunction, g_cuModule, (block_size == 16) ? "matrixMul_bs16_32bit" : "matrixMul_bs32_32bit");
 
     if (CUDA_SUCCESS != status) {
+        // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
         cuModuleUnload(g_cuModule);
         cuCtxDestroy(g_cuContext);
         exit(EXIT_FAILURE);
@@ -229,6 +235,7 @@ int main(int argc, char **argv)
     printf("[ %s ]\n", sSDKsample);
 
     // initialize CUDA
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     CUfunction matrixMul  = NULL;
     int        block_size = 0;
     checkCudaErrors(initCUDA(argc, argv, &matrixMul, &block_size));
@@ -266,6 +273,7 @@ int main(int argc, char **argv)
     size_t mem_size_C = sizeof(float) * size_C;
 
     CUdeviceptr d_C;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cuMemAlloc(&d_C, mem_size_C));
 
     // allocate mem for the result on host side
@@ -288,6 +296,7 @@ int main(int argc, char **argv)
         int offset = 0;
         {
             // setup execution parameters
+            // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
             checkCudaErrors(cuParamSetv(matrixMul, offset, &d_C, sizeof(d_C)));
             offset += sizeof(d_C);
 
@@ -319,6 +328,7 @@ int main(int argc, char **argv)
     checkCudaErrors(cuCtxSynchronize());
 
     // copy result from device to host
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cuMemcpyDtoH((void *)h_C, d_C, mem_size_C));
 
     // compute reference solution
@@ -341,6 +351,7 @@ int main(int argc, char **argv)
     free(h_B);
     free(h_C);
     free(reference);
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cuMemFree(d_A));
     checkCudaErrors(cuMemFree(d_B));
     checkCudaErrors(cuMemFree(d_C));

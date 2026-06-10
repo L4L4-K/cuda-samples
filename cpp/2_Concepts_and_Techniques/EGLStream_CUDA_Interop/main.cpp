@@ -76,6 +76,7 @@ int main(int argc, char **argv)
         goto done;
     }
 
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuInit(0));
 
     int count;
@@ -98,6 +99,7 @@ int main(int argc, char **argv)
     if (curesult != CUDA_SUCCESS) {
         goto done;
     }
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuCtxPushCurrent(cudaConsumer.context));
     if (CUDA_SUCCESS != (curesult = cuEGLStreamConsumerConnect(&(cudaConsumer.cudaConn), eglStream))) {
         printf("FAILED Connect CUDA consumer  with error %d\n", curesult);
@@ -108,6 +110,7 @@ int main(int argc, char **argv)
     }
     checkCudaErrors(cuCtxPopCurrent(&cudaConsumer.context));
 
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuCtxPushCurrent(cudaProducer.context));
     if (CUDA_SUCCESS == (curesult = cuEGLStreamProducerConnect(&(cudaProducer.cudaConn), eglStream, WIDTH, HEIGHT))) {
         printf("Connect CUDA producer Done, CudaProducer %p\n", cudaProducer.cudaConn);
@@ -146,6 +149,7 @@ int main(int argc, char **argv)
             args.pitchLinearOutput = 0;
         }
 
+        // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
         checkCudaErrors(cuCtxPushCurrent(cudaProducer.context));
         cudaProducerInit(&cudaProducer, g_display, eglStream, &args);
         checkCudaErrors(cuCtxPopCurrent(&cudaProducer.context));
@@ -161,6 +165,7 @@ int main(int argc, char **argv)
                    args.isARGB ? "ARGB" : "YUV",
                    args.pitchLinearOutput ? "Pitchlinear" : "BlockLinear");
             if (j == 0) {
+                // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
                 checkCudaErrors(cuCtxPushCurrent(cudaProducer.context));
                 curesult = cudaProducerTest(&cudaProducer, cudaProducer.fileName1);
                 if (curesult != CUDA_SUCCESS) {
@@ -177,6 +182,7 @@ int main(int argc, char **argv)
                 checkCudaErrors(cuCtxPopCurrent(&cudaConsumer.context));
             }
             else {
+                // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
                 checkCudaErrors(cuCtxPushCurrent(cudaProducer.context));
                 curesult = cudaProducerTest(&cudaProducer, cudaProducer.fileName2);
                 if (curesult != CUDA_SUCCESS) {
@@ -196,6 +202,7 @@ int main(int argc, char **argv)
         }
     }
 
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuCtxPushCurrent(cudaProducer.context));
     if (CUDA_SUCCESS != (curesult = cudaProducerDeinit(&cudaProducer))) {
         printf("Producer Disconnect FAILED. \n");

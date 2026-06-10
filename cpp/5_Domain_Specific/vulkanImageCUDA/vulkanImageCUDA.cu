@@ -165,6 +165,7 @@ WindowsSecurityAttributes::~WindowsSecurityAttributes()
 }
 #endif
 
+// JP: この anchor では CUDA resource lifetime end です。未完了 work が残っていないか確認し、確保/作成/登録と対応する API で閉じます。
 void DestroyDebugUtilsMessengerEXT(VkInstance                   instance,
                                    VkDebugUtilsMessengerEXT     debugMessenger,
                                    const VkAllocationCallbacks *pAllocator)
@@ -330,6 +331,7 @@ __global__ void d_boxfilter_rgba_y(cudaSurfaceObject_t *dstSurfMipMapArray,
                                    size_t               mipLevels,
                                    int                  filter_radius)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned int x     = blockIdx.x * blockDim.x + threadIdx.x;
     float        scale = 1.0f / (float)((filter_radius << 1) + 1);
 
@@ -552,6 +554,7 @@ private:
     void initCuda()
     {
         setCudaVkDevice();
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         checkCudaErrors(cudaStreamCreate(&streamToRun));
         cudaVkImportImageMem();
         cudaVkImportSemaphore();
@@ -642,6 +645,7 @@ private:
         vkDestroyDevice(device, nullptr);
 
         if (enableValidationLayers) {
+            // JP: この anchor では CUDA resource lifetime end です。未完了 work が残っていないか確認し、確保/作成/登録と対応する API で閉じます。
             DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
         }
 
@@ -1714,6 +1718,7 @@ private:
 
         checkCudaErrors(cudaCreateTextureObject(&textureObjMipMapInput, &resDescr, &texDescr, NULL));
 
+        // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         checkCudaErrors(cudaMalloc((void **)&d_surfaceObjectList, sizeof(cudaSurfaceObject_t) * mipLevels));
         checkCudaErrors(cudaMalloc((void **)&d_surfaceObjectListTemp, sizeof(cudaSurfaceObject_t) * mipLevels));
 

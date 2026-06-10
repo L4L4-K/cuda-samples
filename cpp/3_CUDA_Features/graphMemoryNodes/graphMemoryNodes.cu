@@ -57,6 +57,7 @@ __global__ void squareArray(const float *input, float *output, int numElements)
 // Stores the negative of each input element in output array
 __global__ void negateArray(const float *input, float *output, int numElements)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (idx < numElements) {
@@ -151,6 +152,7 @@ void createFreeGraph(cudaGraphExec_t *graphExec, float *dPtr)
  *       |
  * free d_negSquare
  */
+// JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
 void createNegateSquaresGraphExplicitly(cudaGraphExec_t *graphExec,
                                         int              device,
                                         negSquareArrays *hostArrays,
@@ -169,11 +171,13 @@ void createNegateSquaresGraphExplicitly(cudaGraphExec_t *graphExec,
 
     // Kernel launch parameters
     cudaKernelNodeParams kernelNodeParams = {0};
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     kernelNodeParams.gridDim              = dim3(hostArrays->numBlocks, 1, 1);
     kernelNodeParams.blockDim             = dim3(THREADS_PER_BLOCK, 1, 1);
     kernelNodeParams.sharedMemBytes       = 0;
     kernelNodeParams.extra                = NULL;
 
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     cudaGraph_t     graph;
     cudaGraphNode_t allocNodeInput, allocNodeSquare, allocNodeNegSquare;
     cudaGraphNode_t copyNodeInput, copyNodeSquare, copyNodeNegSquare;
@@ -211,6 +215,7 @@ void createNegateSquaresGraphExplicitly(cudaGraphExec_t *graphExec,
 
     // Square kernel depends on copyNodeInput to ensure all data is on the device
     // before kernel launch.
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphAddKernelNode(&squareKernelNode, graph, &copyNodeInput, 1, &kernelNodeParams));
 
     checkCudaErrors(cudaGraphAddMemcpyNode1D(&copyNodeSquare,
@@ -220,12 +225,14 @@ void createNegateSquaresGraphExplicitly(cudaGraphExec_t *graphExec,
                                              hostArrays->square,
                                              d_square,
                                              hostArrays->bytes,
+                                             // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                                              cudaMemcpyDeviceToHost));
 
     // Free of d_input depends on the square kernel to ensure that d_input is not
     // freed while being read by the kernel. It also depends on the alloc of
     // d_input via squareKernelNode > copyNodeInput > allocNodeSquare >
     // allocNodeInput.
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphAddMemFreeNode(&freeNodeInput, graph, &squareKernelNode, 1, d_input));
 
     // Allocation of C depends on free of A so CUDA can reuse the virtual address.
@@ -241,6 +248,7 @@ void createNegateSquaresGraphExplicitly(cudaGraphExec_t *graphExec,
     kernelNodeParams.func         = (void *)negateArray;
     kernelNodeParams.kernelParams = (void **)negateKernelArgs;
 
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphAddKernelNode(&negateKernelNode, graph, &allocNodeNegSquare, 1, &kernelNodeParams));
 
     nodeDependencies.push_back(copyNodeSquare);
@@ -256,9 +264,11 @@ void createNegateSquaresGraphExplicitly(cudaGraphExec_t *graphExec,
                                              hostArrays->negSquare,
                                              d_negSquare,
                                              hostArrays->bytes,
+                                             // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                                              cudaMemcpyDeviceToHost));
 
     if (d_negSquare_out == NULL) {
+        // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         cudaGraphNode_t freeNodeNegSquare;
         checkCudaErrors(cudaGraphAddMemFreeNode(&freeNodeNegSquare, graph, &copyNodeNegSquare, 1, d_negSquare));
     }
@@ -326,8 +336,10 @@ void doNegateSquaresInStream(cudaStream_t stream1, negSquareArrays *hostArrays, 
     checkCudaErrors(cudaMallocAsync(&d_input, hostArrays->bytes, stream1));
     checkCudaErrors(cudaMallocAsync(&d_square, hostArrays->bytes, stream1));
 
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpyAsync(d_input, hostArrays->input, hostArrays->bytes, cudaMemcpyHostToDevice, stream1));
     squareArray<<<hostArrays->numBlocks, THREADS_PER_BLOCK, 0, stream1>>>(d_input, d_square, hostArrays->numElements);
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaEventRecord(squareKernelCompleteEvent, stream1));
 
     checkCudaErrors(cudaStreamWaitEvent(stream2, squareKernelCompleteEvent, 0));
@@ -340,16 +352,21 @@ void doNegateSquaresInStream(cudaStream_t stream1, negSquareArrays *hostArrays, 
         d_square, d_negSquare, hostArrays->numElements);
     checkCudaErrors(cudaEventRecord(negateKernelCompleteEvent, stream1));
     checkCudaErrors(
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         cudaMemcpyAsync(hostArrays->negSquare, d_negSquare, hostArrays->bytes, cudaMemcpyDeviceToHost, stream1));
     if (d_negSquare_out == NULL) {
+        // JP: この anchor では CUDA resource lifetime end です。未完了 work が残っていないか確認し、確保/作成/登録と対応する API で閉じます。
         checkCudaErrors(cudaFreeAsync(d_negSquare, stream1));
     }
     else {
         *d_negSquare_out = d_negSquare;
     }
 
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamWaitEvent(stream2, negateKernelCompleteEvent, 0));
+    // JP: この anchor では CUDA resource lifetime end です。未完了 work が残っていないか確認し、確保/作成/登録と対応する API で閉じます。
     checkCudaErrors(cudaFreeAsync(d_square, stream2));
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaEventRecord(squareFreeEvent, stream2));
 
     checkCudaErrors(cudaStreamWaitEvent(stream1, squareFreeEvent, 0));
@@ -365,11 +382,13 @@ void doNegateSquaresInStream(cudaStream_t stream1, negSquareArrays *hostArrays, 
  * capture. createNegateSquaresGraphExplicitly constructs an equivalent graph
  * without stream capture.
  */
+// JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
 void createNegateSquaresGraphWithStreamCapture(cudaGraphExec_t *graphExec,
                                                negSquareArrays *hostArrays,
                                                float          **d_negSquare_out = NULL)
 {
     cudaGraph_t  graph;
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaStream_t stream;
 
     checkCudaErrors(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
@@ -378,8 +397,11 @@ void createNegateSquaresGraphWithStreamCapture(cudaGraphExec_t *graphExec,
     doNegateSquaresInStream(stream, hostArrays, d_negSquare_out);
     checkCudaErrors(cudaStreamEndCapture(stream, &graph));
 
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphInstantiate(graphExec, graph, NULL, NULL, 0));
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamDestroy(stream));
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphDestroy(graph));
 }
 
@@ -432,6 +454,7 @@ __global__ void validateGPU(float *d_negSquare, negSquareArrays devRefArrays, bo
     }
 }
 
+// JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
 void validateHost(negSquareArrays *hostArrays, bool *foundValidationFailure)
 {
     float ref, diff;
@@ -450,7 +473,9 @@ void validateHost(negSquareArrays *hostArrays, bool *foundValidationFailure)
 int main(int argc, char **argv)
 {
     negSquareArrays hostArrays, deviceRefArrays;
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaStream_t    stream;
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     cudaGraphExec_t graphExec, graphExecFreeC;
 
     // Declare pointers for GPU buffers
@@ -482,6 +507,7 @@ int main(int argc, char **argv)
 
     prepareHostArrays(&hostArrays);
     prepareRefArrays(&hostArrays, &deviceRefArrays, &foundValidationFailure);
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
     printf("Setup complete.\n\n");
 
@@ -495,19 +521,25 @@ int main(int argc, char **argv)
     resetOutputArrays(&hostArrays);
 
     printf("Running negateSquares in a stream-captured graph.\n");
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     createNegateSquaresGraphWithStreamCapture(&graphExec, &hostArrays);
     checkCudaErrors(cudaGraphLaunch(graphExec, stream));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaStreamSynchronize(stream));
     printf("Validating negateSquares in a stream-captured graph...\n");
+    // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
     validateHost(&hostArrays, foundValidationFailure);
     checkValidationFailure(foundValidationFailure);
     resetOutputArrays(&hostArrays);
 
     printf("Running negateSquares in an explicitly constructed graph.\n");
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     createNegateSquaresGraphExplicitly(&graphExec, device, &hostArrays);
     checkCudaErrors(cudaGraphLaunch(graphExec, stream));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaStreamSynchronize(stream));
     printf("Validating negateSquares in an explicitly constructed graph...\n");
+    // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
     validateHost(&hostArrays, foundValidationFailure);
     checkValidationFailure(foundValidationFailure);
     resetOutputArrays(&hostArrays);
@@ -524,19 +556,26 @@ int main(int argc, char **argv)
         d_negSquare, deviceRefArrays, foundValidationFailure);
     // Since cudaFree is synchronous, the stream must synchronize before freeing
     // d_negSquare to ensure d_negSquare no longer being accessed.
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaStreamSynchronize(stream));
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(d_negSquare));
     printf("Validating negateSquares with d_negSquare freed outside the "
            "stream...\n");
+    // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
     validateHost(&hostArrays, foundValidationFailure);
     checkValidationFailure(foundValidationFailure);
     resetOutputArrays(&hostArrays);
 
     printf("Running negateSquares with d_negSquare freed outside the graph.\n");
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphLaunch(graphExec, stream));
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     validateGPU<<<hostArrays.numBlocks, THREADS_PER_BLOCK, 0, stream>>>(
         d_negSquare, deviceRefArrays, foundValidationFailure);
+    // JP: この anchor では CUDA resource lifetime end です。未完了 work が残っていないか確認し、確保/作成/登録と対応する API で閉じます。
     checkCudaErrors(cudaFreeAsync(d_negSquare, stream));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaStreamSynchronize(stream));
     printf("Validating negateSquares with d_negSquare freed outside the graph...\n");
     checkValidationFailure(foundValidationFailure);
@@ -544,18 +583,24 @@ int main(int argc, char **argv)
 
     printf("Running negateSquares with d_negSquare freed in a different graph.\n");
     createFreeGraph(&graphExecFreeC, d_negSquare);
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphLaunch(graphExec, stream));
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     validateGPU<<<hostArrays.numBlocks, THREADS_PER_BLOCK, 0, stream>>>(
         d_negSquare, deviceRefArrays, foundValidationFailure);
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphLaunch(graphExecFreeC, stream));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaStreamSynchronize(stream));
     printf("Validating negateSquares with d_negSquare freed in a different "
            "graph...\n");
     checkValidationFailure(foundValidationFailure);
 
     printf("Cleaning up sample.\n");
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphExecDestroy(graphExec));
     checkCudaErrors(cudaGraphExecDestroy(graphExecFreeC));
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaStreamDestroy(stream));
     checkCudaErrors(cudaFree(foundValidationFailure));
     checkCudaErrors(cudaFree(deviceRefArrays.negSquare));

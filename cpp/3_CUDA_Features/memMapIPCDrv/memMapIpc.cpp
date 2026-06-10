@@ -225,6 +225,7 @@ static void memMapImportAndMapMemory(CUdeviceptr                   d_ptr,
 
         // Assign the chunk to the appropriate VA range and release the handle.
         // After mapping the memory, it can be referenced by virtual address.
+        // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
         checkCudaErrors(cuMemMap(d_ptr + (i * mapSize), mapSize, 0, allocationHandles[i], 0));
 
         // Since we do not need to make any other mappings of this memory or export
@@ -247,6 +248,7 @@ static void memMapUnmapAndFreeMemory(CUdeviceptr dptr, size_t size)
     // The backing stores will be freed.
     // Since the memory has been unmapped after this call, accessing the specified
     // va range will result in a fault (unitll it is remapped).
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuMemUnmap(dptr, size));
 
     // Free the virtual address region.  This allows the virtual address region
@@ -425,6 +427,7 @@ static void childProcess(int devId, int id, char **argv)
     }
 
     // Clean up!
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuStreamDestroy(stream));
     checkCudaErrors(cuModuleUnload(cuModule));
     checkCudaErrors(cuCtxDestroy(ctx));
@@ -459,6 +462,7 @@ static void parentProcess(char *app)
     printf("PP: lshmName = %s\n", lshmName);
 
     checkCudaErrors(cuDeviceGetCount(&devCount));
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     std::vector<CUdevice> devices(devCount);
 
     if (sharedMemoryCreate(lshmName, sizeof(*shm), &info) != 0) {
@@ -473,6 +477,7 @@ static void parentProcess(char *app)
         checkCudaErrors(cuDeviceGet(&devices[i], i));
     }
 
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     std::vector<CUcontext>     ctxs;
     std::vector<unsigned char> selectedDevices;
 
@@ -527,6 +532,7 @@ static void parentProcess(char *app)
             }
         }
         if (allPeers) {
+            // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
             CUcontext         ctx;
             CUctxCreateParams ctx_params = {};
             checkCudaErrors(cuCtxCreate(&ctx, &ctx_params, 0, devices[i]));
@@ -536,6 +542,7 @@ static void parentProcess(char *app)
             // setup the peers for the device.  For systems that only allow 8
             // peers per GPU at a time, this acts to remove devices from CanAccessPeer
             for (int j = 0; j < nprocesses; j++) {
+                // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
                 checkCudaErrors(cuCtxSetCurrent(ctxs.back()));
                 checkCudaErrors(cuCtxEnablePeerAccess(ctxs[j], 0));
                 checkCudaErrors(cuCtxSetCurrent(ctxs[j]));
@@ -555,6 +562,7 @@ static void parentProcess(char *app)
     }
 
     for (int i = 0; i < ctxs.size(); ++i) {
+        // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
         checkCudaErrors(cuCtxDestroy(ctxs[i]));
     };
 
@@ -611,6 +619,7 @@ static void parentProcess(char *app)
     }
 
     for (i = 0; i < nprocesses; i++) {
+        // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
         checkCudaErrors(cuMemRelease(allocationHandles[i]));
     }
 
@@ -622,6 +631,7 @@ static void parentProcess(char *app)
 int main(int argc, char **argv)
 {
     // Initialize
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuInit(0));
 
     if (argc == 1) {

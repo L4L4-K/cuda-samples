@@ -302,6 +302,7 @@ class CheckRender {
 
     printf("   src_file <%s>\n", src_file);
     printf("   ref_file <%s>\n", ref_file_path);
+    // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
     return (sdkComparePPM(src_file, ref_file_path, epsilon, threshold, true) ==
                     true
                 ? true
@@ -319,6 +320,7 @@ class CheckRender {
     fclose(fp);
   }
 
+  // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
   virtual bool compareBin2BinUint(const char *src_file, const char *ref_file,
                                   unsigned int nelements, const float epsilon,
                                   const float threshold) {
@@ -394,6 +396,7 @@ class CheckRender {
         printf("   src_file <%s>\n", src_file);
         printf("   ref_file <%s>\n", ref_file_path);
 
+        // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
         if (!compareData<unsigned int, float>(ref_buffer, src_buffer, nelements,
                                               epsilon, threshold)) {
           error_count++;
@@ -424,6 +427,7 @@ class CheckRender {
     return (error_count == 0);  // returns true if all pixels pass
   }
 
+  // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
   virtual bool compareBin2BinFloat(const char *src_file, const char *ref_file,
                                    unsigned int nelements, const float epsilon,
                                    const float threshold) {
@@ -494,6 +498,7 @@ class CheckRender {
         printf("   src_file <%s>\n", src_file);
         printf("   ref_file <%s>\n", ref_file_path);
 
+        // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
         if (!compareDataAsFloatThreshold<float, float>(
                 ref_buffer, src_buffer, nelements, epsilon, threshold)) {
           error_count++;

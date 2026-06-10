@@ -285,6 +285,7 @@ def run(
     # cuda.core stream for launch/events; CuPy copies use the same stream via
     # Stream.from_external.
     stream = device.create_stream()
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     cp_stream = cp.cuda.Stream.from_external(stream)
     try:
         d_blockSums = cp.empty(num_blocks, dtype=dtype)
@@ -350,6 +351,7 @@ def run(
         # Device -> Host: after stream sync, partial sums are visible on host.
         stream.sync()
         with cp_stream:
+            # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
             h_blockSums = cp.asnumpy(d_blockSums)
         stage2_start = time.perf_counter()
         gpu_result = float(np.sum(h_blockSums))

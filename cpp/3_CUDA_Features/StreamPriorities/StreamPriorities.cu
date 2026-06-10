@@ -144,10 +144,12 @@ int main(int argc, char **argv)
     // allocate memory for memcopy destination
     int *d_dst_low;
     int *d_dst_hi;
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc(&d_dst_low, size));
     checkCudaErrors(cudaMalloc(&d_dst_hi, size));
 
     // create some events
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaEvent_t ev_start_low;
     cudaEvent_t ev_start_hi;
     cudaEvent_t ev_end_low;
@@ -170,6 +172,7 @@ int main(int argc, char **argv)
         memcpy_kernel<<<TBLOCKS, THREADS, 0, st_hi>>>(d_dst_hi + j, d_src_hi + j, EACH_SIZE);
     }
 
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaEventRecord(ev_end_low, st_low));
     checkCudaErrors(cudaEventRecord(ev_end_hi, st_hi));
 
@@ -180,6 +183,7 @@ int main(int argc, char **argv)
     /* */
 
     size = TOTAL_SIZE;
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_dst_low, d_dst_low, size, cudaMemcpyDeviceToHost));
     checkCudaErrors(cudaMemcpy(h_dst_hi, d_dst_hi, size, cudaMemcpyDeviceToHost));
 
@@ -190,6 +194,7 @@ int main(int argc, char **argv)
     // check timings
     float ms_low;
     float ms_hi;
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaEventElapsedTime(&ms_low, ev_start_low, ev_end_low));
     checkCudaErrors(cudaEventElapsedTime(&ms_hi, ev_start_hi, ev_end_hi));
 

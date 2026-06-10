@@ -175,6 +175,7 @@ void compileFileToCUBIN(char *filename, int argc, char **argv, char **cubinResul
   NVRTC_SAFE_CALL("nvrtcCompileProgram", res);
 
   size_t codeSize;
+  // JP: この連続する anchor 群では NVRTC/JIT compile/link output です。compile option、log、生成 code と後続 module/kernel の対応 を確認します。
   NVRTC_SAFE_CALL("nvrtcGetCUBINSize", nvrtcGetCUBINSize(prog, &codeSize));
   char *code = new char[codeSize];
   NVRTC_SAFE_CALL("nvrtcGetCUBIN", nvrtcGetCUBIN(prog, code));
@@ -186,6 +187,7 @@ void compileFileToCUBIN(char *filename, int argc, char **argv, char **cubinResul
   }
 }
 
+// JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
 CUmodule loadCUBIN(char *cubin, int argc, char **argv) {
   CUmodule module;
   CUcontext context;

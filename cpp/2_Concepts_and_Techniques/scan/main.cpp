@@ -88,6 +88,7 @@ int main(int argc, char **argv)
 
         printf("Validating the results...\n");
         printf("...reading back GPU results\n");
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemcpy(h_OutputGPU, d_Output, N * sizeof(uint), cudaMemcpyDeviceToHost));
 
         printf(" ...scanExclusiveHost()\n");
@@ -126,6 +127,7 @@ int main(int argc, char **argv)
 
     for (uint arrayLength = MIN_LARGE_ARRAY_SIZE; arrayLength <= MAX_LARGE_ARRAY_SIZE; arrayLength <<= 1) {
         printf("Running scan for %u elements (%u arrays)...\n", arrayLength, N / arrayLength);
+        // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaDeviceSynchronize());
         sdkResetTimer(&hTimer);
         sdkStartTimer(&hTimer);
@@ -140,6 +142,7 @@ int main(int argc, char **argv)
 
         printf("Validating the results...\n");
         printf("...reading back GPU results\n");
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemcpy(h_OutputGPU, d_Output, N * sizeof(uint), cudaMemcpyDeviceToHost));
 
         printf("...scanExclusiveHost()\n");

@@ -143,6 +143,7 @@ extern "C" void renderAtlasImage(dim3 gridSize, dim3 blockSize, uchar4 *d_output
 
 __global__ void d_mipmap(cudaSurfaceObject_t mipOutput, cudaTextureObject_t mipInput, uint imageW, uint imageH)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     uint x = blockIdx.x * blockDim.x + threadIdx.x;
     uint y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -295,6 +296,7 @@ extern "C" void randomizeAtlas()
     copyParams.dstArray     = atlasImage.dataArray;
     copyParams.extent       = atlasImage.size;
     copyParams.extent.depth = 1;
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     copyParams.kind         = cudaMemcpyHostToDevice;
     checkCudaErrors(cudaMemcpy3D(&copyParams));
 };
@@ -309,6 +311,7 @@ extern "C" void deinitAtlasAndImages()
         }
 
         if (image.textureObject) {
+            // JP: この連続する anchor 群では CUDA resource lifetime end です。未完了 work が残っていないか確認し、確保/作成/登録と対応する API で閉じます。
             checkCudaErrors(cudaDestroyTextureObject(image.textureObject));
         }
 
@@ -359,6 +362,7 @@ extern "C" void initAtlasAndImages(const Image *images, size_t numImages, cudaEx
         copyParams.dstArray     = level0;
         copyParams.extent       = image.size;
         copyParams.extent.depth = 1;
+        // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         copyParams.kind         = cudaMemcpyHostToDevice;
         checkCudaErrors(cudaMemcpy3D(&copyParams));
 
@@ -393,6 +397,7 @@ extern "C" void initAtlasAndImages(const Image *images, size_t numImages, cudaEx
 
     // create atlas array
     cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc<uint2>();
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMallocArray(&atlasImage.dataArray, &channelDesc, atlasSize.width, atlasSize.height));
     atlasImage.h_data = malloc(atlasSize.width * atlasSize.height * sizeof(uint2));
     atlasImage.type   = cudaResourceTypeArray;

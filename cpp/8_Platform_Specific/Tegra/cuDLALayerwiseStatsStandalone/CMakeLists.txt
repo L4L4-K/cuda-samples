@@ -24,6 +24,7 @@ endif()
 # Include directories and libraries
 include_directories(../../../../Common)
 
+# JP: この連続する anchor 群では CMake CUDA target/link/architecture wiring です。source、target、optional dependency、platform condition を確認します。
 find_package(NVSCI)
 find_library(CUDLA_LIB cudla PATHS ${CUDAToolkit_LIBRARY_DIR} ${CMAKE_LIBRARY_PATH})
 

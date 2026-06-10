@@ -100,9 +100,11 @@ __global__ void sum(clock_t *d_clocks, int N)
             s_clocks[threadIdx.x] += s_clocks[threadIdx.x + i];
         }
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
     }
 
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x == 0) {
         d_clocks[0] = s_clocks[0];
     }
@@ -188,6 +190,7 @@ int main(int argc, char **argv)
     clock_t total_clocks = 0;
 
     // Start the clock
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaEventRecord(start_event, 0));
 
     // Queue pairs of {kernel_A, kernel_B} in separate streams
@@ -200,6 +203,7 @@ int main(int argc, char **argv)
     }
 
     // Stop the clock in stream 0 (i.e. all previous kernels will be complete)
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaEventRecord(stop_event, 0));
 
     // At this point the CPU has dispatched all work for the GPU and can
@@ -213,6 +217,7 @@ int main(int argc, char **argv)
 
     // stop_event will have been recorded but including the synchronize here to
     // prevent copy/paste errors!
+    // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaEventSynchronize(stop_event));
     checkCudaErrors(cudaEventElapsedTime(&elapsed_time, start_event, stop_event));
 

@@ -193,6 +193,7 @@ def main():
     print("[Process Checkpoint Sample using CUDA Core API]")
     print(f"PID:                {os.getpid()}")
 
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     device = Device(args.device)
     device.set_current()
     print(f"Device:             {device.name}")
@@ -234,6 +235,7 @@ def main():
 
         host = np.empty(n_elements, dtype=np.float32)
 
+        # JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         hash_before = hash_device_buffer(device_buffer, host)
         print(f"Buffer hash (before): {hash_before}")
 
@@ -243,6 +245,7 @@ def main():
         timings = run_lifecycle(proc, args.lock_timeout_ms)
         print_timings(timings)
 
+        # JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         hash_after = hash_device_buffer(device_buffer, host)
 
         print()

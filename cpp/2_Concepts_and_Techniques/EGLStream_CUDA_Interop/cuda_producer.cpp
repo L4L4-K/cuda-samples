@@ -144,6 +144,7 @@ CUresult cudaProducerTest(test_cuda_producer_s *cudaProducer, char *file)
     CUeglColorFormat eglColorFormat;
     FILE            *file_p;
     CUeglFrame       cudaEgl;
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     CUcontext        oldContext;
 
     file_p = fopen(file, "rb");
@@ -236,6 +237,7 @@ CUresult cudaProducerTest(test_cuda_producer_s *cudaProducer, char *file)
             cpdesc.WidthInBytes                                            = copyWidthInBytes[i];
             cpdesc.Height                                                  = copyHeight[i];
             cpdesc.Depth                                                   = 1;
+            // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
             cuStatus                                                       = cuMemcpy3D(&cpdesc);
             if (cuStatus != CUDA_SUCCESS) {
                 printf("Cuda producer: cuMemCpy failed, cuStatus =%d\n", cuStatus);
@@ -293,6 +295,7 @@ done:
     return cuStatus;
 }
 
+// JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
 CUresult cudaDeviceCreateProducer(test_cuda_producer_s *cudaProducer, CUdevice device)
 {
     CUresult status = CUDA_SUCCESS;
@@ -305,6 +308,7 @@ CUresult cudaDeviceCreateProducer(test_cuda_producer_s *cudaProducer, CUdevice d
     char deviceName[256];
     checkCudaErrors(cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device));
     checkCudaErrors(cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device));
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuDeviceGetName(deviceName, 256, device));
     printf("CUDA Producer on GPU Device %d: \"%s\" with compute capability "
            "%d.%d\n\n",

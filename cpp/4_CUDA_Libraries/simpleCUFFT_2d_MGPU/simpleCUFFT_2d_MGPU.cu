@@ -162,6 +162,7 @@ int main(int argc, char **argv)
     }
 
     // cufftCreate() - Create an empty plan
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cufftResult result;
     cufftHandle planComplex;
     result = cufftCreate(&planComplex);
@@ -199,6 +200,7 @@ int main(int argc, char **argv)
     worksize = (size_t *)malloc(sizeof(size_t) * nGPUs);
 
     // cufftMakePlan2d() - Create the plan
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     result = cufftMakePlan2d(planComplex, N, N, CUFFT_C2C, worksize);
     if (result != CUFFT_SUCCESS) {
         printf("*MakePlan* failed\n");
@@ -221,6 +223,7 @@ int main(int argc, char **argv)
 
     // cufftXtMalloc() - Malloc data on multiple GPUs
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     result = cufftXtMalloc(planComplex, (cudaLibXtDesc **)&d_f, CUFFT_XT_FORMAT_INPLACE);
     if (result != CUFFT_SUCCESS) {
         printf("*XtMalloc failed\n");
@@ -266,6 +269,7 @@ int main(int argc, char **argv)
 
     printf("Inverse 2d FFT on multiple GPUs\n");
     // cufftXtExecDescriptorC2C() - Execute inverse  FFT on data on multiple GPUs
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     result = cufftXtExecDescriptorC2C(planComplex, d_out, d_out, CUFFT_INVERSE);
     if (result != CUFFT_SUCCESS) {
         printf("*XtExecC2C  failed\n");
@@ -277,6 +281,7 @@ int main(int argc, char **argv)
     Complex *h_d_out = (Complex *)malloc(sizeof(Complex) * N * N);
 
     // cufftXtMemcpy() - Copy data from multiple GPUs to host
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     result = cufftXtMemcpy(planComplex, h_d_out, d_out, CUFFT_COPY_DEVICE_TO_HOST);
     if (result != CUFFT_SUCCESS) {
         printf("*XtMemcpy failed\n");
@@ -305,8 +310,10 @@ int main(int argc, char **argv)
 
     // cudaXtFree() - Free GPU memory
     for (int i = 0; i < GPU_COUNT; i++) {
+        // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         cudaFree(d_k[i]);
     }
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     result = cufftXtFree(d_out);
     if (result != CUFFT_SUCCESS) {
         printf("*XtFree failed\n");

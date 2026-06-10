@@ -64,6 +64,7 @@ struct heterogeneous_workload
 
     int         *h_data;
     int         *d_data;
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaStream_t stream;
 
     bool success;
@@ -118,6 +119,7 @@ CUT_THREADPROC launch(void *void_arg)
 
     // New in CUDA 5.0: Add a CPU callback which is called once all currently
     // pending operations in the CUDA stream have finished
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamAddCallback(workload->stream, myStreamCallback, workload, 0));
 
     CUT_THREADEND;
@@ -151,6 +153,7 @@ CUT_THREADPROC postprocess(void *void_arg)
     CUT_THREADEND;
 }
 
+// JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
 void CUDART_CB myStreamCallback(cudaStream_t stream, cudaError_t status, void *data)
 {
     // Check status of GPU after stream operations are done

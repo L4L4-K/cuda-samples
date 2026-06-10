@@ -65,6 +65,7 @@ void quasirandomGeneratorGPU(CUdeviceptr d_Output, unsigned int seed, unsigned i
     dim3 threads(128, QRNG_DIMENSIONS);
     dim3 cudaGridSize(128, 1, 1);
 
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     CUfunction kernel_addr;
     checkCudaErrors(cuModuleGetFunction(&kernel_addr, module, "quasirandomGeneratorKernel"));
 
@@ -90,6 +91,7 @@ void inverseCNDgpu(CUdeviceptr d_Output, unsigned int N)
     dim3 threads(128, 1, 1);
     dim3 cudaGridSize(128, 1, 1);
 
+    // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     CUfunction kernel_addr;
     checkCudaErrors(cuModuleGetFunction(&kernel_addr, module, "inverseCNDKernel"));
 

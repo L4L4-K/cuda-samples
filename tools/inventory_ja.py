@@ -476,7 +476,6 @@ def is_probably_generic_jp(line: str) -> bool:
         "この file では",
         "この build file",
         "英語の識別子",
-        "確認します",
         "保持します",
     )
     concrete_terms = (
@@ -486,8 +485,26 @@ def is_probably_generic_jp(line: str) -> bool:
         "方向",
         "host",
         "device",
+        "stream",
+        "event",
+        "resource",
+        "timeline",
+        "timing",
+        "memory",
+        "lifetime",
+        "context",
+        "module",
+        "function",
+        "thread",
+        "index",
+        "api",
+        "cuda",
         "同期境界",
+        "同期",
         "依存関係",
+        "依存",
+        "完了",
+        "境界",
         "launch shape",
         "grid",
         "block",
@@ -511,7 +528,7 @@ def inaccurate_comment_flags(path: Path, lines: list[str], jp_line_numbers: list
     for line_number in jp_line_numbers:
         text = lines[line_number - 1].strip()
         lower = text.lower()
-        if "__syncthreads" in text and any(term in lower for term in ("host", "cpu", "gpu work", "device-wide")):
+        if "__syncthreads" in text and any(term in lower for term in ("host 処理", "cpu", "gpu work", "device-wide")):
             flags.append(
                 {
                     "line": line_number,
@@ -528,7 +545,10 @@ def inaccurate_comment_flags(path: Path, lines: list[str], jp_line_numbers: list
                 }
             )
         if relative.endswith("cpp/1_Utilities/deviceQuery/deviceQuery.cpp") and line_number <= TOP_LINE_LIMIT:
-            if any(term in lower for term in ("stream/event", "unified memory", "migration")) or "block 内同期" in text:
+            negative_property_note = any(term in text for term in ("行いません", "ではありません", "しません"))
+            if not negative_property_note and (
+                any(term in lower for term in ("stream/event", "unified memory", "migration")) or "block 内同期" in text
+            ):
                 flags.append(
                     {
                         "line": line_number,

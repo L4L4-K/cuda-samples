@@ -128,6 +128,7 @@ int main(int argc, char *argv[])
     // have CPU do some work while waiting for stage 1 to finish
     unsigned long int counter = 0;
 
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     while (cudaEventQuery(stop) == cudaErrorNotReady) {
         counter++;
     }

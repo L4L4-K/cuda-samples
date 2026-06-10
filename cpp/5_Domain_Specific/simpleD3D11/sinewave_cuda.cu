@@ -110,6 +110,7 @@ void cudaAcquireSync(cudaExternalSemaphore_t &extSemaphore,
     checkCudaErrors(cudaWaitExternalSemaphoresAsync(&extSemaphore, &extSemWaitParams, 1, streamToRun));
 }
 
+// JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
 void cudaReleaseSync(cudaExternalSemaphore_t &extSemaphore, uint64_t key, cudaStream_t streamToRun)
 {
     cudaExternalSemaphoreSignalParams extSemSigParams;
@@ -128,6 +129,7 @@ void RunSineWaveKernel(cudaExternalSemaphore_t &extSemaphore,
                        size_t                   mesh_width,
                        size_t                   mesh_height,
                        Vertex                  *cudaDevVertptr,
+                       // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
                        cudaStream_t             streamToRun)
 {
     static float t = 0.0f;

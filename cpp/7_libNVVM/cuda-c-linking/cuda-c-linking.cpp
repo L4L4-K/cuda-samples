@@ -202,6 +202,7 @@ int main(int argc, char **argv)
     outs() << "Using math library: " << libpath.str() << "\n";
 
     // Initialize CUDA and obtain device 0.
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuInit(0));
     int nDevices;
     checkCudaErrors(cuDeviceGetCount(&nDevices));
@@ -251,6 +252,7 @@ int main(int argc, char **argv)
     }
 
     // Create the CUDA context.
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     CUcontext context;
     checkCudaErrors(cuCtxCreate(&context, NULL, 0, device));
 
@@ -268,6 +270,7 @@ int main(int argc, char **argv)
                                          linkerErrors,
                                          reinterpret_cast<void *>(1024),
                                          reinterpret_cast<void *>(1)};
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuLinkCreate(5, linkerOptions, linkerOptionValues, &linker));
     checkCudaErrors(
         cuLinkAddData(linker, CU_JIT_INPUT_PTX, (void *)ptx.c_str(), ptx.size(), "<compiled-ptx>", 0, NULL, NULL));
@@ -283,6 +286,7 @@ int main(int argc, char **argv)
     }
 
     // Create a module and load the cubin into it.
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     CUmodule cudaModule;
     checkCudaErrors(cuModuleLoadDataEx(&cudaModule, cubin, 0, 0, 0));
 

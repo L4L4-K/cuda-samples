@@ -125,10 +125,13 @@ __global__ void scanExclusiveShared(uint4 *d_Dst, uint4 *d_Src, uint size)
 __global__ void scanExclusiveShared2(uint *d_Buf, uint *d_Dst, uint *d_Src, uint N, uint arrayLength)
 {
     // Handle to thread block group
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta = cg::this_thread_block();
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ uint  s_Data[2 * THREADBLOCK_SIZE];
 
     // Skip loads and stores for inactive threads of last threadblock (pos >= N)
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     uint pos = blockIdx.x * blockDim.x + threadIdx.x;
 
     // Load top elements
@@ -153,14 +156,18 @@ __global__ void scanExclusiveShared2(uint *d_Buf, uint *d_Dst, uint *d_Src, uint
 __global__ void uniformUpdate(uint4 *d_Data, uint *d_Buffer)
 {
     // Handle to thread block group
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta = cg::this_thread_block();
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ uint  buf;
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     uint             pos = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (threadIdx.x == 0) {
         buf = d_Buffer[blockIdx.x];
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     uint4 data4 = d_Data[pos];
@@ -251,6 +258,7 @@ extern "C" size_t scanExclusiveLarge(uint *d_Dst, uint *d_Src, uint batchSize, u
     // Check total batch size limit
     assert((batchSize * arrayLength) <= MAX_BATCH_ELEMENTS);
 
+    // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     scanExclusiveShared<<<(batchSize * arrayLength) / (4 * THREADBLOCK_SIZE), THREADBLOCK_SIZE>>>(
         (uint4 *)d_Dst, (uint4 *)d_Src, 4 * THREADBLOCK_SIZE);
     getLastCudaError("scanExclusiveShared() execution FAILED\n");

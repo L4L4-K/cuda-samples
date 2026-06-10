@@ -180,6 +180,7 @@ __global__ void d_boxfilter_y_global(float *id, float *od, int w, int h, int r)
 __global__ void d_boxfilter_x_tex(float *od, int w, int h, int r, cudaTextureObject_t tex)
 {
     float        scale = 1.0f / (float)((r << 1) + 1);
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned int y     = blockIdx.x * blockDim.x + threadIdx.x;
 
     float t = 0.0f;
@@ -200,6 +201,7 @@ __global__ void d_boxfilter_x_tex(float *od, int w, int h, int r, cudaTextureObj
 __global__ void d_boxfilter_y_tex(float *od, int w, int h, int r, cudaTextureObject_t tex)
 {
     float        scale = 1.0f / (float)((r << 1) + 1);
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned int x     = blockIdx.x * blockDim.x + threadIdx.x;
 
     float t = 0.0f;
@@ -245,6 +247,7 @@ __device__ float4 rgbaIntToFloat(unsigned int c)
 __global__ void d_boxfilter_rgba_x(unsigned int *od, int w, int h, int r, cudaTextureObject_t rgbaTex)
 {
     float        scale = 1.0f / (float)((r << 1) + 1);
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned int y     = blockIdx.x * blockDim.x + threadIdx.x;
 
     // as long as address is always less than height, we do work
@@ -268,6 +271,7 @@ __global__ void d_boxfilter_rgba_x(unsigned int *od, int w, int h, int r, cudaTe
 // column pass using coalesced global memory reads
 __global__ void d_boxfilter_rgba_y(unsigned int *id, unsigned int *od, int w, int h, int r)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
     id             = &id[x];
     od             = &od[x];
@@ -442,6 +446,7 @@ extern "C" double boxFilter(float              *d_temp,
         d_boxfilter_y_global<<<width / nthreads, nthreads, 0>>>(d_temp, d_dest, width, height, radius);
 
         // sync host and stop computation timer_kernel
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaDeviceSynchronize());
         dKernelTime += sdkGetTimerValue(&timer);
 
@@ -477,11 +482,13 @@ extern "C" double boxFilterRGBA(unsigned int       *d_temp,
     for (int i = 0; i < iterations; i++) {
         // sync host and start kernel computation timer_kernel
         dKernelTime = 0.0;
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaDeviceSynchronize());
         sdkResetTimer(&timer);
 
         // use texture for horizontal pass
         if (iterations > 1) {
+            // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
             d_boxfilter_rgba_x<<<height / nthreads, nthreads, 0>>>(d_temp, width, height, radius, rgbaTexTempArray);
         }
         else {
@@ -491,6 +498,7 @@ extern "C" double boxFilterRGBA(unsigned int       *d_temp,
         d_boxfilter_rgba_y<<<width / nthreads, nthreads, 0>>>(d_temp, d_dest, width, height, radius);
 
         // sync host and stop computation timer_kernel
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaDeviceSynchronize());
         dKernelTime += sdkGetTimerValue(&timer);
 

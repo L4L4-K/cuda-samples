@@ -159,6 +159,7 @@ inline CompiledKernel compileFileWithNVRTC(const char *filename,
     memBlock[inputSize] = '\x0';
 
     // Compile the source string to PTX and Tile IR.
+    // JP: この連続する anchor 群では NVRTC/JIT compile/link output です。compile option、log、生成 code と後続 module/kernel の対応 を確認します。
     nvrtcProgram prog;
     NVRTC_SAFE_CALL("nvrtcCreateProgram", nvrtcCreateProgram(&prog, memBlock,
     "testprog", 0, NULL, NULL));
@@ -178,6 +179,7 @@ inline CompiledKernel compileFileWithNVRTC(const char *filename,
 
     // Fetch Tile IR and compile it to cubin before benchmarking.
     size_t tileIRSize;
+    // JP: この連続する anchor 群では NVRTC/JIT compile/link output です。compile option、log、生成 code と後続 module/kernel の対応 を確認します。
     NVRTC_SAFE_CALL("nvrtcGetTileIRSize", nvrtcGetTileIRSize(prog, &tileIRSize));
     std::vector<char> tileIR(tileIRSize);
     NVRTC_SAFE_CALL("nvrtcGetTileIR", nvrtcGetTileIR(prog, tileIR.data()));

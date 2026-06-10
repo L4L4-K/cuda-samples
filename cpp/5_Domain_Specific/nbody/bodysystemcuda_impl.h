@@ -175,6 +175,7 @@ template <typename T> void BodySystemCUDA<T>::_initialize(int numBodies)
         memset(m_hVel, 0, memSize);
 
         checkCudaErrors(cudaSetDevice(m_devID));
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         checkCudaErrors(cudaEventCreate(&m_deviceData[0].event));
 
         if (m_bUsePBO) {
@@ -194,6 +195,7 @@ template <typename T> void BodySystemCUDA<T>::_initialize(int numBodies)
                 }
 
                 glBindBuffer(GL_ARRAY_BUFFER, 0);
+                // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
                 checkCudaErrors(cudaGraphicsGLRegisterBuffer(&m_pGRes[i], m_pbo[i], cudaGraphicsMapFlagsNone));
             }
         }
@@ -222,6 +224,7 @@ template <typename T> void BodySystemCUDA<T>::_initialize(int numBodies)
                     cudaGetLastError();
                 }
 
+                // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
                 checkCudaErrors(cudaEventCreate(&m_deviceData[i].event));
 
                 // Point all GPUs to the memory allocated on gpu0
@@ -257,11 +260,13 @@ template <typename T> void BodySystemCUDA<T>::_finalize()
         checkCudaErrors(cudaFree((void **)m_deviceData[0].dVel));
 
         if (m_bUsePBO) {
+            // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
             checkCudaErrors(cudaGraphicsUnregisterResource(m_pGRes[0]));
             checkCudaErrors(cudaGraphicsUnregisterResource(m_pGRes[1]));
             glDeleteBuffers(2, (const GLuint *)m_pbo);
         }
         else {
+            // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
             checkCudaErrors(cudaFree((void **)m_deviceData[0].dPos[0]));
             checkCudaErrors(cudaFree((void **)m_deviceData[0].dPos[1]));
 
@@ -339,6 +344,7 @@ template <typename T> T *BodySystemCUDA<T>::getArray(BodyArray array)
     T *hdata = 0;
     T *ddata = 0;
 
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     cudaGraphicsResource *pgres = NULL;
 
     int currentReadHost = m_bUseSysMem ? m_currentRead : 0;
@@ -363,6 +369,7 @@ template <typename T> T *BodySystemCUDA<T>::getArray(BodyArray array)
 
     if (!m_bUseSysMem) {
         if (pgres) {
+            // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
             checkCudaErrors(cudaGraphicsResourceSetMapFlags(pgres, cudaGraphicsMapFlagsReadOnly));
             checkCudaErrors(cudaGraphicsMapResources(1, &pgres, 0));
             size_t bytes;
@@ -408,6 +415,7 @@ template <typename T> void BodySystemCUDA<T>::setArray(BodyArray array, const T 
                 memcpy(m_hPos[m_currentRead], data, m_numBodies * 4 * sizeof(T));
             }
             else
+                // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 checkCudaErrors(cudaMemcpy(
                     m_deviceData[0].dPos[m_currentRead], data, m_numBodies * 4 * sizeof(T), cudaMemcpyHostToDevice));
         }
@@ -419,6 +427,7 @@ template <typename T> void BodySystemCUDA<T>::setArray(BodyArray array, const T 
         }
         else
             checkCudaErrors(
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 cudaMemcpy(m_deviceData[0].dVel, data, m_numBodies * 4 * sizeof(T), cudaMemcpyHostToDevice));
 
         break;

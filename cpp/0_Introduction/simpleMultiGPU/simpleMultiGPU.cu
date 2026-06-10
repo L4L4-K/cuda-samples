@@ -172,6 +172,7 @@ int main(int argc, char **argv)
         getLastCudaError("reduceKernel() execution failed.\n");
 
         // Read back GPU results
+        // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemcpyAsync(
             plan[i].h_Sum_from_device, plan[i].d_Sum, ACCUM_N * sizeof(float), cudaMemcpyDeviceToHost, plan[i].stream));
     }
@@ -234,6 +235,7 @@ int main(int argc, char **argv)
     // Cleanup and shutdown
     for (i = 0; i < GPU_N; i++) {
         checkCudaErrors(cudaSetDevice(i));
+        // JP: この anchor では pinned host memory の登録/確保/解放です。async transfer や overlap の条件と lifetime を確認します。
         checkCudaErrors(cudaFreeHost(plan[i].h_Data));
     }
 

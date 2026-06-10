@@ -128,7 +128,7 @@ __device__ packed_result get_prefix_sum(const uint4 &data, const cg::thread_bloc
         sums[warp_id] = result[15];
     }
 
-    // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
 
     if (warp_id == 0) {
@@ -145,6 +145,7 @@ __device__ packed_result get_prefix_sum(const uint4 &data, const cg::thread_bloc
         sums[lane_id] = warp_sum;
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
 
     // fold in unused warp
@@ -233,6 +234,7 @@ __global__ void shfl_intimage_rows(const uint4 *img, uint4 *integral_image)
     const unsigned int idMask      = id & 3;
     const unsigned int idSwizzle   = (id + 2) & 3;
     const unsigned int idShift     = (id >> 2) << 4;
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const unsigned int blockOffset = blockIdx.x * 480;
 
     // Use CG tile to warp shuffle vector types
@@ -271,7 +273,9 @@ __global__ void shfl_intimage_rows(const uint4 *img, uint4 *integral_image)
 // block sums.
 __global__ void shfl_vertical_shfl(unsigned int *img, int width, int height)
 {
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ unsigned int sums[32][9];
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int                     tidx = blockIdx.x * blockDim.x + threadIdx.x;
     // int warp_id = threadIdx.x / warpSize ;
     unsigned int lane_id = tidx % 8;
@@ -281,14 +285,17 @@ __global__ void shfl_vertical_shfl(unsigned int *img, int width, int height)
     unsigned int mask    = 0xffffffff;
 
     sums[threadIdx.x][threadIdx.y] = 0;
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
 
     for (int step = 0; step < 135; step++) {
         unsigned int  sum = 0;
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         unsigned int *p   = img + (threadIdx.y + step * 8) * width + tidx;
 
         sum                            = *p;
         sums[threadIdx.x][threadIdx.y] = sum;
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         __syncthreads();
 
         // place into SMEM
@@ -296,6 +303,7 @@ __global__ void shfl_vertical_shfl(unsigned int *img, int width, int height)
         // sums are computed in a warp
         // then read out properly
         int partial_sum = 0;
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         int j           = threadIdx.x % 8;
         int k           = threadIdx.x / 8 + threadIdx.y * 4;
 
@@ -309,14 +317,17 @@ __global__ void shfl_vertical_shfl(unsigned int *img, int width, int height)
         }
 
         sums[k][j] = partial_sum;
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         __syncthreads();
 
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         if (threadIdx.y > 0) {
             sum += sums[threadIdx.x][threadIdx.y - 1];
         }
 
         sum += stepSum;
         stepSum += sums[threadIdx.x][blockDim.y - 1];
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         __syncthreads();
         *p = sum;
     }

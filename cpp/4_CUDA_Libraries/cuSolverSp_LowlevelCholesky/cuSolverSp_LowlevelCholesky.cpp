@@ -164,12 +164,15 @@ int main(int argc, char *argv[])
 
     printf("sparse matrix A is %d x %d with %d nonzeros, base=%d\n", rowsA, colsA, nnzA, baseA);
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusolverSpCreate(&cusolverSpH));
 
     checkCudaErrors(cusparseCreate(&cusparseH));
 
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamCreate(&stream));
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusolverSpSetStream(cusolverSpH, stream));
 
     checkCudaErrors(cusparseSetStream(cusparseH, stream));
@@ -206,6 +209,7 @@ int main(int argc, char *argv[])
     }
 
     printf("step 2: create opaque info structure\n");
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusolverSpCreateCsrcholInfoHost(&h_info));
 
     printf("step 3: analyze chol(A) to know structure of L\n");
@@ -224,6 +228,7 @@ int main(int argc, char *argv[])
     assert(NULL != buffer_cpu);
 
     printf("step 5: compute A = L*L^T \n");
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusolverSpDcsrcholFactorHost(
         cusolverSpH, rowsA, nnzA, descrA, h_csrValA, h_csrRowPtrA, h_csrColIndA, h_info, buffer_cpu));
 
@@ -249,6 +254,7 @@ int main(int argc, char *argv[])
     checkCudaErrors(cudaMemcpy(d_x, h_x, sizeof(double) * colsA, cudaMemcpyHostToDevice));
 
     /* Wrap raw data into cuSPARSE generic API objects */
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cusparseSpMatDescr_t matA = NULL;
     if (baseA) {
         checkCudaErrors(cusparseCreateCsr(&matA,
@@ -264,6 +270,7 @@ int main(int argc, char *argv[])
                                           CUDA_R_64F));
     }
     else {
+        // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         checkCudaErrors(cusparseCreateCsr(&matA,
                                           rowsA,
                                           colsA,
@@ -277,6 +284,7 @@ int main(int argc, char *argv[])
                                           CUDA_R_64F));
     }
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cusparseDnVecDescr_t vecx = NULL;
     checkCudaErrors(cusparseCreateDnVec(&vecx, colsA, d_x, CUDA_R_64F));
     cusparseDnVecDescr_t vecAx = NULL;
@@ -295,8 +303,10 @@ int main(int argc, char *argv[])
                                             CUSPARSE_SPMV_ALG_DEFAULT,
                                             &bufferSize));
     void *buffer = NULL;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc(&buffer, bufferSize));
 
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusparseSpMV(cusparseH,
                                  CUSPARSE_OPERATION_NON_TRANSPOSE,
                                  &minus_one,
@@ -308,6 +318,7 @@ int main(int argc, char *argv[])
                                  CUSPARSE_SPMV_ALG_DEFAULT,
                                  buffer));
 
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_r, d_r, sizeof(double) * rowsA, cudaMemcpyDeviceToHost));
 
     x_inf = vec_norminf(colsA, h_x);
@@ -320,14 +331,17 @@ int main(int argc, char *argv[])
     printf("(CPU) |b - A*x|/(|A|*|x|) = %E \n", r_inf / (A_inf * x_inf));
 
     printf("step 9: create opaque info structure\n");
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusolverSpCreateCsrcholInfo(&d_info));
 
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(d_csrRowPtrA, h_csrRowPtrA, sizeof(int) * (rowsA + 1), cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_csrColIndA, h_csrColIndA, sizeof(int) * nnzA, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_csrValA, h_csrValA, sizeof(double) * nnzA, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_b, h_b, sizeof(double) * rowsA, cudaMemcpyHostToDevice));
 
     printf("step 10: analyze chol(A) to know structure of L\n");
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusolverSpXcsrcholAnalysis(cusolverSpH, rowsA, nnzA, descrA, d_csrRowPtrA, d_csrColIndA, d_info));
 
     printf("step 11: workspace for chol(A)\n");
@@ -335,11 +349,13 @@ int main(int argc, char *argv[])
         cusolverSpH, rowsA, nnzA, descrA, d_csrValA, d_csrRowPtrA, d_csrColIndA, d_info, &size_internal, &size_chol));
 
     if (buffer_gpu) {
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         checkCudaErrors(cudaFree(buffer_gpu));
     }
     checkCudaErrors(cudaMalloc(&buffer_gpu, sizeof(char) * size_chol));
 
     printf("step 12: compute A = L*L^T \n");
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusolverSpDcsrcholFactor(
         cusolverSpH, rowsA, nnzA, descrA, d_csrValA, d_csrRowPtrA, d_csrColIndA, d_info, buffer_gpu));
 
@@ -354,8 +370,10 @@ int main(int argc, char *argv[])
     printf("step 14: solve A*x = b \n");
     checkCudaErrors(cusolverSpDcsrcholSolve(cusolverSpH, rowsA, d_b, d_x, d_info, buffer_gpu));
 
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(d_r, h_b, sizeof(double) * rowsA, cudaMemcpyHostToDevice));
 
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusparseSpMV(cusparseH,
                                  CUSPARSE_OPERATION_NON_TRANSPOSE,
                                  &minus_one,
@@ -367,6 +385,7 @@ int main(int argc, char *argv[])
                                  CUSPARSE_SPMV_ALG_DEFAULT,
                                  buffer));
 
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_r, d_r, sizeof(double) * rowsA, cudaMemcpyDeviceToHost));
 
     r_inf = vec_norminf(rowsA, h_r);
@@ -375,6 +394,7 @@ int main(int argc, char *argv[])
     printf("(GPU) |b - A*x|/(|A|*|x|) = %E \n", r_inf / (A_inf * x_inf));
 
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     if (cusolverSpH) {
         checkCudaErrors(cusolverSpDestroy(cusolverSpH));
     }
@@ -382,9 +402,11 @@ int main(int argc, char *argv[])
         checkCudaErrors(cusparseDestroy(cusparseH));
     }
     if (stream) {
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         checkCudaErrors(cudaStreamDestroy(stream));
     }
     if (descrA) {
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         checkCudaErrors(cusparseDestroyMatDescr(descrA));
     }
     if (h_info) {
@@ -427,6 +449,7 @@ int main(int argc, char *argv[])
         free(buffer_cpu);
     }
     if (buffer_gpu) {
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         checkCudaErrors(cudaFree(buffer_gpu));
     }
 

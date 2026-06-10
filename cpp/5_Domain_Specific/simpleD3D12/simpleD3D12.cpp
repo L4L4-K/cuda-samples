@@ -395,6 +395,7 @@ void DX12CudaInterop::LoadAssets()
         LPCWSTR                   name = NULL;
         HANDLE                    sharedHandle;
         externalSemaphoreHandleDesc.type = cudaExternalSemaphoreHandleTypeD3D12Fence;
+        // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         m_device->CreateSharedHandle(m_fence.Get(), &windowsSecurityAttributes, GENERIC_ALL, name, &sharedHandle);
         externalSemaphoreHandleDesc.handle.win32.handle = (void *)sharedHandle;
         externalSemaphoreHandleDesc.flags               = 0;

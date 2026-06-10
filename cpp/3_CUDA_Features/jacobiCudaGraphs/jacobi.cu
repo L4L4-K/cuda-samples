@@ -85,6 +85,7 @@ JacobiMethod(const float *A, const double *b, const float conv_threshold, double
 
     cg::thread_block_tile<32> tile32 = cg::tiled_partition<32>(cta);
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     for (int k = 0, i = blockIdx.x * ROWS_PER_CTA; (k < ROWS_PER_CTA) && (i < N_ROWS); k++, i++) {
         double rowThreadSum = 0.0;
         for (int j = threadIdx.x; j < N_ROWS; j += blockDim.x) {
@@ -100,8 +101,10 @@ JacobiMethod(const float *A, const double *b, const float conv_threshold, double
         }
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x < ROWS_PER_CTA) {
         cg::thread_block_tile<ROWS_PER_CTA> tile8    = cg::tiled_partition<ROWS_PER_CTA>(cta);
         double                              temp_sum = 0.0;
@@ -131,10 +134,13 @@ JacobiMethod(const float *A, const double *b, const float conv_threshold, double
 static __global__ void finalError(double *x, double *g_sum)
 {
     // Handle to thread block group
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block         cta = cg::this_thread_block();
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     extern __shared__ double warpSum[];
     double                   sum = 0.0;
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int globalThreadId = blockIdx.x * blockDim.x + threadIdx.x;
 
     for (int i = globalThreadId; i < N_ROWS; i += blockDim.x * gridDim.x) {
@@ -149,12 +155,15 @@ static __global__ void finalError(double *x, double *g_sum)
     }
 
     if (tile32.thread_rank() == 0) {
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         warpSum[threadIdx.x / warpSize] = sum;
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     double blockSum = 0.0;
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x < (blockDim.x / warpSize)) {
         blockSum = warpSum[threadIdx.x];
     }
@@ -204,12 +213,14 @@ double JacobiMethodGpuCudaGraphExecKernelSetParams(const float  *A,
     memsetParams.width       = 2;
     memsetParams.height      = 1;
 
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphCreate(&graph, 0));
     checkCudaErrors(cudaGraphAddMemsetNode(&memsetNode, graph, NULL, 0, &memsetParams));
     nodeDependencies.push_back(memsetNode);
 
     cudaKernelNodeParams NodeParams0, NodeParams1;
     NodeParams0.func           = (void *)JacobiMethod;
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     NodeParams0.gridDim        = nblocks;
     NodeParams0.blockDim       = nthreads;
     NodeParams0.sharedMemBytes = 0;
@@ -218,6 +229,7 @@ double JacobiMethodGpuCudaGraphExecKernelSetParams(const float  *A,
     NodeParams0.kernelParams = kernelArgs0;
     NodeParams0.extra        = NULL;
 
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphAddKernelNode(
         &jacobiKernelNode, graph, nodeDependencies.data(), nodeDependencies.size(), &NodeParams0));
 
@@ -240,6 +252,7 @@ double JacobiMethodGpuCudaGraphExecKernelSetParams(const float  *A,
     checkCudaErrors(cudaGraphInstantiate(&graphExec, graph, NULL, NULL, 0));
 
     NodeParams1.func           = (void *)JacobiMethod;
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     NodeParams1.gridDim        = nblocks;
     NodeParams1.blockDim       = nthreads;
     NodeParams1.sharedMemBytes = 0;
@@ -250,12 +263,15 @@ double JacobiMethodGpuCudaGraphExecKernelSetParams(const float  *A,
 
     int k = 0;
     for (k = 0; k < max_iter; k++) {
+        // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         checkCudaErrors(cudaGraphExecKernelNodeSetParams(
             graphExec, jacobiKernelNode, ((k & 1) == 0) ? &NodeParams0 : &NodeParams1));
         checkCudaErrors(cudaGraphLaunch(graphExec, stream));
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaStreamSynchronize(stream));
 
         if (sum <= conv_threshold) {
+            // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
             checkCudaErrors(cudaMemsetAsync(d_sum, 0, sizeof(double), stream));
             nblocks.x            = (N_ROWS / nthreads.x) + 1;
             size_t sharedMemSize = ((nthreads.x / 32) + 1) * sizeof(double);
@@ -267,7 +283,9 @@ double JacobiMethodGpuCudaGraphExecKernelSetParams(const float  *A,
                 finalError<<<nblocks, nthreads, sharedMemSize, stream>>>(x, d_sum);
             }
 
+            // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
             checkCudaErrors(cudaMemcpyAsync(&sum, d_sum, sizeof(double), cudaMemcpyDeviceToHost, stream));
+            // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
             checkCudaErrors(cudaStreamSynchronize(stream));
             printf("GPU iterations : %d\n", k + 1);
             printf("GPU error : %.3e\n", sum);
@@ -286,32 +304,41 @@ double JacobiMethodGpuCudaGraphExecUpdate(const float  *A,
                                           const int     max_iter,
                                           double       *x,
                                           double       *x_new,
+                                          // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
                                           cudaStream_t  stream)
 {
     // CTA size
     dim3 nthreads(256, 1, 1);
     // grid size
     dim3            nblocks((N_ROWS / ROWS_PER_CTA) + 2, 1, 1);
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     cudaGraph_t     graph;
     cudaGraphExec_t graphExec = NULL;
 
     double  sum = 0.0;
     double *d_sum;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc(&d_sum, sizeof(double)));
 
     int k = 0;
     for (k = 0; k < max_iter; k++) {
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         checkCudaErrors(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemsetAsync(d_sum, 0, sizeof(double), stream));
         if ((k & 1) == 0) {
+            // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
             JacobiMethod<<<nblocks, nthreads, 0, stream>>>(A, b, conv_threshold, x, x_new, d_sum);
         }
         else {
             JacobiMethod<<<nblocks, nthreads, 0, stream>>>(A, b, conv_threshold, x_new, x, d_sum);
         }
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemcpyAsync(&sum, d_sum, sizeof(double), cudaMemcpyDeviceToHost, stream));
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         checkCudaErrors(cudaStreamEndCapture(stream, &graph));
 
+        // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         if (graphExec == NULL) {
             checkCudaErrors(cudaGraphInstantiate(&graphExec, graph, NULL, NULL, 0));
         }
@@ -327,20 +354,25 @@ double JacobiMethodGpuCudaGraphExecUpdate(const float  *A,
             }
         }
         checkCudaErrors(cudaGraphLaunch(graphExec, stream));
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaStreamSynchronize(stream));
 
         if (sum <= conv_threshold) {
+            // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
             checkCudaErrors(cudaMemsetAsync(d_sum, 0, sizeof(double), stream));
             nblocks.x            = (N_ROWS / nthreads.x) + 1;
             size_t sharedMemSize = ((nthreads.x / 32) + 1) * sizeof(double);
             if ((k & 1) == 0) {
+                // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
                 finalError<<<nblocks, nthreads, sharedMemSize, stream>>>(x_new, d_sum);
             }
             else {
                 finalError<<<nblocks, nthreads, sharedMemSize, stream>>>(x, d_sum);
             }
 
+            // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
             checkCudaErrors(cudaMemcpyAsync(&sum, d_sum, sizeof(double), cudaMemcpyDeviceToHost, stream));
+            // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
             checkCudaErrors(cudaStreamSynchronize(stream));
             printf("GPU iterations : %d\n", k + 1);
             printf("GPU error : %.3e\n", sum);
@@ -348,6 +380,7 @@ double JacobiMethodGpuCudaGraphExecUpdate(const float  *A,
         }
     }
 
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(d_sum));
     return sum;
 }
@@ -358,6 +391,7 @@ double JacobiMethodGpu(const float  *A,
                        const int     max_iter,
                        double       *x,
                        double       *x_new,
+                       // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
                        cudaStream_t  stream)
 {
     // CTA size
@@ -367,32 +401,41 @@ double JacobiMethodGpu(const float  *A,
 
     double  sum = 0.0;
     double *d_sum;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc(&d_sum, sizeof(double)));
     int k = 0;
 
     for (k = 0; k < max_iter; k++) {
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemsetAsync(d_sum, 0, sizeof(double), stream));
         if ((k & 1) == 0) {
+            // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
             JacobiMethod<<<nblocks, nthreads, 0, stream>>>(A, b, conv_threshold, x, x_new, d_sum);
         }
         else {
             JacobiMethod<<<nblocks, nthreads, 0, stream>>>(A, b, conv_threshold, x_new, x, d_sum);
         }
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemcpyAsync(&sum, d_sum, sizeof(double), cudaMemcpyDeviceToHost, stream));
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaStreamSynchronize(stream));
 
         if (sum <= conv_threshold) {
+            // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
             checkCudaErrors(cudaMemsetAsync(d_sum, 0, sizeof(double), stream));
             nblocks.x            = (N_ROWS / nthreads.x) + 1;
             size_t sharedMemSize = ((nthreads.x / 32) + 1) * sizeof(double);
             if ((k & 1) == 0) {
+                // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
                 finalError<<<nblocks, nthreads, sharedMemSize, stream>>>(x_new, d_sum);
             }
             else {
                 finalError<<<nblocks, nthreads, sharedMemSize, stream>>>(x, d_sum);
             }
 
+            // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
             checkCudaErrors(cudaMemcpyAsync(&sum, d_sum, sizeof(double), cudaMemcpyDeviceToHost, stream));
+            // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
             checkCudaErrors(cudaStreamSynchronize(stream));
             printf("GPU iterations : %d\n", k + 1);
             printf("GPU error : %.3e\n", sum);
@@ -400,6 +443,7 @@ double JacobiMethodGpu(const float  *A,
         }
     }
 
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(d_sum));
     return sum;
 }

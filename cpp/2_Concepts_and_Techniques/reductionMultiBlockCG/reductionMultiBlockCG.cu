@@ -106,6 +106,7 @@ __device__ void reduceBlock(double *sdata, const cg::thread_block &cta)
         }
         sdata[0] = beta;
     }
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 }
 
@@ -117,9 +118,11 @@ __device__ void reduceBlock(double *sdata, const cg::thread_block &cta)
 extern "C" __global__ void reduceSinglePassMultiBlockCG(const float *g_idata, float *g_odata, unsigned int n)
 {
     // Handle to thread block group
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block block = cg::this_thread_block();
     cg::grid_group   grid  = cg::this_grid();
 
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     extern double __shared__ sdata[];
 
     // Stride over grid and add the values to a shared memory buffer
@@ -129,17 +132,21 @@ extern "C" __global__ void reduceSinglePassMultiBlockCG(const float *g_idata, fl
         sdata[block.thread_rank()] += g_idata[i];
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(block);
 
     // Reduce each block (called once per block)
     reduceBlock(sdata, block);
     // Write out the result to global memory
     if (block.thread_rank() == 0) {
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         g_odata[blockIdx.x] = sdata[0];
     }
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(grid);
 
     if (grid.thread_rank() == 0) {
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         for (int block = 1; block < gridDim.x; block++) {
             g_odata[0] += g_odata[block];
         }
@@ -269,6 +276,7 @@ float benchmarkReduce(int                 n,
         gpu_result = 0;
         sdkStartTimer(&timer);
         call_reduceSinglePassMultiBlockCG(n, numThreads, numBlocks, d_idata, d_odata);
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         cudaDeviceSynchronize();
         sdkStopTimer(&timer);
     }
@@ -357,6 +365,7 @@ bool runTest(int argc, char **argv, int device)
     checkCudaErrors(cudaMalloc((void **)&d_odata, numBlocks * sizeof(float)));
 
     // copy data directly to device memory
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(d_idata, h_idata, bytes, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_odata, h_idata, numBlocks * sizeof(float), cudaMemcpyHostToDevice));
 

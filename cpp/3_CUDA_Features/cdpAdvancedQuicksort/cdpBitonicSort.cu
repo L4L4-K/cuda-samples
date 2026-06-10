@@ -116,6 +116,7 @@ bitonicsort_kernel(unsigned *indata, unsigned *outdata, unsigned int offset, uns
             unsigned     my_elem   = sortbuf[threadIdx.x];
             unsigned     swap_elem = sortbuf[swap_idx];
 
+            // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
             cg::sync(cta);
 
             // The k'th bit of my threadid (and hence my sort item ID)
@@ -125,6 +126,7 @@ bitonicsort_kernel(unsigned *indata, unsigned *outdata, unsigned int offset, uns
             // Finally, if either my_elem or swap_elem is out of range, then it
             // ALWAYS acts like it's the largest number.
             // Confusing? It saves us two writes though.
+            // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             unsigned int ascend  = k * (swap_idx < threadIdx.x);
             unsigned int descend = k * (swap_idx > threadIdx.x);
             bool         swap    = false;
@@ -145,11 +147,13 @@ bitonicsort_kernel(unsigned *indata, unsigned *outdata, unsigned int offset, uns
                 sortbuf[swap_idx] = my_elem;
             }
 
+            // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
             cg::sync(cta);
         }
     }
 
     // Copy the sorted data from shared memory back to the output buffer
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x < len)
         outdata[threadIdx.x + offset] = sortbuf[threadIdx.x];
 }
@@ -176,6 +180,7 @@ static __device__ __forceinline__ void big_bitonicsort_kernel(unsigned        *i
 {
     unsigned int len2 = 1 << (__btflo(len - 1U) + 1); // Round up len to nearest power-of-2
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x >= len2)
         return; // Early out for case where more threads launched than there is
                 // data
@@ -193,6 +198,7 @@ static __device__ __forceinline__ void big_bitonicsort_kernel(unsigned        *i
         }
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     // Now the sort loops
@@ -206,6 +212,7 @@ static __device__ __forceinline__ void big_bitonicsort_kernel(unsigned        *i
     {
         for (unsigned int j = k >> 1; j > 0; j >>= 1) // Strides also in powers of to, up to <k
         {
+            // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             for (unsigned int i = 0; i < len2; i += blockDim.x) {
                 unsigned int index    = threadIdx.x + i;
                 unsigned int swap_idx = index ^ j; // Index of element we're compare-and-swapping with
@@ -257,6 +264,7 @@ static __device__ __forceinline__ void big_bitonicsort_kernel(unsigned        *i
                 }
             }
 
+            // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
             cg::sync(cta); // Only need to sync for each "j" pass
         }
     }
@@ -264,6 +272,7 @@ static __device__ __forceinline__ void big_bitonicsort_kernel(unsigned        *i
     // Copy the sorted data from the input to the output buffer, because we sort
     // in-place
     if (outdata != indata) {
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         for (unsigned int i = 0; i < len; i += blockDim.x) {
             unsigned int index = i + threadIdx.x;
 
@@ -280,6 +289,7 @@ static __device__ __forceinline__ void big_bitonicsort_kernel(unsigned        *i
 __global__ void bitonicsort(unsigned *indata, unsigned *outdata, unsigned int offset, unsigned int len)
 {
     // Handle to thread block group
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta = cg::this_thread_block();
     bitonicsort_kernel(indata, outdata, offset, len, cta);
 }

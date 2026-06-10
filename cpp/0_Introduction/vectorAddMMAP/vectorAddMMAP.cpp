@@ -78,6 +78,7 @@ void RandomInit(float *, int);
 #endif
 
 // collect all of the devices whose memory can be mapped from cuDevice.
+// JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
 vector<CUdevice> getBackingDevices(CUdevice cuDevice)
 {
     int num_devices;
@@ -123,6 +124,7 @@ int main(int argc, char **argv)
     int    attributeVal = 0;
 
     // Initialize
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuInit(0));
 
     cuDevice = findCudaDeviceDRV(argc, (const char **)argv);
@@ -138,6 +140,7 @@ int main(int argc, char **argv)
 
     // The vector addition happens on cuDevice, so the allocations need to be
     // mapped there.
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     vector<CUdevice> mappingDevices;
     mappingDevices.push_back(cuDevice);
 
@@ -212,6 +215,7 @@ int main(int argc, char **argv)
 
     // Copy result from device memory to host memory
     // h_C contains the result in host memory
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cuMemcpyDtoH(h_C, d_C, size));
 
     // Verify result
@@ -253,6 +257,7 @@ int CleanupNoFailure()
         free(h_C);
     }
 
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuModuleUnload(cuModule));
     checkCudaErrors(cuCtxDestroy(cuContext));
 

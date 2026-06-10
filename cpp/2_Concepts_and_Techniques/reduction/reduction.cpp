@@ -299,6 +299,7 @@ T benchmarkReduce(int                 n,
             while (s > cpuFinalThreshold) {
                 int threads = 0, blocks = 0;
                 getNumBlocksAndThreads(kernel, s, maxBlocks, maxThreads, blocks, threads);
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 checkCudaErrors(cudaMemcpy(d_intermediateSums, d_odata, s * sizeof(T), cudaMemcpyDeviceToDevice));
                 reduce<T>(s, threads, blocks, kernel, d_intermediateSums, d_odata);
 
@@ -312,6 +313,7 @@ T benchmarkReduce(int                 n,
 
             if (s > 1) {
                 // copy result from device to host
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 checkCudaErrors(cudaMemcpy(h_odata, d_odata, s * sizeof(T), cudaMemcpyDeviceToHost));
 
                 for (int i = 0; i < s; i++) {
@@ -322,6 +324,7 @@ T benchmarkReduce(int                 n,
             }
         }
 
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         cudaDeviceSynchronize();
         sdkStopTimer(&timer);
     }
@@ -367,10 +370,12 @@ template <class T> void shmoo(int minN, int maxN, int maxThreads, int maxBlocks,
     T *d_idata = NULL;
     T *d_odata = NULL;
 
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&d_idata, bytes));
     checkCudaErrors(cudaMalloc((void **)&d_odata, maxNumBlocks * sizeof(T)));
 
     // copy data directly to device memory
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(d_idata, h_idata, bytes, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_odata, h_idata, maxNumBlocks * sizeof(T), cudaMemcpyHostToDevice));
 
@@ -433,6 +438,7 @@ template <class T> void shmoo(int minN, int maxN, int maxThreads, int maxBlocks,
     free(h_idata);
     free(h_odata);
 
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(d_idata));
     checkCudaErrors(cudaFree(d_odata));
 }
@@ -512,10 +518,12 @@ template <class T> bool runTest(int argc, char **argv, ReduceType datatype)
         T *d_idata = NULL;
         T *d_odata = NULL;
 
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         checkCudaErrors(cudaMalloc((void **)&d_idata, bytes));
         checkCudaErrors(cudaMalloc((void **)&d_odata, numBlocks * sizeof(T)));
 
         // copy data directly to device memory
+        // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemcpy(d_idata, h_idata, bytes, cudaMemcpyHostToDevice));
         checkCudaErrors(cudaMemcpy(d_odata, h_idata, numBlocks * sizeof(T), cudaMemcpyHostToDevice));
 
@@ -584,6 +592,7 @@ template <class T> bool runTest(int argc, char **argv, ReduceType datatype)
         free(h_idata);
         free(h_odata);
 
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         checkCudaErrors(cudaFree(d_idata));
         checkCudaErrors(cudaFree(d_odata));
 

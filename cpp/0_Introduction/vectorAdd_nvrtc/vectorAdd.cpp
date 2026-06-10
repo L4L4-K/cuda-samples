@@ -134,6 +134,7 @@ int main(int argc, char **argv)
     // Copy the device result vector in device memory to the host result vector
     // in host memory.
     printf("Copy output data from the CUDA device to the host memory\n");
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cuMemcpyDtoH(h_C, d_C, size));
 
     // Verify that the result vector is correct

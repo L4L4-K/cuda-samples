@@ -89,6 +89,7 @@ int main(int argc, char **argv)
 
     printf("Testing QRNG...\n\n");
 
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuMemsetD8(d_Output, 0, QRNG_DIMENSIONS * N * sizeof(float)));
 
     int numIterations = 20;
@@ -133,6 +134,7 @@ int main(int argc, char **argv)
 
     printf("\nTesting inverseCNDgpu()...\n\n");
 
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuMemsetD8(d_Output, 0, QRNG_DIMENSIONS * N * sizeof(float)));
 
     for (int i = -1; i < numIterations; i++) {
@@ -155,6 +157,7 @@ int main(int argc, char **argv)
            128);
 
     printf("Reading GPU results...\n");
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cuMemcpyDtoH(h_OutputGPU, d_Output, QRNG_DIMENSIONS * N * sizeof(float)));
 
     printf("\nComparing to the CPU results...\n");

@@ -137,6 +137,7 @@ void cleanUp(ResourceList *resourceList)
     if (resourceList->outputBufferGPU != NULL) {
         for (ii = 0; ii < resourceList->numOutputTensors; ii++) {
             if ((resourceList->outputBufferGPU)[ii] != NULL) {
+                // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
                 cudaFree((resourceList->outputBufferGPU)[ii]);
                 (resourceList->outputBufferGPU)[ii] = NULL;
             }
@@ -148,6 +149,7 @@ void cleanUp(ResourceList *resourceList)
     if (resourceList->outputTaskStatisticsGPU != NULL) {
         for (ii = 0; ii < resourceList->numOutputTaskStatistics; ii++) {
             if ((resourceList->outputTaskStatisticsGPU)[ii] != NULL) {
+                // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
                 cudaFree((resourceList->outputTaskStatisticsGPU)[ii]);
                 (resourceList->outputTaskStatisticsGPU)[ii] = NULL;
             }
@@ -201,6 +203,7 @@ void cleanUp(ResourceList *resourceList)
     }
 
     if (resourceList->stream != NULL) {
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         cudaStreamDestroy(resourceList->stream);
         resourceList->stream = NULL;
     }
@@ -245,6 +248,7 @@ int main(int argc, char **argv)
     char           filename[MAX_FILENAME_LEN];
     const char    *suffix = ".csv";
 
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaStream_t stream;
     cudaError_t  result;
     const char  *errPtr = NULL;
@@ -302,6 +306,7 @@ int main(int argc, char **argv)
     resourceList.loadableData = loadableData;
 
     // Initialize CUDA.
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     result = cudaFree(0);
     if (result != cudaSuccess) {
         errPtr = cudaGetErrorName(result);
@@ -342,6 +347,7 @@ int main(int argc, char **argv)
     resourceList.moduleHandle = moduleHandle;
 
     // Create CUDA stream.
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     result = cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
 
     if (result != cudaSuccess) {
@@ -537,6 +543,7 @@ int main(int argc, char **argv)
     resourceList.inputBufferGPU = inputBufferGPU;
 
     for (uint32_t ii = 0; ii < numInputTensors; ii++) {
+        // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         result = cudaMalloc(&(inputBufferGPU[ii]), inputTensorDesc[ii].size);
         if (result != cudaSuccess) {
             DPRINTF("Error in allocating input memory on GPU\n");
@@ -555,6 +562,7 @@ int main(int argc, char **argv)
     resourceList.outputBufferGPU = outputBufferGPU;
 
     for (uint32_t ii = 0; ii < numOutputTensors; ii++) {
+        // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         result = cudaMalloc(&(outputBufferGPU[ii]), outputTensorDesc[ii].size);
         if (result != cudaSuccess) {
             DPRINTF("Error in allocating output memory on GPU\n");
@@ -573,6 +581,7 @@ int main(int argc, char **argv)
     resourceList.outputTaskStatisticsGPU = outputTaskStatisticsGPU;
 
     for (uint32_t ii = 0; ii < numOutputTaskStatistics; ii++) {
+        // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         result = cudaMalloc(&(outputTaskStatisticsGPU[ii]), outputTaskStatisticsDesc[ii].size);
         if (result != cudaSuccess) {
             DPRINTF("Error in allocating task statistics memory on GPU\n");
@@ -662,6 +671,7 @@ int main(int argc, char **argv)
     }
 
     for (uint32_t ii = 0; ii < numOutputTensors; ii++) {
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         result = cudaMemsetAsync(outputBufferGPU[ii], 0, outputTensorDesc[ii].size, stream);
         if (result != cudaSuccess) {
             DPRINTF("Error in enqueueing memset for output\n");
@@ -671,6 +681,7 @@ int main(int argc, char **argv)
     }
 
     for (uint32_t ii = 0; ii < numOutputTaskStatistics; ii++) {
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         result = cudaMemsetAsync(outputTaskStatisticsGPU[ii], 0, outputTaskStatisticsDesc[ii].size, stream);
         if (result != cudaSuccess) {
             DPRINTF("Error in enqueueing memset for statistics output\n");
@@ -727,6 +738,7 @@ int main(int argc, char **argv)
 
     // Wait for stream operations to finish and bring output buffer to CPU.
     for (uint32_t ii = 0; ii < numOutputTensors; ii++) {
+        // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         result = cudaMemcpyAsync(
             outputBuffer[ii], outputBufferGPU[ii], outputTensorDesc[ii].size, cudaMemcpyDeviceToHost, stream);
         if (result != cudaSuccess) {
@@ -736,6 +748,7 @@ int main(int argc, char **argv)
         }
     }
 
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     result = cudaStreamSynchronize(stream);
     if (result != cudaSuccess) {
         DPRINTF("Error in synchronizing stream\n");
@@ -746,6 +759,7 @@ int main(int argc, char **argv)
     if (statSupport == 1) {
         // copy statistics data to cpu
         for (uint32_t ii = 0; ii < numOutputTaskStatistics; ii++) {
+            // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
             result = cudaMemcpyAsync(statisticsOutputBuffer[ii],
                                      outputTaskStatisticsGPU[ii],
                                      outputTaskStatisticsDesc[ii].size,
@@ -758,6 +772,7 @@ int main(int argc, char **argv)
             }
         }
 
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         result = cudaStreamSynchronize(stream);
         if (result != cudaSuccess) {
             DPRINTF("Error in synchronizing stream\n");
@@ -868,6 +883,7 @@ int main(int argc, char **argv)
 
     DPRINTF("ALL MEMORY UNREGISTERED SUCCESSFULLY\n");
 
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     result = cudaStreamDestroy(stream);
     if (result != cudaSuccess) {
         errPtr = cudaGetErrorName(result);

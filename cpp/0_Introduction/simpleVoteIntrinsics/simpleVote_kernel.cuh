@@ -54,6 +54,7 @@ __global__ void VoteAnyKernel1(unsigned int *input, unsigned int *result, int si
 // value
 __global__ void VoteAllKernel2(unsigned int *input, unsigned int *result, int size)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int tx = threadIdx.x;
 
     int mask   = 0xffffffff;
@@ -64,6 +65,7 @@ __global__ void VoteAllKernel2(unsigned int *input, unsigned int *result, int si
 // This kernel will test for conditions across warps, and within half warps
 __global__ void VoteAnyKernel3(bool *info, int warp_size)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int          tx   = threadIdx.x;
     unsigned int mask = 0xffffffff;
     bool        *offs = info + (tx * 3);

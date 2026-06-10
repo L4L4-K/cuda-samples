@@ -70,6 +70,7 @@ int main() {
   /* launches tile kernel, the threads per block parameter is omitted because it must always be 1. */
   tileKernel<<<1>>>(d_x);
   checkCudaErrors(cudaGetLastError());
+  // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
   checkCudaErrors(cudaDeviceSynchronize());
 
   int h_x = 0;

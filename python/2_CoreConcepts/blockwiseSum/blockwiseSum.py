@@ -130,6 +130,7 @@ def run_sample(num_elements: int = 1024 * 1024, device_id: int = 0) -> bool:
     threads_per_block = 256
     num_blocks = 64
 
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     device = Device(device_id)
     device.set_current()
     stream = device.create_stream()
@@ -141,6 +142,7 @@ def run_sample(num_elements: int = 1024 * 1024, device_id: int = 0) -> bool:
 
     try:
         # Make CuPy use our stream
+        # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
         cp.cuda.Stream.from_external(stream).use()
 
         # Compile kernels
@@ -155,6 +157,7 @@ def run_sample(num_elements: int = 1024 * 1024, device_id: int = 0) -> bool:
 
         # Test data
         h_input = np.arange(num_elements, dtype=np.float32)
+        # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
         d_input = cp.asarray(h_input)
         d_output = cp.zeros_like(d_input)
         expected = cp.asarray(h_input * 2.0)
@@ -169,6 +172,7 @@ def run_sample(num_elements: int = 1024 * 1024, device_id: int = 0) -> bool:
             kernel_simple,
             d_input.data.ptr,
             d_output.data.ptr,
+            # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
             cp.uint64(num_elements),
         )
         stream.sync()
@@ -184,6 +188,7 @@ def run_sample(num_elements: int = 1024 * 1024, device_id: int = 0) -> bool:
             kernel_strided,
             d_input.data.ptr,
             d_output.data.ptr,
+            # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
             cp.uint64(num_elements),
         )
         stream.sync()
@@ -204,6 +209,7 @@ def run_sample(num_elements: int = 1024 * 1024, device_id: int = 0) -> bool:
             kernel_sum,
             d_ones.data.ptr,
             d_partial.data.ptr,
+            # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
             cp.uint64(num_elements),
         )
         stream.sync()
@@ -233,6 +239,7 @@ def run_sample(num_elements: int = 1024 * 1024, device_id: int = 0) -> bool:
                 kernel_sum,
                 d_ones.data.ptr,
                 d_partial.data.ptr,
+                # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
                 cp.uint64(num_elements),
             )
         end = stream.record(options=event_opts)
@@ -246,6 +253,7 @@ def run_sample(num_elements: int = 1024 * 1024, device_id: int = 0) -> bool:
 
     finally:
         # Explicit resource cleanup
+        # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
         cp.cuda.Stream.null.use()
         stream.close()
 

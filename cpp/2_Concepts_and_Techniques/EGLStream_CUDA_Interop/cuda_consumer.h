@@ -61,5 +61,6 @@ typedef struct _test_cuda_consumer_s
 void     cuda_consumer_init(test_cuda_consumer_s *cudaConsumer, TestArgs *args);
 CUresult cuda_consumer_deinit(test_cuda_consumer_s *cudaConsumer);
 CUresult cudaConsumerTest(test_cuda_consumer_s *data, const char *outFile);
+// JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
 CUresult cudaDeviceCreateConsumer(test_cuda_consumer_s *cudaConsumer, CUdevice device);
 #endif

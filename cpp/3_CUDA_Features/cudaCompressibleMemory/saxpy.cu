@@ -51,6 +51,7 @@ __global__ void saxpy(const float a, const float4 *x, const float4 *y, float4 *z
 __global__ void init(float4 *x, float4 *y, const float val, const size_t n)
 {
     const float4 val4 = make_float4(val, val, val, val);
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     for (size_t i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += gridDim.x * blockDim.x) {
         x[i] = y[i] = val4;
     }
@@ -100,6 +101,7 @@ void launchSaxpy(const float  a,
     threads = dim3(blockSize, 1, 1);
     blocks  = dim3(minGridSize, 1, 1);
 
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaEventCreate(&start));
     checkCudaErrors(cudaEventCreate(&stop));
     checkCudaErrors(cudaEventRecord(start));

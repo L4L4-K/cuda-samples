@@ -92,6 +92,7 @@ __global__ void surfaceWriteKernel(float *gIData, int width, int height, cudaSur
 __global__ void transformKernel(float *gOData, int width, int height, float theta, cudaTextureObject_t tex)
 {
     // calculate normalized texture coordinates
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -250,11 +251,13 @@ void runTest(int argc, char **argv)
     sdkStartTimer(&timer);
 
     // Execute the kernel
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     transformKernel<<<dimGrid, dimBlock, 0>>>(dData, width, height, angle, tex);
 
     // Check if kernel execution generated an error
     getLastCudaError("Kernel execution failed");
 
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     cudaDeviceSynchronize();
     sdkStopTimer(&timer);
     printf("Processing time: %f (ms)\n", sdkGetTimerValue(&timer));
@@ -264,6 +267,7 @@ void runTest(int argc, char **argv)
     // Allocate mem for the result on host side
     float *hOData = (float *)malloc(size);
     // copy result from device to host
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(hOData, dData, size, cudaMemcpyDeviceToHost));
 
     // Write result to file

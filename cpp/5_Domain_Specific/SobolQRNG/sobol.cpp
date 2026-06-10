@@ -230,6 +230,7 @@ int main(int argc, char *argv[])
 
     std::cout << "Reading results from GPU..." << std::endl;
     checkCudaErrors(
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         cudaMemcpy(h_outputGPU, d_output, n_vectors * n_dimensions * sizeof(float), cudaMemcpyDeviceToHost));
 
     std::cout << std::endl;

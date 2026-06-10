@@ -210,6 +210,7 @@ void ParticleSystem::_initialize(int numParticles)
         glUnmapBuffer(GL_ARRAY_BUFFER);
     }
     else {
+        // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         checkCudaErrors(cudaMalloc((void **)&m_cudaColorVBO, sizeof(float) * numParticles * 4));
     }
 

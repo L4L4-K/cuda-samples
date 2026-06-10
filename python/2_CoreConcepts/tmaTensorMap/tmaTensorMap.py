@@ -197,6 +197,7 @@ def main() -> int:
         print(f"--elements must be a multiple of TILE_SIZE={TILE_SIZE}")
         return 1
 
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     dev = Device(args.device)
     print_gpu_info(dev)
 
@@ -226,6 +227,7 @@ def main() -> int:
 
     # (1) Prepare input data and verify the initial TMA copy.
     n = args.elements
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     src = cp.arange(n, dtype=cp.float32)
     output = cp.zeros(n, dtype=cp.float32)
     dev.sync()  # CuPy uses its own stream
@@ -247,6 +249,7 @@ def main() -> int:
     )
     dev.sync()
 
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     if not cp.array_equal(output, src):
         print("TMA copy produced incorrect results")
         return 1
@@ -269,6 +272,7 @@ def main() -> int:
     )
     dev.sync()
 
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     if not cp.array_equal(output2, replacement):
         print("replace_address produced incorrect results")
         return 1

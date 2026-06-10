@@ -69,6 +69,7 @@ transformKernel(unsigned int *outputData, int width, int height, float theta, cu
 
 static __global__ void rgbToGrayscaleKernel(unsigned int *rgbaImage, size_t imageWidth, size_t imageHeight)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     size_t gidX = blockDim.x * blockIdx.x + threadIdx.x;
 
     uchar4 *pixArray = (uchar4 *)rgbaImage;
@@ -118,10 +119,12 @@ void rotateKernel(cudaTextureObject_t &texObj,
                   unsigned int        *d_outputData,
                   const int            imageWidth,
                   const int            imageHeight,
+                  // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
                   cudaStream_t         stream)
 {
     dim3 dimBlock(8, 8, 1);
     dim3 dimGrid(imageWidth / dimBlock.x, imageHeight / dimBlock.y, 1);
 
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     transformKernel<<<dimGrid, dimBlock, 0, stream>>>(d_outputData, imageWidth, imageHeight, angle, texObj);
 }

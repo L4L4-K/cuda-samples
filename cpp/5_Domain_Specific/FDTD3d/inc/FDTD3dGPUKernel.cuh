@@ -145,6 +145,7 @@ FiniteDifferencesKernel(float *output, const float *input, const int dimx, const
         }
 
         tile[ty][tx] = current;
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         // Compute the output value

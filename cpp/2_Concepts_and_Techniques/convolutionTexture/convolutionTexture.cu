@@ -121,6 +121,7 @@ extern "C" void convolutionRowsGPU(float *d_Dst, cudaArray *a_Src, int imageW, i
 ////////////////////////////////////////////////////////////////////////////////
 __global__ void convolutionColumnsKernel(float *d_Dst, int imageW, int imageH, cudaTextureObject_t texSrc)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const int   ix = IMAD(blockDim.x, blockIdx.x, threadIdx.x);
     const int   iy = IMAD(blockDim.y, blockIdx.y, threadIdx.y);
     const float x  = (float)ix + 0.5f;
@@ -151,6 +152,7 @@ convolutionColumnsGPU(float *d_Dst, cudaArray *a_Src, int imageW, int imageH, cu
     dim3 threads(16, 12);
     dim3 blocks(iDivUp(imageW, threads.x), iDivUp(imageH, threads.y));
 
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     convolutionColumnsKernel<<<blocks, threads>>>(d_Dst, imageW, imageH, texSrc);
     getLastCudaError("convolutionColumnsKernel() execution failed\n");
 }

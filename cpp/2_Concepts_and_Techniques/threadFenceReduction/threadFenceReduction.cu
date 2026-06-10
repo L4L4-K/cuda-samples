@@ -254,6 +254,7 @@ float benchmarkReduce(int                 n,
 
                 if (s > 1) {
                     // copy result from device to host
+                    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                     error = cudaMemcpy(h_odata, d_odata, s * sizeof(float), cudaMemcpyDeviceToHost);
                     checkCudaErrors(error);
 
@@ -275,12 +276,14 @@ float benchmarkReduce(int                 n,
             getLastCudaError("Kernel execution failed");
         }
 
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         cudaDeviceSynchronize();
         sdkStopTimer(&timer);
     }
 
     if (bNeedReadback) {
         // copy final sum from device to host
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         error = cudaMemcpy(&gpu_result, d_odata, sizeof(float), cudaMemcpyDeviceToHost);
         checkCudaErrors(error);
     }
@@ -320,6 +323,7 @@ void shmoo(int minN, int maxN, int maxThreads, int maxBlocks)
     checkCudaErrors(cudaMalloc((void **)&d_odata, maxNumBlocks * sizeof(float)));
 
     // copy data directly to device memory
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(d_idata, h_idata, bytes, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_odata, h_idata, maxNumBlocks * sizeof(float), cudaMemcpyHostToDevice));
 
@@ -441,10 +445,12 @@ bool runTest(int argc, char **argv)
         float *d_idata = NULL;
         float *d_odata = NULL;
 
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         checkCudaErrors(cudaMalloc((void **)&d_idata, bytes));
         checkCudaErrors(cudaMalloc((void **)&d_odata, numBlocks * sizeof(float)));
 
         // copy data directly to device memory
+        // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemcpy(d_idata, h_idata, bytes, cudaMemcpyHostToDevice));
         checkCudaErrors(cudaMemcpy(d_odata, h_idata, numBlocks * sizeof(float), cudaMemcpyHostToDevice));
 
@@ -490,6 +496,7 @@ bool runTest(int argc, char **argv)
 
         free(h_idata);
         free(h_odata);
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         cudaFree(d_idata);
         cudaFree(d_odata);
     }

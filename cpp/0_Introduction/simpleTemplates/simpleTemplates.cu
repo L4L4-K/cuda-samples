@@ -74,7 +74,7 @@ template <class T> __global__ void testKernel(T *g_idata, T *g_odata)
 
     // read in input data from global memory
     sdata[tid] = g_idata[tid];
-    // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    // JP: この連続する anchor 群では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
 
     // perform some computations
@@ -133,6 +133,7 @@ public:
 template <> class ArrayComparator<int>
 {
 public:
+    // JP: この連続する anchor 群では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
     bool compare(const int *reference, int *data, unsigned int len)
     {
         return compareData(reference, data, len, 0.15f, 0.0f);
@@ -222,6 +223,7 @@ template <class T> void runTest(int argc, char **argv, int len)
 
     // allocate device memory for result
     T *d_odata;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&d_odata, mem_size));
 
     // setup execution parameters
@@ -238,6 +240,7 @@ template <class T> void runTest(int argc, char **argv, int len)
     // allocate mem for the result on host side
     T *h_odata = (T *)malloc(mem_size);
     // copy result from device to host
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_odata, d_odata, sizeof(T) * num_threads, cudaMemcpyDeviceToHost));
 
     sdkStopTimer(&timer);
@@ -259,6 +262,7 @@ template <class T> void runTest(int argc, char **argv, int len)
     else {
         // custom output handling when no regression test running
         // in this case check if the result is equivalent to the expected solution
+        // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
         bool res = comparator.compare(reference, h_odata, num_threads);
         printf("Compare %s\n\n", (1 == res) ? "OK" : "MISMATCH");
         g_TotalFailures += (1 != res);

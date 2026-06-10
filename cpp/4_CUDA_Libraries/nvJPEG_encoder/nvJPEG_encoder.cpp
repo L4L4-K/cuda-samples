@@ -59,6 +59,7 @@ struct encode_params_t
     int         dev;
 };
 
+// JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
 nvjpegEncoderParams_t encode_params;
 nvjpegHandle_t        nvjpeg_handle;
 nvjpegJpegState_t     jpeg_state;
@@ -111,6 +112,7 @@ int decodeEncodeOneImage(std::string          sImagePath,
 
         // Retrieve the componenet and size info.
         int                       nComponent = 0;
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         nvjpegChromaSubsampling_t subsampling;
         int                       widths[NVJPEG_MAX_COMPONENT];
         int                       heights[NVJPEG_MAX_COMPONENT];
@@ -155,12 +157,14 @@ int decodeEncodeOneImage(std::string          sImagePath,
 
         {
 
+            // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
             cudaError_t eCopy = cudaMalloc(&pBuffer, widths[0] * heights[0] * NVJPEG_MAX_COMPONENT);
             if (cudaSuccess != eCopy) {
                 std::cerr << "cudaMalloc failed for component Y: " << cudaGetErrorString(eCopy) << std::endl;
                 return 1;
             }
 
+            // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
             nvjpegImage_t imgdesc = {{pBuffer,
                                       pBuffer + widths[0] * heights[0],
                                       pBuffer + widths[0] * heights[0] * 2,
@@ -179,8 +183,10 @@ int decodeEncodeOneImage(std::string          sImagePath,
 
             // alternatively decode by stages
             /*int nReturnCode = nvjpegDecodeCPU(nvjpeg_handle, dpImage, nSize, output_format, &imgdesc, NULL);
+            // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
             nReturnCode = nvjpegDecodeMixed(nvjpeg_handle, NULL);
             nReturnCode = nvjpegDecodeGPU(nvjpeg_handle, NULL);*/
+            // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
             cudaDeviceSynchronize();
 
             if (nReturnCode != 0) {
@@ -188,9 +194,11 @@ int decodeEncodeOneImage(std::string          sImagePath,
                 return 1;
             }
 
+            // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
             checkCudaErrors(cudaEventRecord(startEvent, NULL));
             /////////////////////// encode ////////////////////
             if (NVJPEG_OUTPUT_YUV == output_format) {
+                // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 checkCudaErrors(nvjpegEncodeYUV(
                     nvjpeg_handle, encoder_state, encode_params, &imgdesc, subsampling, widths[0], heights[0], NULL));
             }
@@ -205,6 +213,7 @@ int decodeEncodeOneImage(std::string          sImagePath,
             obuffer.resize(length);
             checkCudaErrors(nvjpegEncodeRetrieveBitstream(nvjpeg_handle, encoder_state, obuffer.data(), &length, NULL));
 
+            // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
             checkCudaErrors(cudaEventRecord(stopEvent, NULL));
             checkCudaErrors(cudaEventSynchronize(stopEvent));
             checkCudaErrors(cudaEventElapsedTime(&loopTime, startEvent, stopEvent));
@@ -230,6 +239,7 @@ int decodeEncodeOneImage(std::string          sImagePath,
             outputFile.write(reinterpret_cast<const char *>(obuffer.data()), static_cast<int>(length));
 
             // Free memory
+            // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
             checkCudaErrors(cudaFree(pBuffer));
         }
     }
@@ -245,6 +255,7 @@ int processArgs(encode_params_t param)
     std::string          sOutputPath(param.output_dir);
     std::string          sFormat(param.format);
     std::string          sSubsampling(param.subsampling);
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     nvjpegOutputFormat_t oformat = NVJPEG_OUTPUT_RGB;
     nvjpegInputFormat_t  iformat = NVJPEG_INPUT_RGB;
 
@@ -275,6 +286,7 @@ int processArgs(encode_params_t param)
     }
 
     if (sSubsampling == "444") {
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         checkCudaErrors(nvjpegEncoderParamsSetSamplingFactors(encode_params, NVJPEG_CSS_444, NULL));
     }
     else if (sSubsampling == "422") {
@@ -451,6 +463,7 @@ int main(int argc, const char *argv[])
            props.minor,
            props.ECCEnabled ? "on" : "off");
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     nvjpegDevAllocator_t dev_allocator = {&dev_malloc, &dev_free};
     checkCudaErrors(nvjpegCreate(NVJPEG_BACKEND_DEFAULT, &dev_allocator, &nvjpeg_handle));
     checkCudaErrors(nvjpegJpegStateCreate(nvjpeg_handle, &jpeg_state));

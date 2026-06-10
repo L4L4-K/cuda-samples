@@ -88,6 +88,7 @@ __global__ void JacobiIteration(const float *du0,
     // We clamp out-of-range coordinates.
     // It is equivalent to mirroring
     // because we access data only one step away from borders.
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.y == 0) {
         // beginning of the tile
         const int bsx = blockIdx.x * blockDim.x;
@@ -114,6 +115,7 @@ __global__ void JacobiIteration(const float *du0,
         du[smPos] = du0[gmPos];
         dv[smPos] = dv0[gmPos];
     }
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     else if (threadIdx.y == 1) {
         // beginning of the tile
         const int bsx = blockIdx.x * blockDim.x;

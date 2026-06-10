@@ -192,6 +192,7 @@ done:
 
 CUresult cudaDeviceCreateConsumer(test_cuda_consumer_s *cudaConsumer)
 {
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     CUdevice          device;
     CUresult          status          = CUDA_SUCCESS;
     CUctxCreateParams ctxCreateParams = {};
@@ -215,6 +216,7 @@ CUresult cudaDeviceCreateConsumer(test_cuda_consumer_s *cudaConsumer)
     char deviceName[256];
     cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device);
     cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device);
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     cuDeviceGetName(deviceName, 256, device);
     printf("CUDA Consumer on GPU Device %d: \"%s\" with compute capability "
            "%d.%d\n\n",

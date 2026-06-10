@@ -63,6 +63,7 @@ __global__ static void resizeNV12BatchKernel(cudaTextureObject_t texSrcLuma,
     int      py_fyScale   = py * fyScale;
     int      py_fyScale_1 = (py + 1) * fyScale;
 
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     for (int i = blockIdx.z; i < nBatchSize; i += gridDim.z) {
         *(uchar2 *)p               = make_uchar2(tex2D<uint8_t>(texSrcLuma, px_fxScale, py_fyScale),
                                    tex2D<uint8_t>(texSrcLuma, px_fxScale_1, py_fyScale));

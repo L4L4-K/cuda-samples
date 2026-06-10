@@ -270,11 +270,13 @@ void runTest(int argc, char **argv)
         mem_shared += ((2 * block_size.x) / NUM_BANKS) * sizeof(float);
 
         // run kernel
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         dwtHaar1D<<<grid_size, block_size, mem_shared>>>(
             d_idata, d_odata, approx_final, dlevels_step, num_threads_total_left, block_size.x);
 
         // Copy approx_final to appropriate location
         if (approx_is_input) {
+            // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
             checkCudaErrors(cudaMemcpy(d_idata, approx_final, grid_size.x * 4, cudaMemcpyDeviceToDevice));
         }
         else {
@@ -306,6 +308,7 @@ void runTest(int argc, char **argv)
     // get the result back from the server
     // allocate mem for the result
     float *odata = (float *)malloc(smem_size);
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(odata, d_odata, smem_size, cudaMemcpyDeviceToHost));
 
     // post processing
@@ -353,6 +356,7 @@ void runTest(int argc, char **argv)
     free(reference);
 
     // free allocated host and device memory
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(d_odata));
     checkCudaErrors(cudaFree(d_idata));
     checkCudaErrors(cudaFree(approx_final));

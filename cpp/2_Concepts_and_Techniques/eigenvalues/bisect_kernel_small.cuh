@@ -138,9 +138,11 @@ __global__ void bisectKernel(float             *g_d,
     // the number of (worst case) active threads per level l is 2^l
     while (true) {
         all_threads_converged = 1;
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         is_active_second = 0;
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         subdivideActiveInterval(threadIdx.x,
                                 s_left,
                                 s_right,
@@ -154,6 +156,7 @@ __global__ void bisectKernel(float             *g_d,
                                 mid,
                                 all_threads_converged);
 
+        // JP: この連続する anchor 群では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         // check if done
@@ -169,8 +172,10 @@ __global__ void bisectKernel(float             *g_d,
         // use s_left and s_right as scratch space for diagonal and
         // superdiagonal of matrix
         mid_count = computeNumSmallerEigenvals(
+            // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             g_d, g_s, n, mid, threadIdx.x, num_threads_active, s_left, s_right, (left == right), cta);
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         // store intervals
@@ -183,6 +188,7 @@ __global__ void bisectKernel(float             *g_d,
         // make it for higher levels (when all threads / intervals have
         // exactly one child)  unnecessary to perform a compaction of the second
         // chunk
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         if (threadIdx.x < num_threads_active) {
             if (left != right) {
                 // store intervals
@@ -222,6 +228,7 @@ __global__ void bisectKernel(float             *g_d,
         }
 
         // necessary so that compact_second_chunk is up-to-date
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         // perform compaction of chunk where second children are stored
@@ -243,8 +250,10 @@ __global__ void bisectKernel(float             *g_d,
                              is_active_second);
         }
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         if (0 == threadIdx.x) {
             // update number of active threads with result of reduction
             num_threads_active += s_compaction_list[num_threads_active];
@@ -254,6 +263,7 @@ __global__ void bisectKernel(float             *g_d,
             compact_second_chunk = 0;
         }
 
+        // JP: この連続する anchor 群では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
     }
 
@@ -264,6 +274,7 @@ __global__ void bisectKernel(float             *g_d,
     // a separate array
 
     // at most n valid intervals
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x < n) {
         // intervals converged so left and right limit are identical
         g_left[threadIdx.x] = s_left[threadIdx.x];

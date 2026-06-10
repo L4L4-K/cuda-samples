@@ -243,6 +243,7 @@ int main(int argc, char **argv)
         checkCudaErrors(cudaDeviceSynchronize());
     }
     checkCudaErrors(
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         cudaMemcpy(h_result, d_result, VOTE_DATA_GROUP * warp_size * sizeof(unsigned int), cudaMemcpyDeviceToHost));
     error_count[0] += checkResultsVoteAnyKernel1(h_result, VOTE_DATA_GROUP * warp_size, warp_size);
 
@@ -250,30 +251,40 @@ int main(int argc, char **argv)
     printf("\n[VOTE Kernel Test 2/3]\n");
     printf("\tRunning <<Vote.All>> kernel2 ...\n");
     {
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaDeviceSynchronize());
         dim3 gridBlock(1, 1);
         dim3 threadBlock(VOTE_DATA_GROUP * warp_size, 1);
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         VoteAllKernel2<<<gridBlock, threadBlock>>>(d_input, d_result, VOTE_DATA_GROUP * warp_size);
         getLastCudaError("VoteAllKernel() execution failed\n");
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaDeviceSynchronize());
     }
     checkCudaErrors(
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         cudaMemcpy(h_result, d_result, VOTE_DATA_GROUP * warp_size * sizeof(unsigned int), cudaMemcpyDeviceToHost));
     error_count[1] += checkResultsVoteAllKernel2(h_result, VOTE_DATA_GROUP * warp_size, warp_size);
 
     // Second Vote Kernel Test #3 (both Any/All)
     hinfo = reinterpret_cast<bool *>(calloc(warp_size * 3 * 3, sizeof(bool)));
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     cudaMalloc(reinterpret_cast<void **>(&dinfo), warp_size * 3 * 3 * sizeof(bool));
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     cudaMemcpy(dinfo, hinfo, warp_size * 3 * 3 * sizeof(bool), cudaMemcpyHostToDevice);
 
     printf("\n[VOTE Kernel Test 3/3]\n");
     printf("\tRunning <<Vote.Any>> kernel3 ...\n");
     {
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaDeviceSynchronize());
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         VoteAnyKernel3<<<1, warp_size * 3>>>(dinfo, warp_size);
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaDeviceSynchronize());
     }
 
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     cudaMemcpy(hinfo, dinfo, warp_size * 3 * 3 * sizeof(bool), cudaMemcpyDeviceToHost);
 
     error_count[2] = checkResultsVoteAnyKernel3(hinfo, warp_size * 3);

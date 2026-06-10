@@ -121,6 +121,7 @@ int main(int argc, char **argv)
     N  = 1048576;
     nz = (N - 2) * 3 + 4;
 
+    // JP: この連続する anchor 群では Unified Memory allocation/prefetch/advice です。migration、host/device visibility、同期位置 を確認します。
     cudaMallocManaged((void **)&I, sizeof(int) * (N + 1));
     cudaMallocManaged((void **)&J, sizeof(int) * nz);
     cudaMallocManaged((void **)&val, sizeof(float) * nz);
@@ -159,11 +160,13 @@ int main(int argc, char **argv)
     cusparseSetMatIndexBase(descr, CUSPARSE_INDEX_BASE_ZERO);
 
     // temp memory for CG
+    // JP: この連続する anchor 群では Unified Memory allocation/prefetch/advice です。migration、host/device visibility、同期位置 を確認します。
     checkCudaErrors(cudaMallocManaged((void **)&r, N * sizeof(float)));
     checkCudaErrors(cudaMallocManaged((void **)&p, N * sizeof(float)));
     checkCudaErrors(cudaMallocManaged((void **)&Ax, N * sizeof(float)));
 
     /* Wrap raw data into cuSPARSE generic API objects */
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cusparseSpMatDescr_t matA = NULL;
     checkCudaErrors(cusparseCreateCsr(
         &matA, N, N, nz, I, J, val, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I, CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F));
@@ -188,6 +191,7 @@ int main(int argc, char **argv)
 
     /* Allocate workspace for cuSPARSE */
     size_t bufferSize = 0;
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusparseSpMV_bufferSize(cusparseHandle,
                                             CUSPARSE_OPERATION_NON_TRANSPOSE,
                                             &alpha,
@@ -213,6 +217,7 @@ int main(int argc, char **argv)
                                  CUSPARSE_SPMV_ALG_DEFAULT,
                                  buffer));
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cublasSaxpy(cublasHandle, N, &alpham1, Ax, 1, r, 1);
     cublasStatus = cublasSdot(cublasHandle, N, r, 1, r, 1, &r1);
 
@@ -238,6 +243,7 @@ int main(int argc, char **argv)
                                      CUDA_R_32F,
                                      CUSPARSE_SPMV_ALG_DEFAULT,
                                      buffer));
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         cublasStatus = cublasSdot(cublasHandle, N, p, 1, Ax, 1, &dot);
         a            = r1 / dot;
 
@@ -247,6 +253,7 @@ int main(int argc, char **argv)
 
         r0           = r1;
         cublasStatus = cublasSdot(cublasHandle, N, r, 1, r, 1, &r1);
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         cudaDeviceSynchronize();
         printf("iteration = %3d, residual = %e\n", k, sqrt(r1));
         k++;
@@ -272,6 +279,7 @@ int main(int argc, char **argv)
         }
     }
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cusparseDestroy(cusparseHandle);
     cublasDestroy(cublasHandle);
     if (matA) {

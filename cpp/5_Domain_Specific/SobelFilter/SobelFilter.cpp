@@ -135,6 +135,7 @@ void display(void)
     Pixel *data = NULL;
 
     // map PBO to get CUDA device pointer
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsMapResources(1, &cuda_pbo_resource, 0));
     size_t num_bytes;
     checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&data, &num_bytes, cuda_pbo_resource));
@@ -248,6 +249,7 @@ void reshape(int x, int y)
 
 void cleanup(void)
 {
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     cudaGraphicsUnregisterResource(cuda_pbo_resource);
 
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
@@ -307,6 +309,7 @@ void initializeData(char *file)
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 
         // register this buffer object with CUDA
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         checkCudaErrors(cudaGraphicsGLRegisterBuffer(&cuda_pbo_resource, pbo_buffer, cudaGraphicsMapFlagsWriteDiscard));
 
         glGenTextures(1, &texid);
@@ -416,6 +419,7 @@ void runAutoTest(int argc, char *argv[])
         g_TotalErrors++;
     }
 
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(d_result));
     free(h_result);
 

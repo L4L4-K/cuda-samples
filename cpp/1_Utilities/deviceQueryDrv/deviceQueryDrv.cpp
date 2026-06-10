@@ -53,6 +53,7 @@ int main(int argc, char **argv)
     // note your project will need to link with cuda.lib files on windows
     printf("CUDA Device Query (Driver API) statically linked version \n");
 
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuInit(0));
 
     checkCudaErrors(cuDeviceGetCount(&deviceCount));
@@ -69,6 +70,7 @@ int main(int argc, char **argv)
         checkCudaErrors(cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, dev));
         checkCudaErrors(cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, dev));
 
+        // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
         checkCudaErrors(cuDeviceGetName(deviceName, 256, dev));
 
         printf("\nDevice %d: \"%s\"\n", dev, deviceName);
@@ -308,6 +310,7 @@ int main(int argc, char **argv)
                         continue;
                     }
                     checkCudaErrors(cuDeviceCanAccessPeer(&can_access_peer, gpuid[i], gpuid[j]));
+                    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
                     checkCudaErrors(cuDeviceGetName(deviceName0, 256, gpuid[i]));
                     checkCudaErrors(cuDeviceGetName(deviceName1, 256, gpuid[j]));
                     printf("> Peer-to-Peer (P2P) access from %s (GPU%d) -> %s (GPU%d) : "

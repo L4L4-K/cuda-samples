@@ -501,9 +501,12 @@ __global__ void CUDAkernelShortDCT(short *SrcDst, int ImgStride)
 __global__ void CUDAkernelShortIDCT(short *SrcDst, int ImgStride)
 {
     // Handle to thread block group
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta = cg::this_thread_block();
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ short block[KERS_BLOCK_HEIGHT * KERS_SMEMBLOCK_STRIDE];
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int OffsThreadInRow = IMAD(threadIdx.y, BLOCK_SIZE, threadIdx.x);
     int OffsThreadInCol = IMUL(threadIdx.z, BLOCK_SIZE);
     int OffsThrRowPermuted =
@@ -523,6 +526,7 @@ __global__ void CUDAkernelShortIDCT(short *SrcDst, int ImgStride)
             ((int *)bl_ptr)[i * (KERS_SMEMBLOCK_STRIDE / 2)] = ((int *)SrcDst)[i * (ImgStride / 2)];
     }
 
+    // JP: この連続する anchor 群では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
     CUDAshortInplaceIDCT(block + OffsThreadInCol * KERS_SMEMBLOCK_STRIDE + OffsThrRowPermuted, KERS_SMEMBLOCK_STRIDE);
     cg::sync(cta);

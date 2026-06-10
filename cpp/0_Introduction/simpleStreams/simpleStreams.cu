@@ -125,6 +125,7 @@ inline void AllocateHostMemory(bool bPinGenericMemory, int **pp_a, int **ppAlign
                "system memory\n",
                (float)nbytes / 1048576.0f);
         // pin allocate memory
+        // JP: この連続する anchor 群では pinned host memory の登録/確保/解放です。async transfer や overlap の条件と lifetime を確認します。
         checkCudaErrors(cudaHostRegister(*ppAligned_a, nbytes, cudaHostRegisterMapped));
     }
     else
@@ -145,6 +146,7 @@ inline void FreeHostMemory(bool bPinGenericMemory, int **pp_a, int **ppAligned_a
     // CUDA 4.0 support pinning of generic host memory
     if (bPinGenericMemory) {
         // unpin and delete host memory
+        // JP: この anchor では pinned host memory の登録/確保/解放です。async transfer や overlap の条件と lifetime を確認します。
         checkCudaErrors(cudaHostUnregister(*ppAligned_a));
 #ifdef WIN32
         VirtualFree(*pp_a, 0, MEM_RELEASE);
@@ -322,6 +324,7 @@ int main(int argc, char **argv)
     printf("\nStarting Test\n");
 
     // allocate and initialize an array of stream handles
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaStream_t *streams = (cudaStream_t *)malloc(nstreams * sizeof(cudaStream_t));
 
     for (int i = 0; i < nstreams; i++) {
@@ -363,13 +366,17 @@ int main(int argc, char **argv)
     // time non-streamed execution for reference
     threads = dim3(512, 1);
     blocks  = dim3(n / threads.x, 1);
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaEventRecord(start_event, 0));
 
     for (int k = 0; k < nreps; k++) {
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         init_array<<<blocks, threads>>>(d_a, d_c, niterations);
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemcpy(hAligned_a, d_a, nbytes, cudaMemcpyDeviceToHost));
     }
 
+    // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaEventRecord(stop_event, 0));
     checkCudaErrors(cudaEventSynchronize(stop_event));
     checkCudaErrors(cudaEventElapsedTime(&elapsed_time, start_event, stop_event));
@@ -381,13 +388,16 @@ int main(int argc, char **argv)
     blocks  = dim3(n / (nstreams * threads.x), 1);
     memset(hAligned_a, 255,
            nbytes);                              // set host memory bits to all 1s, for testing correctness
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemset(d_a, 0, nbytes)); // set device memory to all 0s, for testing correctness
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaEventRecord(start_event, 0));
 
     for (int k = 0; k < nreps; k++) {
         // asynchronously launch nstreams kernels, each operating on its own portion
         // of data
         for (int i = 0; i < nstreams; i++) {
+            // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
             init_array<<<blocks, threads, 0, streams[i]>>>(d_a + i * n / nstreams, d_c, niterations);
         }
 
@@ -396,6 +406,7 @@ int main(int argc, char **argv)
         //   commence executing when all previous CUDA calls in stream x have
         //   completed
         for (int i = 0; i < nstreams; i++) {
+            // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
             checkCudaErrors(cudaMemcpyAsync(hAligned_a + i * n / nstreams,
                                             d_a + i * n / nstreams,
                                             nbytes / nstreams,
@@ -404,6 +415,7 @@ int main(int argc, char **argv)
         }
     }
 
+    // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaEventRecord(stop_event, 0));
     checkCudaErrors(cudaEventSynchronize(stop_event));
     checkCudaErrors(cudaEventElapsedTime(&elapsed_time, start_event, stop_event));
@@ -415,6 +427,7 @@ int main(int argc, char **argv)
 
     // release resources
     for (int i = 0; i < nstreams; i++) {
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         checkCudaErrors(cudaStreamDestroy(streams[i]));
     }
 

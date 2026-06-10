@@ -184,6 +184,7 @@ done:
 
 CUresult cudaDeviceCreateProducer(test_cuda_producer_s *cudaProducer)
 {
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     CUdevice          device;
     CUresult          status          = CUDA_SUCCESS;
     CUctxCreateParams ctxCreateParams = {};
@@ -207,6 +208,7 @@ CUresult cudaDeviceCreateProducer(test_cuda_producer_s *cudaProducer)
     char deviceName[256];
     cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device);
     cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device);
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     cuDeviceGetName(deviceName, 256, device);
     printf("CUDA Producer on GPU Device %d: \"%s\" with compute capability "
            "%d.%d\n\n",
@@ -257,11 +259,13 @@ CUresult cudaProducerInit(test_cuda_producer_s *cudaProducer, TestArgs *args)
     }
 
     // Fill this init data
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     status = cuMemAlloc(&cudaProducer->cudaPtr1, bufferSize);
     if (status != CUDA_SUCCESS) {
         printf("Cuda Producer: cuda Malloc failed, status:%d\n", status);
         goto done;
     }
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     status = cuMemcpyHtoD(cudaProducer->cudaPtr1, (void *)(cudaProducer->tempBuff), bufferSize);
     if (status != CUDA_SUCCESS) {
         printf("Cuda Producer: cuMemCpy failed, status:%d\n", status);
@@ -275,6 +279,7 @@ CUresult cudaProducerInit(test_cuda_producer_s *cudaProducer, TestArgs *args)
     }
 
     // Fill this init data
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     status = cuMemAlloc(&cudaPtrFake, 100);
     if (status != CUDA_SUCCESS) {
         printf("Cuda Producer: cuda Malloc failed, status:%d\n", status);

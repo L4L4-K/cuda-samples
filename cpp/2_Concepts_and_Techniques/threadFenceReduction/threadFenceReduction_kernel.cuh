@@ -72,6 +72,7 @@ __device__ void reduceBlock(volatile float *sdata, float mySum, const unsigned i
             beta += temp;
             sdata[tid] = beta;
         }
+        // JP: この連続する anchor 群では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(tile32);
     }
     cg::sync(cta);
@@ -84,16 +85,19 @@ __device__ void reduceBlock(volatile float *sdata, float mySum, const unsigned i
         }
         sdata[0] = beta;
     }
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 }
 
 template <unsigned int blockSize, bool nIsPow2>
 __device__ void reduceBlocks(const float *g_idata, float *g_odata, unsigned int n, cg::thread_block cta)
 {
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     extern __shared__ float sdata[];
 
     // perform first level of reduction,
     // reading from global memory, writing to shared memory
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned int tid      = threadIdx.x;
     unsigned int i        = blockIdx.x * (blockSize * 2) + threadIdx.x;
     unsigned int gridSize = blockSize * 2 * gridDim.x;
@@ -118,6 +122,7 @@ __device__ void reduceBlocks(const float *g_idata, float *g_odata, unsigned int 
 
     // write result for this block to global mem
     if (tid == 0)
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         g_odata[blockIdx.x] = sdata[0];
 }
 
@@ -158,6 +163,7 @@ template <unsigned int blockSize, bool nIsPow2>
 __global__ void reduceSinglePass(const float *g_idata, float *g_odata, unsigned int n)
 {
     // Handle to thread block group
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta = cg::this_thread_block();
     //
     // PHASE 1: Process all inputs assigned to this block
@@ -169,8 +175,10 @@ __global__ void reduceSinglePass(const float *g_idata, float *g_odata, unsigned 
     // PHASE 2: Last block finished will process all partial sums
     //
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (gridDim.x > 1) {
         const unsigned int      tid = threadIdx.x;
+        // JP: この連続する anchor 群では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
         __shared__ bool         amLast;
         extern float __shared__ smem[];
 
@@ -180,12 +188,14 @@ __global__ void reduceSinglePass(const float *g_idata, float *g_odata, unsigned 
 
         // Thread 0 takes a ticket
         if (tid == 0) {
+            // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             unsigned int ticket = atomicInc(&retirementCount, gridDim.x);
             // If the ticket ID is equal to the number of blocks, we are the last
             // block!
             amLast = (ticket == gridDim.x - 1);
         }
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         // The last block sums the results of all other blocks
@@ -193,6 +203,7 @@ __global__ void reduceSinglePass(const float *g_idata, float *g_odata, unsigned 
             int   i     = tid;
             float mySum = 0;
 
+            // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             while (i < gridDim.x) {
                 mySum += g_odata[i];
                 i += blockSize;
@@ -321,6 +332,7 @@ extern "C" void reduceSinglePass(int size, int threads, int blocks, float *d_ida
     if (isPow2(size)) {
         switch (threads) {
         case 512:
+            // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
             reduceSinglePass<512, true><<<dimGrid, dimBlock, smemSize>>>(d_idata, d_odata, size);
             break;
 

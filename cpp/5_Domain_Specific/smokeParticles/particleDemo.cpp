@@ -909,6 +909,7 @@ int main(int argc, char **argv)
             g_TotalErrors++;
         }
 
+        // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
         if (!sdkCompareBin2BinFloat("smokeParticles_vel.bin",
                                     sRefBin[1],
                                     numParticles * sizeof(float4),

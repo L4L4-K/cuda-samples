@@ -225,6 +225,7 @@ __global__ void compute_gemm(const half *A, const half *B, const float *C, float
     // Each CTA slides along the 128 x 128 tiles from the top left corner of the
     // matrix to the right and down, and selects the next tile to compute. Once
     // there's no such tile, all warps in this CTA exit.
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     for (unsigned int block_pos = blockIdx.x;; block_pos += gridDim.x) {
         const unsigned int block_tile_i = ((block_pos * BLOCK_ROW_TILES) / N_TILES) * (BLOCK_COL_TILES);
         const unsigned int block_tile_j = (block_pos * BLOCK_ROW_TILES) % N_TILES;
@@ -248,7 +249,7 @@ __global__ void compute_gemm(const half *A, const half *B, const float *C, float
                 *((copy_t *)(src_gmem_warp_stream_ptr + GLOBAL_MEM_STRIDE * i) + laneId);
         }
 
-        // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         __syncthreads();
 
         // These fragments will accumulate the result of A and B matrix fragment
@@ -266,6 +267,7 @@ __global__ void compute_gemm(const half *A, const half *B, const float *C, float
             }
         }
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         __syncthreads();
 
         // Scale the C matrix.
@@ -297,6 +299,7 @@ __global__ void compute_gemm(const half *A, const half *B, const float *C, float
 
             // First half of the warp copies the first row / column of the matrix,
             // the second half of the warp copies the next.
+            // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             int4 *lane_ptr = (int4 *)(warp_ptr + tile_k * K + (laneId / CHUNK_COPY_LINE_LANES) * K_GLOBAL)
                            + (laneId % CHUNK_COPY_LINE_LANES);
 
@@ -314,6 +317,7 @@ __global__ void compute_gemm(const half *A, const half *B, const float *C, float
                 shmem_idx += CHUNK_COPY_LINES_PER_WARP;
             }
 
+            // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
             __syncthreads();
 
             // Compute a grid of C matrix tiles in each warp.
@@ -345,6 +349,7 @@ __global__ void compute_gemm(const half *A, const half *B, const float *C, float
                 }
             }
 
+            // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
             __syncthreads();
         }
 
@@ -366,6 +371,7 @@ __global__ void compute_gemm(const half *A, const half *B, const float *C, float
             }
         }
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         __syncthreads();
 
         // Now that shared memory contains all the D tiles, stream them to global
@@ -378,6 +384,7 @@ __global__ void compute_gemm(const half *A, const half *B, const float *C, float
                 *((int4 *)(shmem_warp_stream_ptr + SHMEM_STRIDE * i) + laneId);
         }
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         __syncthreads();
     }
 }
@@ -399,6 +406,7 @@ simple_wmma_gemm(half *a, half *b, float *c, float *d, int m_ld, int n_ld, int k
     int ldc = n_ld;
 
     // Tile using a 2D grid
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int warpM = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize;
     int warpN = (blockIdx.y * blockDim.y + threadIdx.y);
 
@@ -569,6 +577,7 @@ int main(int argc, char **argv)
 #endif
     }
     else {
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         dim3 gridDim;
         dim3 blockDim;
 
@@ -583,10 +592,12 @@ int main(int argc, char **argv)
         printf("Computing... using simple_wmma_gemm kernel\n");
         simple_wmma_gemm<<<gridDim, blockDim>>>(A, B, C, D, M_GLOBAL, N_GLOBAL, K_GLOBAL, alpha, beta);
 #if CPU_DEBUG
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemcpy(result_hD, D, sizeof(float) * M_GLOBAL * N_GLOBAL, cudaMemcpyDeviceToHost));
 #endif
     }
 
+    // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaEventRecord(stop));
     checkCudaErrors(cudaEventSynchronize(stop));
 
@@ -608,6 +619,7 @@ int main(int argc, char **argv)
 
     float milliseconds = 0;
 
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaEventElapsedTime(&milliseconds, start, stop));
 
     printf("Time: %f ms\n", milliseconds);
@@ -618,6 +630,7 @@ int main(int argc, char **argv)
     free(A_h);
     free(B_h);
     free(C_h);
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(reinterpret_cast<void *>(A)));
     checkCudaErrors(cudaFree(reinterpret_cast<void *>(B)));
     checkCudaErrors(cudaFree(reinterpret_cast<void *>(C)));

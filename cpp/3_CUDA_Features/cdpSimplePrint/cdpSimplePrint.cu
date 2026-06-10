@@ -60,7 +60,7 @@ __device__ void print_info(int depth, int thread, int uid, int parent_uid)
         }
     }
 
-    // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
 }
 
@@ -82,6 +82,7 @@ __global__ void cdp_kernel(int max_depth, int depth, int thread, int parent_uid)
         s_uid = atomicAdd(&g_uids, 1);
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
 
     // We print the ID of the block and information about its parent.
@@ -156,10 +157,12 @@ int main(int argc, char **argv)
 
     // Launch the kernel from the CPU.
     printf("Launching cdp_kernel() with CUDA Dynamic Parallelism:\n\n");
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     cdp_kernel<<<2, 2>>>(max_depth, 0, 0, -1);
     checkCudaErrors(cudaGetLastError());
 
     // Finalize.
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
 
     exit(EXIT_SUCCESS);

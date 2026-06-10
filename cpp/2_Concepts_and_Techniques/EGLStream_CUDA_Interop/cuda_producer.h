@@ -69,5 +69,6 @@ void     cudaProducerInit(test_cuda_producer_s *cudaProducer,
                           TestArgs             *args);
 CUresult cudaProducerTest(test_cuda_producer_s *parserArg, char *file);
 CUresult cudaProducerDeinit(test_cuda_producer_s *cudaProducer);
+// JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
 CUresult cudaDeviceCreateProducer(test_cuda_producer_s *cudaProducer, CUdevice device);
 #endif

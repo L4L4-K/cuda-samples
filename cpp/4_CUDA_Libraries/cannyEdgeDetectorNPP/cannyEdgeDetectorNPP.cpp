@@ -98,6 +98,7 @@ int main(int argc, char *argv[])
         printf("CUDA Driver  Version: %d.%d\n", driverVersion / 1000, (driverVersion % 100) / 10);
         printf("CUDA Runtime Version: %d.%d\n\n", runtimeVersion / 1000, (runtimeVersion % 100) / 10);
 
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         cudaError = cudaDeviceGetAttribute(&nppStreamCtx.nCudaDevAttrComputeCapabilityMajor,
                                            cudaDevAttrComputeCapabilityMajor,
                                            nppStreamCtx.nCudaDeviceId);
@@ -115,6 +116,7 @@ int main(int argc, char *argv[])
 
         cudaDeviceProp oDeviceProperties;
 
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         cudaError = cudaGetDeviceProperties(&oDeviceProperties, nppStreamCtx.nCudaDeviceId);
 
         nppStreamCtx.nMultiProcessorCount         = oDeviceProperties.multiProcessorCount;
@@ -212,6 +214,7 @@ int main(int argc, char *argv[])
         Npp16s nHighThreshold = 256;
 
         if ((nBufferSize > 0) && (pScratchBufferNPP != 0)) {
+            // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
             NPP_CHECK_NPP(nppiFilterCannyBorder_8u_C1R_Ctx(oDeviceSrc.data(),
                                                            oDeviceSrc.pitch(),
                                                            oSrcSize,
@@ -223,6 +226,7 @@ int main(int argc, char *argv[])
                                                            NPP_MASK_SIZE_3_X_3,
                                                            nLowThreshold,
                                                            nHighThreshold,
+                                                           // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                                                            nppiNormL2,
                                                            NPP_BORDER_REPLICATE,
                                                            pScratchBufferNPP,
@@ -241,6 +245,7 @@ int main(int argc, char *argv[])
         saveImage(sResultFilename, oHostDst);
         std::cout << "Saved image: " << sResultFilename << std::endl;
 
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         nppiFree(oDeviceSrc.data());
         nppiFree(oDeviceDst.data());
 

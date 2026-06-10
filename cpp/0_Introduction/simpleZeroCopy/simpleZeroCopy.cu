@@ -172,6 +172,7 @@ int main(int argc, char **argv)
         b = (float *)ALIGN_UP(b_UA, MEMORY_ALIGNMENT);
         c = (float *)ALIGN_UP(c_UA, MEMORY_ALIGNMENT);
 
+        // JP: この連続する anchor 群では pinned host memory の登録/確保/解放です。async transfer や overlap の条件と lifetime を確認します。
         checkCudaErrors(cudaHostRegister(a, bytes, cudaHostRegisterMapped));
         checkCudaErrors(cudaHostRegister(b, bytes, cudaHostRegisterMapped));
         checkCudaErrors(cudaHostRegister(c, bytes, cudaHostRegisterMapped));
@@ -246,6 +247,7 @@ int main(int argc, char **argv)
     }
     else {
 #if CUDART_VERSION >= 2020
+        // JP: この連続する anchor 群では pinned host memory の登録/確保/解放です。async transfer や overlap の条件と lifetime を確認します。
         checkCudaErrors(cudaFreeHost(a));
         checkCudaErrors(cudaFreeHost(b));
         checkCudaErrors(cudaFreeHost(c));

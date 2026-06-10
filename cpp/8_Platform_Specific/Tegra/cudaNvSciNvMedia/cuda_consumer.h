@@ -57,6 +57,7 @@ struct cudaExternalResInterop
 struct cudaResources
 {
     cudaArray_t         *d_yuvArray;
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaStream_t         stream;
     cudaSurfaceObject_t *cudaSurfaceNvmediaBuf;
     unsigned int        *d_outputImage;

@@ -108,6 +108,7 @@ def verify_array_result(
         abs_ = np.abs
         max_ = np.max
     else:
+        # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
         import cupy as cp
 
         is_cp = isinstance(result, cp.ndarray) and isinstance(expected, cp.ndarray)

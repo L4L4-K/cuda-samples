@@ -153,6 +153,7 @@ int main(int argc, char **argv)
     checkCudaErrors(cudaMalloc((void **)&d_Ax, N * sizeof(float)));
 
     /* Wrap raw data into cuSPARSE generic API objects */
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cusparseSpMatDescr_t matA = NULL;
     checkCudaErrors(cusparseCreateCsr(&matA,
                                       N,
@@ -165,6 +166,7 @@ int main(int argc, char **argv)
                                       CUSPARSE_INDEX_32I,
                                       CUSPARSE_INDEX_BASE_ZERO,
                                       CUDA_R_32F));
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cusparseDnVecDescr_t vecx = NULL;
     checkCudaErrors(cusparseCreateDnVec(&vecx, N, d_x, CUDA_R_32F));
     cusparseDnVecDescr_t vecp = NULL;
@@ -187,6 +189,7 @@ int main(int argc, char **argv)
 
     /* Allocate workspace for cuSPARSE */
     size_t bufferSize = 0;
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusparseSpMV_bufferSize(cusparseHandle,
                                             CUSPARSE_OPERATION_NON_TRANSPOSE,
                                             &alpha,
@@ -198,9 +201,11 @@ int main(int argc, char **argv)
                                             CUSPARSE_SPMV_ALG_DEFAULT,
                                             &bufferSize));
     void *buffer = NULL;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc(&buffer, bufferSize));
 
     /* Begin CG */
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cusparseSpMV(cusparseHandle,
                                  CUSPARSE_OPERATION_NON_TRANSPOSE,
                                  &alpha,
@@ -212,6 +217,7 @@ int main(int argc, char **argv)
                                  CUSPARSE_SPMV_ALG_DEFAULT,
                                  buffer));
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cublasSaxpy(cublasHandle, N, &alpham1, d_Ax, 1, d_r, 1);
     cublasStatus = cublasSdot(cublasHandle, N, d_r, 1, d_r, 1, &r1);
 
@@ -237,6 +243,7 @@ int main(int argc, char **argv)
                                      CUDA_R_32F,
                                      CUSPARSE_SPMV_ALG_DEFAULT,
                                      buffer));
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         cublasStatus = cublasSdot(cublasHandle, N, d_p, 1, d_Ax, 1, &dot);
         a            = r1 / dot;
 
@@ -252,6 +259,7 @@ int main(int argc, char **argv)
         k++;
     }
 
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     cudaMemcpy(x, d_x, N * sizeof(float), cudaMemcpyDeviceToHost);
 
     float rsum, diff, err = 0.0;
@@ -295,6 +303,7 @@ int main(int argc, char **argv)
     free(val);
     free(x);
     free(rhs);
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     cudaFree(d_col);
     cudaFree(d_row);
     cudaFree(d_val);

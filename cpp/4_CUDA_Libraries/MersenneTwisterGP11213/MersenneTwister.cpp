@@ -132,9 +132,11 @@ int main(int argc, char **argv)
     sdkStartTimer(&hTimer);
 
     for (i = 0; i < numIterations; i++) {
+        // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         checkCudaErrors(curandGenerateUniform(prngGPU, (float *)d_Rand, rand_n));
     }
 
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaStreamSynchronize(stream));
     sdkStopTimer(&hTimer);
 
@@ -160,6 +162,7 @@ int main(int argc, char **argv)
     exit(L1norm < 1e-6 ? EXIT_SUCCESS : EXIT_FAILURE);
 }
 
+// JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
 float compareResults(int rand_n, float *h_RandGPU, float *h_RandCPU)
 {
     int   i;

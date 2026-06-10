@@ -62,6 +62,7 @@ __device__ unsigned int reduce_sum(unsigned int in, cg::thread_block cta)
             sdata[ltid] += sdata[ltid + s];
         }
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
     }
 
@@ -73,6 +74,7 @@ template <typename Real>
 __global__ void computeValue(unsigned int *const results, const Real *const points, const unsigned int numSims)
 {
     // Handle to thread block group
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta = cg::this_thread_block();
     // Determine thread ID
     unsigned int bid  = blockIdx.x;
@@ -100,6 +102,7 @@ __global__ void computeValue(unsigned int *const results, const Real *const poin
     pointsInside = reduce_sum(pointsInside, cta);
 
     // Store the result
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x == 0) {
         results[bid] = pointsInside;
     }
@@ -199,6 +202,7 @@ template <typename Real> Real PiEstimator<Real>::operator()()
     // Allocate memory for result
     // Each thread block will produce one result
     unsigned int *d_results = 0;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     cudaResult              = cudaMalloc((void **)&d_results, grid.x * sizeof(unsigned int));
 
     if (cudaResult != cudaSuccess) {

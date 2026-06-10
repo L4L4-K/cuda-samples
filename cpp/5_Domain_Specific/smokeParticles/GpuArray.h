@@ -206,6 +206,7 @@ template <class T> GLuint GpuArray<T>::createVbo(size_t size, bool useElementArr
 template <class T> void GpuArray<T>::allocVbo(bool useElementArray)
 {
     m_vbo[0] = createVbo(m_size * sizeof(T), useElementArray);
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsGLRegisterBuffer(&m_cuda_vbo_resource[0], m_vbo[0], cudaGraphicsMapFlagsWriteDiscard));
 
     if (m_doubleBuffer) {
@@ -235,6 +236,7 @@ template <class T> void GpuArray<T>::swap() { std::swap(m_currentRead, m_current
 template <class T> void GpuArray<T>::map()
 {
     if (m_vbo[0]) {
+        // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         checkCudaErrors(cudaGraphicsMapResources(1, &m_cuda_vbo_resource[0], 0));
         size_t num_bytes;
         checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&m_dptr[0], &num_bytes, m_cuda_vbo_resource[0]));

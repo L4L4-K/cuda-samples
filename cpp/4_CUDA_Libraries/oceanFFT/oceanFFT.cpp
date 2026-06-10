@@ -110,6 +110,7 @@ bool wireFrame   = false;
 bool g_hasDouble = false;
 
 // FFT data
+// JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
 cufftHandle fftPlan;
 float2     *d_h0    = 0; // heightfield at time 0
 float2     *h_h0    = 0;
@@ -226,6 +227,7 @@ void runAutoTest(int argc, char **argv)
     printf("Compute capability %d.%d\n", deviceProp.major, deviceProp.minor);
 
     // create FFT plan
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cufftPlan2d(&fftPlan, meshSize, meshSize, CUFFT_C2C));
 
     // allocate memory
@@ -239,6 +241,7 @@ void runAutoTest(int argc, char **argv)
 
     int outputSize = meshSize * meshSize * sizeof(float2);
     checkCudaErrors(cudaMalloc((void **)&d_ht, outputSize));
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&d_slope, outputSize));
 
     sdkCreateTimer(&timer);
@@ -289,16 +292,20 @@ void runGraphicsTest(int argc, char **argv)
     findCudaDevice(argc, (const char **)argv);
 
     // create FFT plan
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cufftPlan2d(&fftPlan, meshSize, meshSize, CUFFT_C2C));
 
     // allocate memory
     int spectrumSize = spectrumW * spectrumH * sizeof(float2);
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&d_h0, spectrumSize));
     h_h0 = (float2 *)malloc(spectrumSize);
     generate_h0(h_h0);
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(d_h0, h_h0, spectrumSize, cudaMemcpyHostToDevice));
 
     int outputSize = meshSize * meshSize * sizeof(float2);
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&d_ht, outputSize));
     checkCudaErrors(cudaMalloc((void **)&d_slope, outputSize));
 
@@ -309,6 +316,7 @@ void runGraphicsTest(int argc, char **argv)
     // create vertex buffers and register with CUDA
     createVBO(&heightVertexBuffer, meshSize * meshSize * sizeof(float));
     checkCudaErrors(
+        // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         cudaGraphicsGLRegisterBuffer(&cuda_heightVB_resource, heightVertexBuffer, cudaGraphicsMapFlagsWriteDiscard));
 
     createVBO(&slopeVertexBuffer, outputSize);
@@ -422,9 +430,11 @@ void runCuda()
     cudaGenerateSpectrumKernel(d_h0, d_ht, spectrumW, meshSize, meshSize, animTime, patchSize);
 
     // execute inverse FFT to convert to spatial domain
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cufftExecC2C(fftPlan, d_ht, d_ht, CUFFT_INVERSE));
 
     // update heightmap values in vertex buffer
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsMapResources(1, &cuda_heightVB_resource, 0));
     checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&g_hptr, &num_bytes, cuda_heightVB_resource));
 
@@ -442,6 +452,7 @@ void runCuda()
 
 void runCudaTest(char *exec_path)
 {
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&g_hptr, meshSize * meshSize * sizeof(float)));
     checkCudaErrors(cudaMalloc((void **)&g_sptr, meshSize * meshSize * sizeof(float2)));
 
@@ -449,6 +460,7 @@ void runCudaTest(char *exec_path)
     cudaGenerateSpectrumKernel(d_h0, d_ht, spectrumW, meshSize, meshSize, animTime, patchSize);
 
     // execute inverse FFT to convert to spatial domain
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cufftExecC2C(fftPlan, d_ht, d_ht, CUFFT_INVERSE));
 
     // update heightmap values
@@ -456,6 +468,7 @@ void runCudaTest(char *exec_path)
 
     {
         float *hptr = (float *)malloc(meshSize * meshSize * sizeof(float));
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         cudaMemcpy((void *)hptr, (void *)g_hptr, meshSize * meshSize * sizeof(float), cudaMemcpyDeviceToHost);
         sdkDumpBin((void *)hptr, meshSize * meshSize * sizeof(float), "spatialDomain.bin");
 
@@ -473,9 +486,11 @@ void runCudaTest(char *exec_path)
 
     {
         float2 *sptr = (float2 *)malloc(meshSize * meshSize * sizeof(float2));
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         cudaMemcpy((void *)sptr, (void *)g_sptr, meshSize * meshSize * sizeof(float2), cudaMemcpyDeviceToHost);
         sdkDumpBin(sptr, meshSize * meshSize * sizeof(float2), "slopeShading.bin");
 
+        // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
         if (!sdkCompareBin2BinFloat("slopeShading.bin",
                                     "ref_slopeShading.bin",
                                     meshSize * meshSize * 2,
@@ -488,6 +503,7 @@ void runCudaTest(char *exec_path)
         free(sptr);
     }
 
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(g_hptr));
     checkCudaErrors(cudaFree(g_sptr));
 }
@@ -611,6 +627,7 @@ void timerEvent(int value)
 void cleanup()
 {
     sdkDeleteTimer(&timer);
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsUnregisterResource(cuda_heightVB_resource));
     checkCudaErrors(cudaGraphicsUnregisterResource(cuda_slopeVB_resource));
 
@@ -618,10 +635,12 @@ void cleanup()
     deleteVBO(&heightVertexBuffer);
     deleteVBO(&slopeVertexBuffer);
 
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(d_h0));
     checkCudaErrors(cudaFree(d_slope));
     checkCudaErrors(cudaFree(d_ht));
     free(h_h0);
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cufftDestroy(fftPlan);
 }
 

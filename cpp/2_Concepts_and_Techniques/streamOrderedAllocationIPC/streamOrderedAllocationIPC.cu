@@ -137,6 +137,7 @@ static void childProcess(int id)
 
     checkCudaErrors(cudaSetDevice(shm->devices[id]));
     checkCudaErrors(cudaGetDeviceProperties(&prop, shm->devices[id]));
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
     checkCudaErrors(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks, simpleKernel, threads, 0));
     blocks *= prop.multiProcessorCount;
@@ -250,6 +251,7 @@ static void childProcess(int id)
     }
 
     // And wait for all the queued up work to complete
+    // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaStreamSynchronize(stream));
     checkCudaErrors(cudaStreamDestroy(stream));
 
@@ -387,6 +389,7 @@ static void parentProcess(char *app)
     }
 
     std::vector<ShareableHandle> shareableHandles(shm->nprocesses);
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     std::vector<cudaStream_t>    streams(shm->nprocesses);
     std::vector<cudaMemPool_t>   pools(shm->nprocesses);
 
@@ -463,7 +466,9 @@ static void parentProcess(char *app)
     // Clean up!
     for (i = 0; i < shm->nprocesses; i++) {
         checkCudaErrors(cudaSetDevice(shm->devices[i]));
+        // JP: この anchor では CUDA resource lifetime end です。未完了 work が残っていないか確認し、確保/作成/登録と対応する API で閉じます。
         checkCudaErrors(cudaFreeAsync(ptrs[i], streams[i]));
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaStreamSynchronize(streams[i]));
         checkCudaErrors(cudaMemPoolDestroy(pools[i]));
     }

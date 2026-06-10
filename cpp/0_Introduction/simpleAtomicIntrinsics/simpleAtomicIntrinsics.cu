@@ -110,6 +110,7 @@ void runTest(int argc, char **argv)
     // To make the AND and XOR tests generate something other than 0...
     hOData[8] = hOData[10] = 0xff;
 
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
     // allocate device memory for result
     int *dOData;

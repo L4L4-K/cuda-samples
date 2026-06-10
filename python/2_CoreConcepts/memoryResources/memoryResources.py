@@ -114,6 +114,7 @@ def demo_device_and_pinned(device, stream, kernel, size):
         original = pinned_in_view.copy()
 
         # Stage H2D: pinned -> device.
+        # JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         pinned_in.copy_to(device_buffer, stream=stream)
 
         # Launch kernel on the device buffer.
@@ -123,6 +124,7 @@ def demo_device_and_pinned(device, stream, kernel, size):
             stream,
             config,
             kernel,
+            # JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
             device_buffer,
             np.uint64(size),
             np.float32(3.0),
@@ -151,6 +153,7 @@ def demo_managed(device, stream, kernel, size):
     dtype = np.float32
     nbytes = size * dtype().itemsize
 
+    # JP: この連続する anchor 群では Unified Memory allocation/prefetch/advice です。migration、host/device visibility、同期位置 を確認します。
     managed_mr = ManagedMemoryResource()
     managed_buffer = managed_mr.allocate(nbytes, stream=stream)
     try:
@@ -174,6 +177,7 @@ def demo_managed(device, stream, kernel, size):
         stream.sync()
 
         # No explicit copy: the same numpy view observes the GPU's writes.
+        # JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
         assert np.allclose(
             managed_view, original * 0.5 + 10.0
         ), "Managed memory result mismatch"
@@ -190,8 +194,10 @@ def demo_explicit_device_pool(device, stream, kernel, size):
 
     # Explicitly create a pool tied to this device. Use .close() to tear it down.
     explicit_mr = DeviceMemoryResource(device)
+    # JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     buffer = explicit_mr.allocate(nbytes, stream=stream)
     try:
+        # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
         view = cp.from_dlpack(buffer).view(dtype=cp.float32)
         view[:] = cp.arange(size, dtype=cp.float32)
         device.sync()
@@ -208,6 +214,7 @@ def demo_explicit_device_pool(device, stream, kernel, size):
         )
         stream.sync()
 
+        # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
         expected = cp.arange(size, dtype=cp.float32) + 100.0
         assert cp.allclose(view, expected), "Explicit device pool result mismatch"
         print("  Explicit DeviceMemoryResource allocation verified")
@@ -239,6 +246,7 @@ def main():
         )
         sys.exit(2)
 
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     device = Device(args.device)
     device.set_current()
     print_gpu_info(device)

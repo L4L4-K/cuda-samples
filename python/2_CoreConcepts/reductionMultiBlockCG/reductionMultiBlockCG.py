@@ -279,6 +279,7 @@ def run(
     h_idata = (rng.random(num_elements) * 256).astype(np.float32)
 
     stream = device.create_stream()
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     cp_stream = cp.cuda.Stream.from_external(stream)
     try:
         d_odata = cp.empty(num_blocks, dtype=np.float32)
@@ -340,6 +341,7 @@ def run(
 
         stream.sync()
         with cp_stream:
+            # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
             h_result = cp.asnumpy(d_odata[:1])
         gpu_result = float(h_result[0])
 

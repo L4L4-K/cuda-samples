@@ -119,6 +119,7 @@ def copy_image_to_gpu_cuda_core(
 
     # Step 5: Copy from pinned CPU memory to GPU memory
     # This is the actual CPU-to-GPU transfer, done asynchronously
+    # JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     pinned_buffer.copy_to(device_buffer, stream=stream)
 
     return device_buffer, pinned_buffer
@@ -149,6 +150,7 @@ def copy_image_from_gpu_cuda_core(
 
     # Step 1: Create pinned memory for fast GPU-to-CPU transfer
     pinned_mr = PinnedMemoryResource()
+    # JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     pinned_buffer = pinned_mr.allocate(nbytes, stream=stream)
 
     # Step 2: Copy from GPU memory to pinned CPU memory
@@ -200,6 +202,7 @@ def main():
     print(f"[Image array copy of {H}x{W}x{C} image]")
 
     # Step 2: Configure CuPy to use our CUDA stream (for interoperability)
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     cp.cuda.Stream.from_external(stream).use()
 
     # Step 3: Create a test image on CPU
@@ -208,11 +211,13 @@ def main():
 
     # Step 4: Copy image from CPU to GPU
     print("Copying image to GPU...")
+    # JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     device_buffer, pinned_buffer = copy_image_to_gpu_cuda_core(host_np, dev, stream)
 
     # Step 5: (Optional) Get a CuPy view of GPU data for processing
     # This shows how you can work with the GPU data without copying it back
     print("Creating CuPy view of GPU data...")
+    # JP: この CuPy view は DLPack で device_buffer を Python 側配列として共有し、GPU 上の mean 計算まで copy なしで扱います。
     device_cp = cp.from_dlpack(device_buffer).view(dtype=dtype).reshape(H, W, C)
 
     # Example: compute mean pixel value on GPU
@@ -222,11 +227,13 @@ def main():
     # Step 6: Copy image back from GPU to CPU
     print("Copying image back from GPU...")
     host_back = copy_image_from_gpu_cuda_core(
+        # JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         device_buffer, host_np.shape, host_np.dtype, dev, stream
     )
 
     # Step 7: Verify that the data survived the round trip
     print("Verifying result...")
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     host_back_cp = cp.asarray(host_back)
     host_np_cp = cp.asarray(host_np)
     verify_array_result(host_back_cp, host_np_cp, rtol=0, atol=0)

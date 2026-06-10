@@ -105,6 +105,7 @@ public:
         checkCudaErrors(cudaDestroyExternalSemaphore(signalSem));
         checkCudaErrors(cudaDestroyExternalMemory(extMemRawBuf));
         checkCudaErrors(cudaDestroyExternalMemory(extMemImageBuf));
+        // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         checkCudaErrors(cudaDestroyTextureObject(texObject));
         checkCudaErrors(cudaStreamDestroy(streamToRun));
     }
@@ -112,6 +113,7 @@ public:
     void initCuda()
     {
         checkCudaErrors(cudaSetDevice(m_cudaDeviceId));
+        // JP: この stream は NvSci interop work を非同期に投入する lane です。create 後の依存、同期、destroy を同じ lifetime で追います。
         checkCudaErrors(cudaStreamCreateWithFlags(&streamToRun, cudaStreamNonBlocking));
 
         int major = 0, minor = 0;
@@ -368,6 +370,7 @@ private:
 
     cudaExternalMemory_t    extMemRawBuf;
     cudaExternalSemaphore_t waitSem;
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaStream_t            streamToRun;
     int                     m_cudaDeviceId;
     CUuuid                  m_devUUID;
@@ -398,6 +401,7 @@ public:
 
     ~cudaNvSciWait()
     {
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         checkCudaErrors(cudaStreamDestroy(streamToRun));
         checkCudaErrors(cudaDestroyExternalSemaphore(waitSem));
         checkCudaErrors(cudaDestroyExternalMemory(extMemRawBuf));
@@ -407,6 +411,7 @@ public:
     void initCuda()
     {
         checkCudaErrors(cudaSetDevice(m_cudaDeviceId));
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         checkCudaErrors(cudaStreamCreateWithFlags(&streamToRun, cudaStreamNonBlocking));
 #ifdef cuDeviceGetUuid_v2
         CUresult res = cuDeviceGetUuid_v2(&m_devUUID, m_cudaDeviceId);

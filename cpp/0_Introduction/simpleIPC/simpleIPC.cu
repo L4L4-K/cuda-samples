@@ -128,6 +128,7 @@ static void childProcess(int id)
 
     checkCudaErrors(cudaSetDevice(shm->devices[id]));
     checkCudaErrors(cudaGetDeviceProperties(&prop, shm->devices[id]));
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
     checkCudaErrors(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks, simpleKernel, threads, 0));
     blocks *= prop.multiProcessorCount;
@@ -215,6 +216,7 @@ static void parentProcess(char *app)
     int                      devCount, i;
     volatile shmStruct      *shm = NULL;
     std::vector<void *>      ptrs;
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     std::vector<cudaEvent_t> events;
     std::vector<Process>     processes;
     char                     pidString[20] = {0};
@@ -302,6 +304,7 @@ static void parentProcess(char *app)
     // memory buffer with the IPC handles to communicate
     for (i = 0; i < shm->nprocesses; i++) {
         void       *ptr = NULL;
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         cudaEvent_t event;
 
         checkCudaErrors(cudaSetDevice(shm->devices[i]));
@@ -342,6 +345,7 @@ static void parentProcess(char *app)
     // Clean up!
     for (i = 0; i < shm->nprocesses; i++) {
         checkCudaErrors(cudaSetDevice(shm->devices[i]));
+        // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaEventSynchronize(events[i]));
         checkCudaErrors(cudaEventDestroy(events[i]));
         checkCudaErrors(cudaFree(ptrs[i]));

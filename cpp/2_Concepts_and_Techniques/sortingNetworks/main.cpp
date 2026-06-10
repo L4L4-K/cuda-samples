@@ -114,6 +114,7 @@ int main(int argc, char **argv)
             threadCount =
                 bitonicSort(d_OutputKey, d_OutputVal, d_InputKey, d_InputVal, N / arrayLength, arrayLength, DIR);
 
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         error = cudaDeviceSynchronize();
         checkCudaErrors(error);
 
@@ -133,6 +134,7 @@ int main(int argc, char **argv)
 
         printf("\nValidating the results...\n");
         printf("...reading back GPU results\n");
+        // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         error = cudaMemcpy(h_OutputKeyGPU, d_OutputKey, N * sizeof(uint), cudaMemcpyDeviceToHost);
         checkCudaErrors(error);
         error = cudaMemcpy(h_OutputValGPU, d_OutputVal, N * sizeof(uint), cudaMemcpyDeviceToHost);

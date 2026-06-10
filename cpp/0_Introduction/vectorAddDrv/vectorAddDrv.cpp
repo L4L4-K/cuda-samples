@@ -82,6 +82,7 @@ int main(int argc, char **argv)
     CUctxCreateParams ctxCreateParams = {};
 
     // Initialize
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuInit(0));
 
     cuDevice = findCudaDeviceDRV(argc, (const char **)argv);
@@ -168,6 +169,7 @@ int main(int argc, char **argv)
 
         // Launch the CUDA kernel
         checkCudaErrors(
+            // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
             cuLaunchKernel(vecAdd_kernel, blocksPerGrid, 1, 1, threadsPerBlock, 1, 1, 0, NULL, NULL, argBuffer));
     }
 
@@ -177,6 +179,7 @@ int main(int argc, char **argv)
 
     // Copy result from device memory to host memory
     // h_C contains the result in host memory
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cuMemcpyDtoH(h_C, d_C, size));
 
     // Verify result
@@ -218,6 +221,7 @@ int CleanupNoFailure()
         free(h_C);
     }
 
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuModuleUnload(cuModule));
     checkCudaErrors(cuCtxDestroy(cuContext));
 

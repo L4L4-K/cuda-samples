@@ -101,6 +101,7 @@ int main(void)
 
     // Allocate the device input vector B
     float *d_B = NULL;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     err        = cudaMalloc((void **)&d_B, size);
 
     if (err != cudaSuccess) {
@@ -110,6 +111,7 @@ int main(void)
 
     // Allocate the device output vector C
     float *d_C = NULL;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     err        = cudaMalloc((void **)&d_C, size);
 
     if (err != cudaSuccess) {
@@ -152,6 +154,7 @@ int main(void)
     // Copy the device result vector in device memory to the host result vector
     // in host memory.
     printf("Copy output data from the CUDA device to the host memory\n");
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     err = cudaMemcpy(h_C, d_C, size, cudaMemcpyDeviceToHost);
 
     if (err != cudaSuccess) {

@@ -97,9 +97,11 @@ __global__ void bisectKernelLarge_OneIntervals(float             *g_d,
     }
 
     // flag to determine if all threads converged to eigenvalue
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ unsigned int converged_all_threads;
 
     // initialized shared flag
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (0 == threadIdx.x) {
         converged_all_threads = 0;
     }
@@ -121,6 +123,7 @@ __global__ void bisectKernelLarge_OneIntervals(float             *g_d,
         mid_count = computeNumSmallerEigenvalsLarge(
             g_d, g_s, n, mid, gtid, num_intervals, s_left_scratch, s_right_scratch, converged, cta);
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         // for all active threads
@@ -149,6 +152,7 @@ __global__ void bisectKernelLarge_OneIntervals(float             *g_d,
             }
         }
 
+        // JP: この連続する anchor 群では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         if (1 == converged_all_threads) {

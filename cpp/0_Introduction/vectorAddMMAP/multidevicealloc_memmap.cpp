@@ -98,6 +98,7 @@ CUresult simpleMallocMultiDeviceMmap(CUdeviceptr                 *dptr,
     }
 
     // Reserve the required contiguous VA space for the allocations
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     status = cuMemAddressReserve(dptr, size, align, 0, 0);
     if (status != CUDA_SUCCESS) {
         goto done;
@@ -127,6 +128,7 @@ CUresult simpleMallocMultiDeviceMmap(CUdeviceptr                 *dptr,
         status = cuMemMap(*dptr + (stripeSize * idx), stripeSize, 0, allocationHandle, 0);
 
         // the handle needs to be released even if the mapping failed.
+        // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
         status2 = cuMemRelease(allocationHandle);
         if (status == CUDA_SUCCESS) {
             // cuMemRelease should not have failed here
@@ -185,6 +187,7 @@ CUresult simpleFreeMultiDeviceMmap(CUdeviceptr dptr, size_t size)
     // The backing stores will be freed.
     // Since the memory has been unmapped after this call, accessing the specified
     // va range will result in a fault (unitll it is remapped).
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     status = cuMemUnmap(dptr, size);
     if (status != CUDA_SUCCESS) {
         return status;

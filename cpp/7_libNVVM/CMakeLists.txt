@@ -56,6 +56,7 @@ if (${CMAKE_VERSION} VERSION_LESS 3.18.0)
   find_library(CUDADEVRT_LIB cudadevrt PATHS "${CUDA_LIB_ROOT}" "${CUDA_LIB_ROOT}/stubs")
 else () # Else, we're using cmake versions >= 3.18.
   cmake_policy(SET CMP0074 NEW) # Use CUDAToolkit_ROOT as a cmake prefix.
+  # JP: この anchor では CMake CUDA target/link/architecture wiring です。source、target、optional dependency、platform condition を確認します。
   find_package(CUDAToolkit REQUIRED)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -114,6 +115,7 @@ include_directories("${CMAKE_CURRENT_SOURCE_DIR}/common/include")
 # invocation. See the note about "cuda-c-linking" in README.md.
 if (ENABLE_CUDA_C_LINKING_SAMPLE)
   # Include the LLVM dev package which is required to build cuda-c-linking.
+  # JP: この anchor では CMake CUDA target/link/architecture wiring です。source、target、optional dependency、platform condition を確認します。
   find_package(LLVM CONFIG PATHS "$ENV{LLVM_HOME}")
   if (LLVM_FOUND)
     add_subdirectory(cuda-c-linking)

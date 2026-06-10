@@ -134,6 +134,7 @@ public:
             vkFreeMemory(m_device, m_heightMemory, nullptr);
         }
         if (m_cudaHeightMap) {
+            // JP: この anchor では CUDA resource lifetime end です。未完了 work が残っていないか確認し、確保/作成/登録と対応する API で閉じます。
             checkCudaErrors(cudaDestroyExternalMemory(m_cudaVertMem));
         }
 
@@ -221,6 +222,7 @@ public:
         m_sim.initCudaLaunchConfig(cuda_device);
 
         // Create the cuda stream we'll be using
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         checkCudaErrors(cudaStreamCreateWithFlags(&m_stream, cudaStreamNonBlocking));
 
         const size_t nVerts = m_sim.getWidth() * m_sim.getHeight();

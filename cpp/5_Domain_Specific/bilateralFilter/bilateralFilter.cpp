@@ -179,6 +179,7 @@ void display()
     // execute filter, writing results to pbo
     unsigned int *dResult;
 
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsMapResources(1, &cuda_pbo_resource, 0));
     size_t num_bytes;
     checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&dResult, &num_bytes, cuda_pbo_resource));
@@ -361,6 +362,7 @@ void cleanup()
 
     freeTextures();
 
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     cudaGraphicsUnregisterResource(cuda_pbo_resource);
 
     glDeleteBuffers(1, &pbo);
@@ -402,6 +404,7 @@ void initGLResources()
 
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, 0);
 
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsGLRegisterBuffer(&cuda_pbo_resource, pbo, cudaGraphicsMapFlagsWriteDiscard));
 
     // create texture for display
@@ -450,6 +453,7 @@ int runBenchmark(int argc, char **argv)
 
     // check if kernel execution generated an error and sync host
     getLastCudaError("Error: bilateralFilterRGBA Kernel execution FAILED");
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
     sdkStopTimer(&kernel_timer);
 
@@ -508,6 +512,7 @@ int runSingleTest(char *ref_file, char *exec_path)
     unsigned int *dResult;
     unsigned int *hResult = (unsigned int *)malloc(width * height * sizeof(unsigned int));
     size_t        pitch;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMallocPitch((void **)&dResult, &pitch, width * sizeof(unsigned int), height));
 
     // run the sample radius
@@ -517,6 +522,7 @@ int runSingleTest(char *ref_file, char *exec_path)
 
         // check if kernel execution generated an error
         getLastCudaError("Error: bilateralFilterRGBA Kernel execution FAILED");
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaDeviceSynchronize());
 
         // readback the results to system memory
@@ -547,6 +553,7 @@ int runSingleTest(char *ref_file, char *exec_path)
     printf("\n");
 
     free(hResult);
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(dResult));
     freeTextures();
 

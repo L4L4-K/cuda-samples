@@ -120,6 +120,7 @@ void cleanUp(ResourceList *resourceList)
     }
 
     if (resourceList->stream != NULL) {
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         cudaStreamDestroy(resourceList->stream);
         resourceList->stream = NULL;
     }
@@ -136,6 +137,7 @@ int main(int argc, char **argv)
     size_t         actually_read = 0;
     unsigned char *loadableData  = NULL;
 
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaStream_t stream;
     cudaError_t  result;
     const char  *errPtr = NULL;
@@ -182,6 +184,7 @@ int main(int argc, char **argv)
     resourceList.loadableData = loadableData;
 
     // Initialize CUDA.
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     result = cudaFree(0);
     if (result != cudaSuccess) {
         errPtr = cudaGetErrorName(result);
@@ -220,6 +223,7 @@ int main(int argc, char **argv)
     resourceList.moduleHandle = moduleHandle;
 
     // Create CUDA stream.
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     result = cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
 
     if (result != cudaSuccess) {
@@ -323,6 +327,7 @@ int main(int argc, char **argv)
     // Allocate memory on GPU.
     void *inputBufferGPU;
     void *outputBufferGPU;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     result = cudaMalloc(&inputBufferGPU, inputTensorDesc[0].size);
     if (result != cudaSuccess) {
         DPRINTF("Error in allocating input memory on GPU\n");
@@ -332,6 +337,7 @@ int main(int argc, char **argv)
 
     resourceList.inputBufferGPU = inputBufferGPU;
 
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     result = cudaMalloc(&outputBufferGPU, outputTensorDesc[0].size);
     if (result != cudaSuccess) {
         DPRINTF("Error in allocating output memory on GPU\n");
@@ -395,6 +401,7 @@ int main(int argc, char **argv)
     DPRINTF("SUBMIT IS DONE !!!\n");
 
     // Wait for stream operations to finish and bring output buffer to CPU.
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     result = cudaMemcpyAsync(outputBuffer, outputBufferGPU, outputTensorDesc[0].size, cudaMemcpyDeviceToHost, stream);
     if (result != cudaSuccess) {
         if (result != cudaErrorExternalDevice) {

@@ -99,6 +99,7 @@ __global__ static void nv12ToBGRplanarBatchKernel(const uint8_t *pNv12,
         add3.x = 1.5960f * e.x;
         add3.y = 1.5960f * e.y;
 
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         int rowStride     = (threadIdx.y << 1) * (nRgbPitch >> 2);
         int nextRowStride = ((threadIdx.y << 1) + 1) * (nRgbPitch >> 2);
         // B

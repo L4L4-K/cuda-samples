@@ -283,6 +283,7 @@ __global__ void build_quadtree_kernel(Quadtree_node *nodes, Points *points, Para
         s_num_pts[i] = (volatile int *)&smem[i * NUM_WARPS_PER_BLOCK];
 
     // Compute the coordinates of the threads in the block.
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const int warp_id = threadIdx.x / warpSize;
     const int lane_id = threadIdx.x % warpSize;
 
@@ -308,6 +309,7 @@ __global__ void build_quadtree_kernel(Quadtree_node *nodes, Points *points, Para
         if (params.point_selector == 1) {
             int it = node.points_begin(), end = node.points_end();
 
+            // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             for (it += threadIdx.x; it < end; it += NUM_THREADS_PER_BLOCK)
                 if (it < end)
                     points[0].set_point(it, points[1].get_point(it));
@@ -322,6 +324,7 @@ __global__ void build_quadtree_kernel(Quadtree_node *nodes, Points *points, Para
     bbox.compute_center(center);
 
     // Find how many points to give to each warp.
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int num_points_per_warp = max(warpSize, (num_points + NUM_WARPS_PER_BLOCK - 1) / NUM_WARPS_PER_BLOCK);
 
     // Each warp of threads will compute the number of points to move to each
@@ -338,6 +341,7 @@ __global__ void build_quadtree_kernel(Quadtree_node *nodes, Points *points, Para
 
     cg::thread_block_tile<32> tile32 = cg::tiled_partition<32>(cta);
     // Compute the number of points.
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     for (int range_it = range_begin + tile32.thread_rank(); tile32.any(range_it < range_end); range_it += warpSize) {
         // Is it still an active thread?
         bool is_active = range_it < range_end;
@@ -393,6 +397,7 @@ __global__ void build_quadtree_kernel(Quadtree_node *nodes, Points *points, Para
             s_num_pts[warp_id][tile32.thread_rank()] = num_pts;
     }
 
+    // JP: この連続する anchor 群では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     // Compute global offsets.
@@ -415,17 +420,21 @@ __global__ void build_quadtree_kernel(Quadtree_node *nodes, Points *points, Para
 
     // Make the scan exclusive.
     int val = 0;
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x < 4 * NUM_WARPS_PER_BLOCK) {
         val = threadIdx.x == 0 ? 0 : smem[threadIdx.x - 1];
         val += node.points_begin();
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x < 4 * NUM_WARPS_PER_BLOCK) {
         smem[threadIdx.x] = val;
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     //
@@ -443,6 +452,7 @@ __global__ void build_quadtree_kernel(Quadtree_node *nodes, Points *points, Para
         const Points &in_points = points[params.point_selector];
         // Reorder points.
         for (int range_it = range_begin + tile32.thread_rank(); tile32.any(range_it < range_end);
+             // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
              range_it += warpSize) {
             // Is it still an active thread?
             bool is_active = range_it < range_end;
@@ -492,6 +502,7 @@ __global__ void build_quadtree_kernel(Quadtree_node *nodes, Points *points, Para
         }
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     if (tile32.thread_rank() == 0) {
@@ -501,6 +512,7 @@ __global__ void build_quadtree_kernel(Quadtree_node *nodes, Points *points, Para
         s_num_pts[3][warp_id] = warp_cnts[3];
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     //
@@ -508,6 +520,7 @@ __global__ void build_quadtree_kernel(Quadtree_node *nodes, Points *points, Para
     //
     if (!(params.depth >= params.max_depth || num_points <= params.min_points_per_node)) {
         // The last thread launches new blocks.
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         if (threadIdx.x == NUM_THREADS_PER_BLOCK - 1) {
             // The children.
             Quadtree_node *children = &nodes[params.num_nodes_at_this_level - (node.id() & ~3)];
@@ -621,6 +634,7 @@ struct Random_generator
     __host__ __device__ __forceinline__ cuda::std::tuple<float, float> operator()()
     {
 #ifdef __CUDA_ARCH__
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         unsigned seed = hash(blockIdx.x * blockDim.x + threadIdx.x + count);
         // thrust::generate may call operator() more than once per thread.
         // Hence, increment count by grid size to ensure uniqueness of seed
@@ -677,7 +691,9 @@ bool cdpQuadtree(int warp_size)
     Quadtree_node root;
     root.set_range(0, num_points);
     Quadtree_node *nodes;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&nodes, max_nodes * sizeof(Quadtree_node)));
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(nodes, &root, sizeof(Quadtree_node), cudaMemcpyHostToDevice));
 
     // Build the quadtree.
@@ -686,6 +702,7 @@ bool cdpQuadtree(int warp_size)
     const int    NUM_THREADS_PER_BLOCK = 128; // Do not use less than 128 threads.
     const int    NUM_WARPS_PER_BLOCK   = NUM_THREADS_PER_BLOCK / warp_size;
     const size_t smem_size             = 4 * NUM_WARPS_PER_BLOCK * sizeof(int);
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     build_quadtree_kernel<NUM_THREADS_PER_BLOCK><<<1, NUM_THREADS_PER_BLOCK, smem_size>>>(nodes, points, params);
     checkCudaErrors(cudaGetLastError());
 
@@ -697,6 +714,7 @@ bool cdpQuadtree(int warp_size)
 
     // Copy nodes to CPU.
     Quadtree_node *host_nodes = new Quadtree_node[max_nodes];
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(host_nodes, nodes, max_nodes * sizeof(Quadtree_node), cudaMemcpyDeviceToHost));
 
     // Validate the results.
@@ -736,6 +754,7 @@ int main(int argc, char **argv)
         exit(EXIT_WAIVED);
     }
 
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     bool ok = cdpQuadtree(deviceProps.warpSize);
 
     return (ok ? EXIT_SUCCESS : EXIT_FAILURE);

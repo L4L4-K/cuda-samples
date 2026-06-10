@@ -79,6 +79,7 @@ static double reportPotentialOccupancy(void *kernel, int blockSize, size_t dynam
 
     checkCudaErrors(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&numBlocks, kernel, blockSize, dynamicSMem));
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     activeWarps = numBlocks * blockSize / prop.warpSize;
     maxWarps    = prop.maxThreadsPerMultiProcessor / prop.warpSize;
 
@@ -159,6 +160,7 @@ static int launchConfig(uint32_t *array, int arrayCount, bool automatic)
 
     // Report elapsed time
     //
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaEventElapsedTime(&elapsedTime, start, end));
     std::cout << "Elapsed time: " << elapsedTime << "ms" << std::endl;
 

@@ -96,7 +96,7 @@ extern "C" __global__ void binomialOptionsKernel()
 #pragma unroll 16
     for (int i = NUM_STEPS; i > 0; --i) {
         call_exchange[tid] = call[0];
-        // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+        // JP: この連続する anchor 群では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         __syncthreads();
         call[ELEMS_PER_THREAD] = call_exchange[tid + 1];
         __syncthreads();
@@ -109,6 +109,7 @@ extern "C" __global__ void binomialOptionsKernel()
     }
 
     if (tid == 0) {
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         d_CallValue[blockIdx.x] = call[0];
     }
 }

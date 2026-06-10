@@ -113,6 +113,7 @@ int main()
     // storage for computed result
     int *d_result;
     int  h_result;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc(&d_result, sizeof(int)));
 
     int expected_result = 0;
@@ -144,8 +145,11 @@ int main()
         goto Exit;
     }
 
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     kernelLargeParam<<<1, 1>>>(p_large, d_result);
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(&h_result, d_result, sizeof(int), cudaMemcpyDeviceToHost));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
     if (h_result != expected_result) {
         std::cout << "Test failed" << std::endl;
@@ -158,9 +162,12 @@ int main()
         auto start = steady_clock::now();
         for (int i = 0; i < TEST_ITERATIONS; ++i) {
             checkCudaErrors(cudaMemcpyToSymbol(
+                // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                 excess_params, copied_params, CONST_COPIED_PARAMS * sizeof(int), 0, cudaMemcpyHostToDevice));
+            // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
             kernelDefault<<<1, 1>>>(p, d_result);
         }
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaDeviceSynchronize());
         auto end = steady_clock::now();
         std::cout << "Kernel 4KB parameter limit - time (us):";
@@ -169,8 +176,10 @@ int main()
         // benchmark large kernel parameter limit
         start = steady_clock::now();
         for (int i = 0; i < TEST_ITERATIONS; ++i) {
+            // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
             kernelLargeParam<<<1, 1>>>(p_large, d_result);
         }
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaDeviceSynchronize());
         end = steady_clock::now();
         std::cout << "Kernel 32,764 byte parameter limit - time (us):";
@@ -180,6 +189,7 @@ int main()
     rc = 0;
 Exit:
     // cleanup
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     cudaFree(d_result);
     free(copied_params);
     return rc;

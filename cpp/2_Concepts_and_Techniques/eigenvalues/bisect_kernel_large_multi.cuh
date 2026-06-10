@@ -122,6 +122,7 @@ __global__ void bisectKernelLarge_MultIntervals(float             *g_d,
 
     // initialize common start conditions
     if (0 == tid) {
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         c_block_start         = blocks_mult[blockIdx.x];
         c_block_end           = blocks_mult[blockIdx.x + 1];
         c_block_offset_output = blocks_mult_sum[blockIdx.x];
@@ -145,6 +146,7 @@ __global__ void bisectKernelLarge_MultIntervals(float             *g_d,
         s_right_count[tid] = g_right_count[c_block_start + tid];
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     // do until all threads converged
@@ -165,6 +167,7 @@ __global__ void bisectKernelLarge_MultIntervals(float             *g_d,
                                 mid,
                                 all_threads_converged);
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         // stop if all eigenvalues have been found
@@ -179,6 +182,7 @@ __global__ void bisectKernelLarge_MultIntervals(float             *g_d,
         mid_count = computeNumSmallerEigenvalsLarge(
             g_d, g_s, n, mid, tid, num_threads_active, s_left, s_right, (left == right), cta);
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         if (tid < num_threads_active) {
@@ -219,6 +223,7 @@ __global__ void bisectKernelLarge_MultIntervals(float             *g_d,
             }
         }
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         // compact second chunk of intervals if any of the threads generated
@@ -239,6 +244,7 @@ __global__ void bisectKernelLarge_MultIntervals(float             *g_d,
                              is_active_second);
         }
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         // update state variables
@@ -250,12 +256,15 @@ __global__ void bisectKernelLarge_MultIntervals(float             *g_d,
             all_threads_converged = 1;
         }
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         // clear
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         s_compaction_list_exc[threadIdx.x]              = 0;
         s_compaction_list_exc[threadIdx.x + blockDim.x] = 0;
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
     } // end until all threads converged

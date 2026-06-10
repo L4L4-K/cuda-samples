@@ -116,6 +116,7 @@ __device__ float4 rgbaIntToFloat(uint c)
 
 __global__ void d_simpleRecursive_rgba(uint *id, uint *od, int w, int h, float a)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (x >= w)
@@ -178,6 +179,7 @@ __global__ void d_recursiveGaussian_rgba(uint *id,
                                          float coefp,
                                          float coefn)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (x >= w)

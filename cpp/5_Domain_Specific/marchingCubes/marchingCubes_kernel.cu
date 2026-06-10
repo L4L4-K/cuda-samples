@@ -56,6 +56,7 @@ extern "C" void allocateTextures(uint **d_edgeTable, uint **d_triTable, uint **d
     cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc(32, 0, 0, 0, cudaChannelFormatKindUnsigned);
 
     checkCudaErrors(cudaMalloc((void **)d_triTable, 256 * 16 * sizeof(uint)));
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy((void *)*d_triTable, (void *)triTable, 256 * 16 * sizeof(uint), cudaMemcpyHostToDevice));
 
     cudaResourceDesc texRes;
@@ -76,8 +77,10 @@ extern "C" void allocateTextures(uint **d_edgeTable, uint **d_triTable, uint **d
 
     checkCudaErrors(cudaCreateTextureObject(&triTex, &texRes, &texDescr, NULL));
 
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)d_numVertsTable, 256 * sizeof(uint)));
     checkCudaErrors(
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         cudaMemcpy((void *)*d_numVertsTable, (void *)numVertsTable, 256 * sizeof(uint), cudaMemcpyHostToDevice));
 
     memset(&texRes, 0, sizeof(cudaResourceDesc));
@@ -272,6 +275,7 @@ extern "C" void launch_classifyVoxel(dim3   grid,
 // compact voxel array
 __global__ void compactVoxels(uint *compactedVoxelArray, uint *voxelOccupied, uint *voxelOccupiedScan, uint numVoxels)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     uint blockId = __mul24(blockIdx.y, gridDim.x) + blockIdx.x;
     uint i       = __mul24(blockId, blockDim.x) + threadIdx.x;
 
@@ -287,6 +291,7 @@ extern "C" void launch_compactVoxels(dim3  grid,
                                      uint *voxelOccupiedScan,
                                      uint  numVoxels)
 {
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     compactVoxels<<<grid, threads>>>(compactedVoxelArray, voxelOccupied, voxelOccupiedScan, numVoxels);
     getLastCudaError("compactVoxels failed");
 }
@@ -325,6 +330,7 @@ __global__ void generateTriangles(float4             *pos,
                                   cudaTextureObject_t triTex,
                                   cudaTextureObject_t numVertsTex)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     uint blockId = __mul24(blockIdx.y, gridDim.x) + blockIdx.x;
     uint i       = __mul24(blockId, blockDim.x) + threadIdx.x;
 
@@ -462,7 +468,7 @@ __global__ void generateTriangles(float4             *pos,
                   field[7],
                   vertlist[threadIdx.x + (NTHREADS * 11)],
                   normlist[threadIdx.x + (NTHREADS * 11)]);
-    // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
 
 #else
@@ -495,6 +501,7 @@ __global__ void generateTriangles(float4             *pos,
 
         if (index < maxVerts) {
 #if USE_SHARED
+            // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             pos[index]  = make_float4(vertlist[(edge * NTHREADS) + threadIdx.x], 1.0f);
             norm[index] = make_float4(normlist[(edge * NTHREADS) + threadIdx.x], 0.0f);
 #else
@@ -519,6 +526,7 @@ extern "C" void launch_generateTriangles(dim3    grid,
                                          uint    activeVoxels,
                                          uint    maxVerts)
 {
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     generateTriangles<<<grid, NTHREADS>>>(pos,
                                           norm,
                                           compactedVoxelArray,
@@ -562,6 +570,7 @@ __global__ void generateTriangles2(float4             *pos,
                                    cudaTextureObject_t numVertsTex,
                                    cudaTextureObject_t volumeTex)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     uint blockId = __mul24(blockIdx.y, gridDim.x) + blockIdx.x;
     uint i       = __mul24(blockId, blockDim.x) + threadIdx.x;
 
@@ -632,8 +641,10 @@ __global__ void generateTriangles2(float4             *pos,
 
 #if USE_SHARED
     // use shared memory to avoid using local
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ float3 vertlist[12 * NTHREADS];
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     vertlist[threadIdx.x]                   = vertexInterp(isoValue, v[0], v[1], field[0], field[1]);
     vertlist[NTHREADS + threadIdx.x]        = vertexInterp(isoValue, v[1], v[2], field[1], field[2]);
     vertlist[(NTHREADS * 2) + threadIdx.x]  = vertexInterp(isoValue, v[2], v[3], field[2], field[3]);
@@ -646,6 +657,7 @@ __global__ void generateTriangles2(float4             *pos,
     vertlist[(NTHREADS * 9) + threadIdx.x]  = vertexInterp(isoValue, v[1], v[5], field[1], field[5]);
     vertlist[(NTHREADS * 10) + threadIdx.x] = vertexInterp(isoValue, v[2], v[6], field[2], field[6]);
     vertlist[(NTHREADS * 11) + threadIdx.x] = vertexInterp(isoValue, v[3], v[7], field[3], field[7]);
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
 #else
 
@@ -677,6 +689,7 @@ __global__ void generateTriangles2(float4             *pos,
         uint    edge;
         edge = tex1Dfetch<uint>(triTex, (cubeindex * 16) + i);
 #if USE_SHARED
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         v[0] = &vertlist[(edge * NTHREADS) + threadIdx.x];
 #else
         v[0] = &vertlist[edge];
@@ -727,6 +740,7 @@ extern "C" void launch_generateTriangles2(dim3    grid,
                                           uint    activeVoxels,
                                           uint    maxVerts)
 {
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     generateTriangles2<<<grid, NTHREADS>>>(pos,
                                            norm,
                                            compactedVoxelArray,

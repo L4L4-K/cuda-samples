@@ -154,6 +154,7 @@ void resizeBGRplanarBatch(float       *dpSrc,
                           int          nDstWidth,
                           int          nDstHeight,
                           int          nBatchSize,
+                          // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
                           cudaStream_t stream,
                           int          cropX,
                           int          cropY,

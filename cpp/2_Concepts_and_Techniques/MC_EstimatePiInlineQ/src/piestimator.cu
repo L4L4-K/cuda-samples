@@ -90,6 +90,7 @@ __device__ unsigned int reduce_sum(unsigned int in, cg::thread_block cta)
 
     // Perform first level of reduction:
     // - Write to shared memory
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned int ltid = threadIdx.x;
 
     sdata[ltid] = in;
@@ -102,12 +103,14 @@ __device__ unsigned int reduce_sum(unsigned int in, cg::thread_block cta)
             sdata[ltid] += sdata[ltid + s];
         }
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
     }
 
     return sdata[0];
 }
 
+// JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
 __device__ inline void getPoint(float &x, float &y, curandStateSobol32 &state1, curandStateSobol32 &state2)
 {
     x = curand_uniform(&state1);
@@ -124,6 +127,7 @@ template <typename Real, typename rngState_t>
 __global__ void computeValue(unsigned int *const results, rngState_t *const rngStates, const unsigned int numSims)
 {
     // Handle to thread block group
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta = cg::this_thread_block();
     // Determine thread ID
     unsigned int bid  = blockIdx.x;
@@ -152,6 +156,7 @@ __global__ void computeValue(unsigned int *const results, rngState_t *const rngS
     pointsInside = reduce_sum(pointsInside, cta);
 
     // Store the result
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x == 0) {
         results[bid] = pointsInside;
     }
@@ -173,6 +178,7 @@ template <typename Real> Real PiEstimator<Real>::operator()()
 
     // Determine type of generator to use (32- or 64-bit)
     typedef
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         typename IF<TYPE_IS<Real, double>::test, curandStateSobol64_t, curandStateSobol32_t>::type curandStateSobol_sz;
     typedef typename IF<TYPE_IS<Real, double>::test, curandDirectionVectors64_t, curandDirectionVectors32_t>::type
         curandDirectionVectors_sz;
@@ -217,6 +223,7 @@ template <typename Real> Real PiEstimator<Real>::operator()()
     }
 
     // Get initRNG function properties and check the maximum block size
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cudaResult = cudaFuncGetAttributes(&funcAttributes, initRNG<curandStateSobol_sz, curandDirectionVectors_sz>);
 
     if (cudaResult != cudaSuccess) {
@@ -230,6 +237,7 @@ template <typename Real> Real PiEstimator<Real>::operator()()
     }
 
     // Get computeValue function properties and check the maximum block size
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cudaResult = cudaFuncGetAttributes(&funcAttributes, computeValue<Real, curandStateSobol_sz>);
 
     if (cudaResult != cudaSuccess) {
@@ -274,6 +282,7 @@ template <typename Real> Real PiEstimator<Real>::operator()()
     // Allocate memory for result
     // Each thread block will produce one result
     unsigned int *d_results = 0;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     cudaResult              = cudaMalloc((void **)&d_results, grid.x * sizeof(unsigned int));
 
     if (cudaResult != cudaSuccess) {
@@ -284,6 +293,7 @@ template <typename Real> Real PiEstimator<Real>::operator()()
 
     // Generate direction vectors on the host and copy to the device
     if (typeid(Real) == typeid(float)) {
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         curandDirectionVectors32_t *rngDirections;
         curandStatus_t curandResult = curandGetDirectionVectors32(&rngDirections, CURAND_DIRECTION_VECTORS_32_JOEKUO6);
 
@@ -305,6 +315,7 @@ template <typename Real> Real PiEstimator<Real>::operator()()
         }
     }
     else if (typeid(Real) == typeid(double)) {
+        // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         curandDirectionVectors64_t *rngDirections;
         curandStatus_t curandResult = curandGetDirectionVectors64(&rngDirections, CURAND_DIRECTION_VECTORS_64_JOEKUO6);
 
@@ -339,6 +350,7 @@ template <typename Real> Real PiEstimator<Real>::operator()()
 
     // Copy partial results back
     vector<unsigned int> results(grid.x);
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     cudaResult = cudaMemcpy(&results[0], d_results, grid.x * sizeof(unsigned int), cudaMemcpyDeviceToHost);
 
     if (cudaResult != cudaSuccess) {

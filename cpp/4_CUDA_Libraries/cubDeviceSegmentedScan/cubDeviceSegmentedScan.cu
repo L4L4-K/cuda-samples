@@ -154,6 +154,7 @@ static bool run_inclusive_segmented_max()
                                                                      end_offsets,
                                                                      num_segments,
                                                                      max_op));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
 
     std::vector<int>    h_in(d_in.begin(), d_in.end());

@@ -57,6 +57,7 @@ static void __checkCudaErrors(CUresult err, const char *filename, int line)
 }
 
 // Return a CUDA capable device or exit if one cannot be found.
+// JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
 static CUdevice cudaDeviceInit(int *devMajor, int *devMinor)
 {
     assert(devMajor && devMinor);
@@ -70,6 +71,7 @@ static CUdevice cudaDeviceInit(int *devMajor, int *devMinor)
     }
 
     // Locate a CUDA supporting device and its name.
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     CUdevice cuDevice = 0;
     checkCudaErrors(cuDeviceGet(&cuDevice, 0));
     char name[128];
@@ -88,6 +90,7 @@ static CUdevice cudaDeviceInit(int *devMajor, int *devMinor)
 }
 
 static CUresult
+// JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
 initCUDA(CUcontext *phContext, CUdevice *phDevice, CUmodule *phModule, CUfunction *phKernel, const char *ptx)
 {
     assert(phContext && phDevice && phModule && phKernel && ptx);
@@ -206,6 +209,7 @@ int main(int argc, char **argv)
 
     // Initialize the device and obtain the compute capability.
     int      devMajor = 0, devMinor = 0;
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     CUdevice hDevice = cudaDeviceInit(&devMajor, &devMinor);
 
     // Use libNVVM to generate PTX from the NVVM IR.
@@ -246,6 +250,7 @@ int main(int argc, char **argv)
 
     // Cleanup.
     if (dData)
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         checkCudaErrors(cuMemFree(dData));
     if (hModule)
         checkCudaErrors(cuModuleUnload(hModule));

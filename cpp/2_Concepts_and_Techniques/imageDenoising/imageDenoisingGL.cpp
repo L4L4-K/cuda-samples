@@ -185,6 +185,7 @@ void displayFunc(void)
         sdkResetTimer(&timer);
     }
 
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsMapResources(1, &cuda_pbo_resource, 0));
     getLastCudaError("cudaGraphicsMapResources failed");
     checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&d_dst, &num_bytes, cuda_pbo_resource));
@@ -389,6 +390,7 @@ void initOpenGLBuffers()
     // to display the content of the PBO, specified by CUDA kernels,
     // so we need to register/unregister it only once.
     // DEPRECATED: checkCudaErrors(cudaGLRegisterBufferObject(gl_PBO) );
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsGLRegisterBuffer(&cuda_pbo_resource, gl_PBO, cudaGraphicsMapFlagsWriteDiscard));
     GLenum gl_error = glGetError();
 
@@ -469,6 +471,7 @@ void runAutoTest(int argc, char **argv, const char *filename, int kernel_param)
     checkCudaErrors(CUDA_FreeArray());
     free(h_Src);
 
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(d_dst));
     free(h_dst);
 

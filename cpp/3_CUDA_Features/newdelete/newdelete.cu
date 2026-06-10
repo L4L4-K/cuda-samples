@@ -117,6 +117,7 @@ __global__ void placementNew(int *d_result)
     // The first thread of the block initializes the shared Vector object.
     // The placement new operator enables the Vector object and the data array top
     // be placed in shared memory.
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x == 0) {
         s_vector = new (s_buffer) Vector<int>(1024, s_data);
     }
@@ -130,11 +131,13 @@ __global__ void placementNew(int *d_result)
 
     // Need to sync as the vector implementation does not support concurrent
     // push/pop operations.
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     int v;
 
     if (s_vector->pop(v)) {
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         d_result[threadIdx.x] = v;
     }
     else {
@@ -156,7 +159,9 @@ struct ComplexType_t
 __global__ void complexVector(int *d_result)
 {
     // Handle to thread block group
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block         cta = cg::this_thread_block();
+    // JP: この連続する anchor 群では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ unsigned char __align__(8) s_buffer[sizeof(Vector<ComplexType_t>)];
     __shared__ ComplexType_t __align__(8) s_data[1024];
     __shared__ Vector<ComplexType_t> *s_vector;
@@ -164,12 +169,15 @@ __global__ void complexVector(int *d_result)
     // The first thread of the block initializes the shared Vector object.
     // The placement new operator enables the Vector object and the data array top
     // be placed in shared memory.
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x == 0) {
         s_vector = new (s_buffer) Vector<ComplexType_t>(1024, s_data);
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if ((threadIdx.x & 1) == 0) {
         ComplexType_t data;
         data.a = threadIdx.x >> 1;
@@ -180,11 +188,13 @@ __global__ void complexVector(int *d_result)
         s_vector->push(data);
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     ComplexType_t v;
 
     if (s_vector->pop(v)) {
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         d_result[threadIdx.x] = v.a;
     }
     else {
@@ -254,11 +264,15 @@ bool testPlacementNew(int threads)
     int *d_result;
     cudaMalloc(&d_result, threads * sizeof(int));
 
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     placementNew<<<1, threads>>>(d_result);
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
 
+    // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
     bool success = checkResult(d_result, threads);
 
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     cudaFree(d_result);
 
     return success;
@@ -269,11 +283,15 @@ bool testComplexType(int threads)
     int *d_result;
     cudaMalloc(&d_result, threads * sizeof(int));
 
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     complexVector<<<1, threads>>>(d_result);
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
 
+    // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
     bool success = checkResult(d_result, threads);
 
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     cudaFree(d_result);
 
     return success;
@@ -297,17 +315,20 @@ int main(int argc, char **argv)
     checkCudaErrors(cudaDeviceSetLimit(cudaLimitMallocHeapSize, 128 * (1 << 20)));
 
     Container<int> **d_container;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc(&d_container, sizeof(Container<int> **)));
 
     bool bTest       = false;
     int  test_passed = 0;
 
     printf(" > Container = Vector test ");
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     vectorCreate<<<1, 1>>>(d_container, 128 * 128);
     bTest = testContainer(d_container, 128, 128);
     printf(bTest ? "OK\n\n" : "NOT OK\n\n");
     test_passed += (bTest ? 1 : 0);
 
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(d_container));
 
     printf(" > Container = Vector, using placement new on SMEM buffer test ");

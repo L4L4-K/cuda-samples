@@ -141,6 +141,7 @@ def blur_image_unified_memory(
 
     # Create managed memory resource for unified memory allocation
     options = ManagedMemoryResourceOptions(preferred_location=device.device_id)
+    # JP: この anchor では Unified Memory allocation/prefetch/advice です。migration、host/device visibility、同期位置 を確認します。
     mr = ManagedMemoryResource(options)
 
     # Allocate unified memory buffers for source and destination images
@@ -214,6 +215,7 @@ def main():
     print("=" * 60)
 
     # Initialize CUDA device
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     device = Device(0)
     device.set_current()
 

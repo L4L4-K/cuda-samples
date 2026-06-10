@@ -389,6 +389,7 @@ CUresult INIT_ERROR_FUNCTIONS(void)
     return result;
 }
 
+// JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
 CUresult CUDAAPI cuInit(unsigned int Flags, int cudaVersion)
 {
     CUDADRIVER CudaDrvLib;
@@ -431,6 +432,7 @@ CUresult CUDAAPI cuInit(unsigned int Flags, int cudaVersion)
     GET_PROC(cuModuleUnload);
     GET_PROC(cuModuleGetFunction);
     GET_PROC(cuModuleGetTexRef);
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     GET_PROC(cuMemFreeHost);
     GET_PROC(cuMemHostAlloc);
     GET_PROC(cuFuncSetBlockShape);
@@ -509,12 +511,14 @@ CUresult CUDAAPI cuInit(unsigned int Flags, int cudaVersion)
         GET_PROC_V2(cuCtxCreate);
         GET_PROC_V2(cuModuleGetGlobal);
         GET_PROC_V2(cuMemGetInfo);
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         GET_PROC_V2(cuMemAlloc);
         GET_PROC_V2(cuMemAllocPitch);
         GET_PROC_V2(cuMemFree);
         GET_PROC_V2(cuMemGetAddressRange);
         GET_PROC_V2(cuMemAllocHost);
         GET_PROC_V2(cuMemHostGetDevicePointer);
+        // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         GET_PROC_V2(cuMemcpyHtoD);
         GET_PROC_V2(cuMemcpyDtoH);
         GET_PROC_V2(cuMemcpyDtoD);
@@ -558,12 +562,14 @@ CUresult CUDAAPI cuInit(unsigned int Flags, int cudaVersion)
         GET_PROC(cuCtxCreate);
         GET_PROC(cuModuleGetGlobal);
         GET_PROC(cuMemGetInfo);
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         GET_PROC(cuMemAlloc);
         GET_PROC(cuMemAllocPitch);
         GET_PROC(cuMemFree);
         GET_PROC(cuMemGetAddressRange);
         GET_PROC(cuMemAllocHost);
         GET_PROC(cuMemHostGetDevicePointer);
+        // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         GET_PROC(cuMemcpyHtoD);
         GET_PROC(cuMemcpyDtoH);
         GET_PROC(cuMemcpyDtoD);
@@ -602,8 +608,10 @@ CUresult CUDAAPI cuInit(unsigned int Flags, int cudaVersion)
         GET_PROC(cuCtxGetCurrent);
         GET_PROC(cuMemHostRegister);
         GET_PROC(cuMemHostUnregister);
+        // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         GET_PROC(cuMemcpy);
         GET_PROC(cuMemcpyPeer);
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         GET_PROC(cuLaunchKernel);
         GET_PROC(cuProfilerStop);
     }
@@ -617,6 +625,7 @@ CUresult CUDAAPI cuInit(unsigned int Flags, int cudaVersion)
     }
 
     if (driverVer >= 3000) {
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         GET_PROC(cuMemcpyDtoDAsync);
         GET_PROC(cuFuncSetCacheConfig);
 #ifdef CUDA_INIT_D3D11

@@ -61,6 +61,7 @@ def main() -> bool:
     print("Prefix Sum (Scan) - Using cuda.compute")
     print("=" * 60)
 
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     device = Device(0)
     device.set_current()
     stream = device.create_stream()
@@ -85,6 +86,7 @@ def main() -> bool:
         )
 
         with cp_stream:
+            # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
             d_input = cp.asarray(h_input)
             d_output = cp.empty_like(d_input)
 
@@ -103,6 +105,7 @@ def main() -> bool:
         print(f"Output: {cp.asnumpy(d_output).tolist()}")
 
         with cp_stream:
+            # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
             expected = cp.asarray(np.cumsum(h_input))
         ok &= verify_array_result(d_output, expected, rtol=0, atol=0)
 
@@ -115,6 +118,7 @@ def main() -> bool:
         print("Formula: output[i] = init_value + input[0] + ... + input[i-1]")
 
         with cp_stream:
+            # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
             d_output = cp.empty_like(d_input)
 
         print(f"\nInput:  {h_input.tolist()}")
@@ -125,12 +129,14 @@ def main() -> bool:
             op=OpKind.PLUS,
             init_value=init_value,
             num_items=len(h_input),
+            # JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
             stream=stream,
         )
         stream.sync()
         print(f"Output: {cp.asnumpy(d_output).tolist()}")
 
         with cp_stream:
+            # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
             expected = cp.asarray(np.concatenate([init_value, np.cumsum(h_input)[:-1]]))
         ok &= verify_array_result(d_output, expected, rtol=0, atol=0)
 
@@ -143,6 +149,7 @@ def main() -> bool:
 
         N = 10_000_000
         with cp_stream:
+            # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
             d_large_in = cp.ones(N, dtype=np.int32)
             d_large_out = cp.empty_like(d_large_in)
 
@@ -152,6 +159,7 @@ def main() -> bool:
             op=OpKind.PLUS,
             init_value=None,
             num_items=N,
+            # JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
             stream=stream,
         )
         stream.sync()
@@ -169,6 +177,7 @@ def main() -> bool:
                 op=OpKind.PLUS,
                 init_value=None,
                 num_items=N,
+                # JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
                 stream=stream,
             )
         stream.record(end_event)
@@ -192,6 +201,7 @@ def main() -> bool:
         print("=" * 60)
         return ok
     finally:
+        # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
         cp.cuda.Stream.null.use()
         stream.close()
 

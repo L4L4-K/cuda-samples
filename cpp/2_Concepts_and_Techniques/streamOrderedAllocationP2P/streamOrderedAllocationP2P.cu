@@ -184,6 +184,7 @@ int memPoolP2PCopy()
     auto p2pDevices = getP2PCapableGpuPair();
     printf("selected devices = %d & %d\n", p2pDevices.first, p2pDevices.second);
     checkCudaErrors(cudaSetDevice(p2pDevices.first));
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaEventCreate(&waitOnStream1));
 
     checkCudaErrors(cudaStreamCreateWithFlags(&stream1, cudaStreamNonBlocking));
@@ -238,6 +239,7 @@ int memPoolP2PCopy()
 
     free(a);
     free(output);
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamDestroy(stream1));
     checkCudaErrors(cudaStreamDestroy(stream2));
     printf("PASSED\n");

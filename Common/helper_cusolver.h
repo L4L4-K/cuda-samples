@@ -97,6 +97,7 @@ double csr_mat_norminf(int m, int n, int nnzA, const cusparseMatDescr_t descrA,
   return norminf;
 }
 
+// JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
 void display_matrix(int m, int n, int nnzA, const cusparseMatDescr_t descrA,
                     const double *csrValA, const int *csrRowPtrA,
                     const int *csrColIndA) {

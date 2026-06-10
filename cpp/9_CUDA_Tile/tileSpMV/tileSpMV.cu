@@ -468,8 +468,10 @@ int main() {
   S.uploadToDevice();
   float* d_x = nullptr;
   float* d_y = nullptr;
+  // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
   checkCudaErrors(cudaMalloc(&d_x, S.num_cols * sizeof(float)));
   checkCudaErrors(cudaMalloc(&d_y, S.num_rows * sizeof(float)));
+  // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
   checkCudaErrors(cudaMemcpy(d_x, h_x.data(), S.num_cols * sizeof(float),
                              cudaMemcpyHostToDevice));
 
@@ -484,10 +486,12 @@ int main() {
 
   /* copy result back and verify */
   std::vector<float> h_y(S.num_rows);
+  // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
   checkCudaErrors(cudaMemcpy(h_y.data(), d_y, S.num_rows * sizeof(float),
                              cudaMemcpyDeviceToHost));
 
   S.freeDevice();
+  // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
   checkCudaErrors(cudaFree(d_x));
   checkCudaErrors(cudaFree(d_y));
 

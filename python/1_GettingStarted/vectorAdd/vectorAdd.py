@@ -90,6 +90,7 @@ def vector_add_cuda_core(num_elements=50000, device_id=0, verify=True):
     try:
         # Initialize device
         print("[Vector addition using CUDA Core API]")
+        # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
         device = Device(device_id)
         device.set_current()
 
@@ -109,6 +110,7 @@ def vector_add_cuda_core(num_elements=50000, device_id=0, verify=True):
 
         # Allocate and initialize vectors
         print(f"[Vector addition of {num_elements} elements]")
+        # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
         dtype = cp.float32
 
         a = cp.random.rand(num_elements).astype(dtype)
@@ -138,6 +140,7 @@ def vector_add_cuda_core(num_elements=50000, device_id=0, verify=True):
             a.data.ptr,
             b.data.ptr,
             c.data.ptr,
+            # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
             cp.int32(num_elements),
         )
         stream.sync()

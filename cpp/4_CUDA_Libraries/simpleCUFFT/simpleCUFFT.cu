@@ -111,9 +111,11 @@ void runTest(int argc, char **argv)
 
     // Allocate device memory for filter kernel
     Complex *d_filter_kernel;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&d_filter_kernel), mem_size));
 
     // Copy host memory to device
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(d_filter_kernel, h_padded_filter_kernel, mem_size, cudaMemcpyHostToDevice));
 
     // CUFFT plan simple API
@@ -150,11 +152,13 @@ void runTest(int argc, char **argv)
 
     // Transform signal back
     printf("Transforming signal back cufftExecC2C\n");
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cufftExecC2C(
         plan, reinterpret_cast<cufftComplex *>(d_signal), reinterpret_cast<cufftComplex *>(d_signal), CUFFT_INVERSE));
 
     // Copy device memory to host
     Complex *h_convolved_signal = h_padded_signal;
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_convolved_signal, d_signal, mem_size, cudaMemcpyDeviceToHost));
 
     // Allocate host memory for the convolution result
@@ -171,6 +175,7 @@ void runTest(int argc, char **argv)
                                       1e-5f);
 
     // Destroy CUFFT context
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cufftDestroy(plan));
     checkCudaErrors(cufftDestroy(plan_adv));
 
@@ -181,6 +186,7 @@ void runTest(int argc, char **argv)
     free(h_padded_signal);
     free(h_padded_filter_kernel);
     free(h_convolved_signal_ref);
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(d_signal));
     checkCudaErrors(cudaFree(d_filter_kernel));
 

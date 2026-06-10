@@ -145,6 +145,7 @@ __global__ void stereoDisparityKernel(unsigned int       *g_img0,
         for (int i = 0; i < STEPS; i++) {
             int offset = -RAD + i * RAD;
 
+            // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             if (threadIdx.x < 2 * RAD) {
                 // imLeft = tex2D( tex2Dleft, tidx-RAD+blockSize_x, tidy+offset );
                 imLeft  = imLeftB[i];
@@ -169,6 +170,7 @@ __global__ void stereoDisparityKernel(unsigned int       *g_img0,
                 cost += diff[sidy + offset][sidx + i];
             }
 
+            // JP: この連続する anchor 群では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
             cg::sync(cta);
             diff[sidy + offset][sidx] = cost;
             cg::sync(cta);
@@ -188,6 +190,7 @@ __global__ void stereoDisparityKernel(unsigned int       *g_img0,
             bestDisparity = d + 8;
         }
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
     }
 

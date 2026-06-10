@@ -219,6 +219,7 @@ __global__ void CUDAkernel2DCT(float *dst, float *src, int ImgStride)
     CUDAsubroutineInplaceDCTvector(
         block + (OffsThreadInCol + threadIdx.x) * KER2_SMEMBLOCK_STRIDE + OffsThreadInRow - threadIdx.x, 1);
 
+    // JP: この連続する anchor 群では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
     // process columns
     CUDAsubroutineInplaceDCTvector(bl_ptr, KER2_SMEMBLOCK_STRIDE);
@@ -245,10 +246,13 @@ __global__ void CUDAkernel2DCT(float *dst, float *src, int ImgStride)
 __global__ void CUDAkernel2IDCT(float *dst, float *src, int ImgStride)
 {
     // Handle to thread block group
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta = cg::this_thread_block();
 
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ float block[KER2_BLOCK_HEIGHT * KER2_SMEMBLOCK_STRIDE];
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int OffsThreadInRow = threadIdx.y * BLOCK_SIZE + threadIdx.x;
     int OffsThreadInCol = threadIdx.z * BLOCK_SIZE;
     src += FMUL(blockIdx.y * KER2_BLOCK_HEIGHT + OffsThreadInCol, ImgStride) + blockIdx.x * KER2_BLOCK_WIDTH
@@ -262,11 +266,14 @@ __global__ void CUDAkernel2IDCT(float *dst, float *src, int ImgStride)
     for (unsigned int i = 0; i < BLOCK_SIZE; i++)
         bl_ptr[i * KER2_SMEMBLOCK_STRIDE] = src[i * ImgStride];
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
     // process rows
     CUDAsubroutineInplaceIDCTvector(
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         block + (OffsThreadInCol + threadIdx.x) * KER2_SMEMBLOCK_STRIDE + OffsThreadInRow - threadIdx.x, 1);
 
+    // JP: この連続する anchor 群では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
     // process columns
     CUDAsubroutineInplaceIDCTvector(bl_ptr, KER2_SMEMBLOCK_STRIDE);

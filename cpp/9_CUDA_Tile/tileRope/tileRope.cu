@@ -250,6 +250,7 @@ int main() {
 
   rope<__half, BATCH, Q_HEADS, K_HEADS, BLOCK_QH, BLOCK_KH, BLOCK_HD,
        HALF_ROPE_DIM, HEAD_DIM, COS_BS, SEQ_LEN>
+      // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
       <<<BATCH * SEQ_LEN>>>(d_q, d_k, d_cos, d_sin);
   checkCudaErrors(cudaGetLastError());
 
@@ -258,6 +259,7 @@ int main() {
 
   __half* h_q_out = new __half[Q_SIZE];
   __half* h_k_out = new __half[K_SIZE];
+  // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
   checkCudaErrors(cudaMemcpy(h_q_out, d_q, Q_SIZE * sizeof(__half), cudaMemcpyDeviceToHost));
   checkCudaErrors(cudaMemcpy(h_k_out, d_k, K_SIZE * sizeof(__half), cudaMemcpyDeviceToHost));
 

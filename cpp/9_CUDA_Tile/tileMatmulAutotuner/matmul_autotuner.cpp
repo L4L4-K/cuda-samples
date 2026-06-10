@@ -88,6 +88,7 @@ void printCompilerOptions() {
 }
 
 CompilerBackend parseCompilerBackendArgs(int argc, char** argv, std::vector<char*>& benchmark_argv) {
+    // JP: この anchor では NVRTC/JIT compile/link output です。compile option、log、生成 code と後続 module/kernel の対応 を確認します。
     CompilerBackend compiler_backend = CompilerBackend::NVRTC;
     benchmark_argv.clear();
     benchmark_argv.push_back(argv[0]);
@@ -143,6 +144,7 @@ void loadAndExecuteKernel(const CompiledKernel& compiled_kernel,
                           CUdeviceptr d_A, CUdeviceptr d_B, CUdeviceptr d_C,
                           int M, int N, int K,
                           unsigned int gridDimX, unsigned int gridDimY, unsigned int sMem) {
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     CUmodule module;
     CUfunction kernel_addr;
 
@@ -168,6 +170,7 @@ void loadAndExecuteKernel(const CompiledKernel& compiled_kernel,
     checkCudaErrors(cuCtxSynchronize());
 
     // cleanup
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuModuleUnload(module));
 }
 
@@ -260,6 +263,7 @@ void autotuner(int M, int N, int K,
                     },
                     [&]() {
                         std::vector<float> h_result(M * N);
+                        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                         checkCudaErrors(cuMemcpyDtoH(h_result.data(), d_C,
                                                      M * N * sizeof(float)));
                         return verify_matmul_result(config_name.c_str(),
@@ -303,6 +307,7 @@ int main(int argc, char** argv) {
     // initialize CUDA and get compute capability
     setSMValue();
 
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     CUcontext context;
     CUdevice cuDevice = 0;
     checkCudaErrors(cuInit(0));

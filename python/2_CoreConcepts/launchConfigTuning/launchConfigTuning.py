@@ -363,6 +363,7 @@ def main():
     print("=" * 60)
 
     # Initialize CUDA device
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     device = Device(0)
     device.set_current()
 
@@ -372,6 +373,7 @@ def main():
     # Create stream and device-preferred memory resource
     stream = device.create_stream()
     mr_options = ManagedMemoryResourceOptions(preferred_location=device.device_id)
+    # JP: この anchor では Unified Memory allocation/prefetch/advice です。migration、host/device visibility、同期位置 を確認します。
     mr = ManagedMemoryResource(mr_options)
 
     try:

@@ -142,6 +142,7 @@ void runTest(int argc, char **argv)
 
     checkCudaErrors(cuCtxSynchronize());
 
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cuMemcpyDtoH(hOData, dOData, memSize));
 
     // Copy result from device to host

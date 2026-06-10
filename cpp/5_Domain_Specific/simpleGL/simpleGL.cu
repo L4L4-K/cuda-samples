@@ -125,6 +125,7 @@ void cleanup();
 
 // GL functionality
 bool initGL(int *argc, char **argv);
+// JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
 void createVBO(GLuint *vbo, struct cudaGraphicsResource **vbo_res, unsigned int vbo_res_flags);
 void deleteVBO(GLuint *vbo, struct cudaGraphicsResource *vbo_res);
 
@@ -136,6 +137,7 @@ void motion(int x, int y);
 void timerEvent(int value);
 
 // Cuda functionality
+// JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
 void runCuda(struct cudaGraphicsResource **vbo_resource);
 void runAutoTest(int devID, char **argv, char *ref_file);
 void checkResultCuda(int argc, char **argv, const GLuint &vbo);
@@ -311,6 +313,7 @@ bool runTest(int argc, char **argv, char *ref_file)
 #endif
 
         // create VBO
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         createVBO(&vbo, &cuda_vbo_resource, cudaGraphicsMapFlagsWriteDiscard);
 
         // run the cuda part
@@ -326,6 +329,7 @@ bool runTest(int argc, char **argv, char *ref_file)
 ////////////////////////////////////////////////////////////////////////////////
 //! Run the Cuda part of the computation
 ////////////////////////////////////////////////////////////////////////////////
+// JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
 void runCuda(struct cudaGraphicsResource **vbo_resource)
 {
     // map OpenGL buffer object for writing from CUDA
@@ -343,6 +347,7 @@ void runCuda(struct cudaGraphicsResource **vbo_resource)
     launch_kernel(dptr, mesh_width, mesh_height, g_fAnim);
 
     // unmap buffer object
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsUnmapResources(1, vbo_resource, 0));
 }
 
@@ -403,6 +408,7 @@ void runAutoTest(int devID, char **argv, char *ref_file)
 ////////////////////////////////////////////////////////////////////////////////
 //! Create VBO
 ////////////////////////////////////////////////////////////////////////////////
+// JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
 void createVBO(GLuint *vbo, struct cudaGraphicsResource **vbo_res, unsigned int vbo_res_flags)
 {
     assert(vbo);
@@ -418,6 +424,7 @@ void createVBO(GLuint *vbo, struct cudaGraphicsResource **vbo_res, unsigned int 
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
     // register this buffer object with CUDA
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsGLRegisterBuffer(vbo_res, *vbo, vbo_res_flags));
 
     SDK_CHECK_ERROR_GL();
@@ -549,6 +556,7 @@ void motion(int x, int y)
 void checkResultCuda(int argc, char **argv, const GLuint &vbo)
 {
     if (!d_vbo_buffer) {
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         checkCudaErrors(cudaGraphicsUnregisterResource(cuda_vbo_resource));
 
         // map buffer object
@@ -567,6 +575,7 @@ void checkResultCuda(int argc, char **argv, const GLuint &vbo)
             fflush(stderr);
         }
 
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         checkCudaErrors(cudaGraphicsGLRegisterBuffer(&cuda_vbo_resource, vbo, cudaGraphicsMapFlagsWriteDiscard));
 
         SDK_CHECK_ERROR_GL();

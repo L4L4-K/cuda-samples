@@ -113,6 +113,7 @@ extern "C"
             device = mapGLBufferObject(cuda_vbo_resource);
         }
 
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemcpy(host, device, size, cudaMemcpyDeviceToHost));
 
         if (cuda_vbo_resource) {
@@ -174,9 +175,11 @@ extern "C"
         computeGridSize(numParticles, 256, numBlocks, numThreads);
 
         // set all cells to empty
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemset(cellStart, 0xffffffff, numCells * sizeof(uint)));
 
         uint smemSize = sizeof(uint) * (numThreads + 1);
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         reorderDataAndFindCellStartD<<<numBlocks, numThreads, smemSize>>>(cellStart,
                                                                           cellEnd,
                                                                           (float4 *)sortedPos,
@@ -203,6 +206,7 @@ extern "C"
         computeGridSize(numParticles, 64, numBlocks, numThreads);
 
         // execute the kernel
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         collideD<<<numBlocks, numThreads>>>((float4 *)newVel,
                                             (float4 *)sortedPos,
                                             (float4 *)sortedVel,

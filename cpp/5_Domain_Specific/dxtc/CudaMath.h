@@ -75,6 +75,7 @@ inline __device__ void colorSums(const float3 *colors, float3 *sums, cg::thread_
 inline __device__ float3 bestFitLine(const float3 *colors, float3 color_sum, cg::thread_group tile)
 {
     // Compute covariance matrix of the given colors.
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const int idx = threadIdx.x;
 
     float3 diff = colors[idx] - color_sum * (1.0f / 16.0f);
@@ -91,6 +92,7 @@ inline __device__ float3 bestFitLine(const float3 *colors, float3 color_sum, cg:
     covariance[6 * idx + 4] = diff.y * diff.z;
     covariance[6 * idx + 5] = diff.z * diff.z;
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(tile);
     for (int d = 8; d > 0; d >>= 1) {
         if (idx < d) {
@@ -101,6 +103,7 @@ inline __device__ float3 bestFitLine(const float3 *colors, float3 color_sum, cg:
             covariance[6 * idx + 4] += covariance[6 * (idx + d) + 4];
             covariance[6 * idx + 5] += covariance[6 * (idx + d) + 5];
         }
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(tile);
     }
 

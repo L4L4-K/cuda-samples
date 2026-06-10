@@ -346,6 +346,7 @@ extern "C" void initCuda(void *h_volume, cudaExtent volumeSize)
 
 extern "C" void freeCudaBuffers()
 {
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaDestroyTextureObject(texObject));
     checkCudaErrors(cudaDestroyTextureObject(transferTex));
     checkCudaErrors(cudaFreeArray(d_volumeArray));

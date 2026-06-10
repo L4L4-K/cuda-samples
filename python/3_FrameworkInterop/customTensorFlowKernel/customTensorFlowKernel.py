@@ -160,6 +160,7 @@ def _launch_relu_forward(x_np):
 
     # Convert numpy to CuPy (CPU-to-GPU copy)
     # CuPy is used for array operations and getting device pointers
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     x_cp = cp.asarray(x_np)
     y_cp = cp.empty_like(x_cp)
 
@@ -176,6 +177,7 @@ def _launch_relu_forward(x_np):
     )
 
     # Return as numpy array (GPU-to-CPU copy via cp.asnumpy)
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     return cp.asnumpy(y_cp)
 
 
@@ -201,6 +203,7 @@ def _launch_relu_backward(x_np, grad_y_np):
 
     # Convert numpy to CuPy (CPU-to-GPU copy)
     # CuPy is used for array operations and getting device pointers
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     x_cp = cp.asarray(x_np)
     grad_y_cp = cp.asarray(grad_y_np)
     grad_x_cp = cp.empty_like(x_cp)
@@ -223,6 +226,7 @@ def _launch_relu_backward(x_np, grad_y_np):
     )
 
     # Return as numpy array (GPU-to-CPU copy via cp.asnumpy)
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     return cp.asnumpy(grad_x_cp)
 
 

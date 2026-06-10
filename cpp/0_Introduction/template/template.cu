@@ -70,7 +70,7 @@ __global__ void testKernel(float *g_idata, float *g_odata)
 
     // read in input data from global memory
     sdata[tid] = g_idata[tid];
-    // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    // JP: この連続する anchor 群では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
 
     // perform some computations
@@ -124,6 +124,7 @@ void runTest(int argc, char **argv)
 
     // allocate device memory for result
     float *d_odata;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&d_odata, mem_size));
 
     // setup execution parameters
@@ -140,6 +141,7 @@ void runTest(int argc, char **argv)
     // allocate mem for the result on host side
     float *h_odata = (float *)malloc(mem_size);
     // copy result from device to host
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_odata, d_odata, sizeof(float) * num_threads, cudaMemcpyDeviceToHost));
 
     sdkStopTimer(&timer);

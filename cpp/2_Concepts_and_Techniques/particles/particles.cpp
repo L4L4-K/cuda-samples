@@ -685,6 +685,7 @@ int main(int argc, char **argv)
         }
 
         if (checkCmdLineFlag(argc, (const char **)argv, "grid")) {
+            // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             gridDim = getCmdLineArgumentInt(argc, (const char **)argv, "grid");
         }
 
@@ -695,6 +696,7 @@ int main(int argc, char **argv)
         }
     }
 
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     gridSize.x = gridSize.y = gridSize.z = gridDim;
     printf("grid: %d x %d x %d = %d cells\n", gridSize.x, gridSize.y, gridSize.z, gridSize.x * gridSize.y * gridSize.z);
     printf("particles: %d\n", numParticles);

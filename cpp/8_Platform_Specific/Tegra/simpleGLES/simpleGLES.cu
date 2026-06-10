@@ -136,6 +136,7 @@ char **pArgv = NULL;
 // declaration, forward
 
 // CUDA functionality
+// JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
 void runCuda(struct cudaGraphicsResource **vbo_resource);
 void runAutoTest(int devID, char **argv, char *ref_file);
 void checkResultCuda(int argc, char **argv, const GLuint &vbo);
@@ -196,6 +197,7 @@ void launch_kernel(float4 *pos, unsigned int mesh_width, unsigned int mesh_heigh
 ////////////////////////////////////////////////////////////////////////////////
 //! Run the Cuda part of the computation
 ////////////////////////////////////////////////////////////////////////////////
+// JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
 void runCuda(struct cudaGraphicsResource **vbo_resource)
 {
     // map OpenGL buffer object for writing from CUDA
@@ -213,6 +215,7 @@ void runCuda(struct cudaGraphicsResource **vbo_resource)
     launch_kernel(dptr, mesh_width, mesh_height, g_fAnim);
 
     // unmap buffer object
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     cudaGraphicsUnmapResources(1, vbo_resource, 0);
 }
 
@@ -310,6 +313,7 @@ void checkResultCuda(int argc, char **argv, const GLuint &vbo)
     if (!d_vbo_buffer) {
         printf("%s: Mapping result buffer from OpenGL ES\n", __FUNCTION__);
 
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         cudaGraphicsUnregisterResource(cuda_vbo_resource);
 
         // map buffer object
@@ -329,6 +333,7 @@ void checkResultCuda(int argc, char **argv, const GLuint &vbo)
             fflush(stderr);
         }
 
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         checkCudaErrors(cudaGraphicsGLRegisterBuffer(&cuda_vbo_resource, vbo, cudaGraphicsMapFlagsWriteDiscard));
 
         GET_GLERROR(0);
@@ -448,6 +453,7 @@ static void InitGraphicsState(void)
     glVertexAttribPointer((GLuint)0, 4, GL_FLOAT, GL_FALSE, 0, 0);
     glEnableVertexAttribArray(0);
 
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsGLRegisterBuffer(&cuda_vbo_resource, mesh_vbo, cudaGraphicsMapFlagsNone));
     // glBindVertexArray(0); // keep above Vertex Array Object bound (it's the
     // only one throughout)
@@ -597,6 +603,7 @@ bool runTest(int argc, char **argv, char *ref_file)
     label_stop_x:
         // NOTE: Before destroying OpenGL ES context, must unregister all shared
         // resources from CUDA !
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         cudaGraphicsUnregisterResource(cuda_vbo_resource);
 
         graphics_close_window(); // close window and destroy OpenGL ES context

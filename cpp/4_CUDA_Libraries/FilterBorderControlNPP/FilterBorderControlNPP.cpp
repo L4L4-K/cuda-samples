@@ -107,6 +107,7 @@ int main(int argc, char *argv[])
         printf("CUDA Driver  Version: %d.%d\n", driverVersion / 1000, (driverVersion % 100) / 10);
         printf("CUDA Runtime Version: %d.%d\n\n", runtimeVersion / 1000, (runtimeVersion % 100) / 10);
 
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         cudaError = cudaDeviceGetAttribute(&nppStreamCtx.nCudaDevAttrComputeCapabilityMajor,
                                            cudaDevAttrComputeCapabilityMajor,
                                            nppStreamCtx.nCudaDeviceId);
@@ -124,6 +125,7 @@ int main(int argc, char *argv[])
 
         cudaDeviceProp oDeviceProperties;
 
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         cudaError = cudaGetDeviceProperties(&oDeviceProperties, nppStreamCtx.nCudaDeviceId);
 
         nppStreamCtx.nMultiProcessorCount         = oDeviceProperties.multiProcessorCount;
@@ -207,6 +209,7 @@ int main(int argc, char *argv[])
         npp::ImageNPP_16s_C1 oDeviceDstY(oSizeROI.width, oSizeROI.height);
 
         // run Prewitt edge detection gradient vector filter
+        // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         NPP_CHECK_NPP(nppiGradientVectorPrewittBorder_8u16s_C1R_Ctx(oDeviceSrc.data(),
                                                                     oDeviceSrc.pitch(),
                                                                     oSrcSize,
@@ -221,6 +224,7 @@ int main(int argc, char *argv[])
                                                                     0,
                                                                     oSizeROI,
                                                                     NPP_MASK_SIZE_3_X_3,
+                                                                    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                                                                     nppiNormL1,
                                                                     NPP_BORDER_REPLICATE,
                                                                     nppStreamCtx));
@@ -275,6 +279,7 @@ int main(int argc, char *argv[])
 
         // copy and enlarge the original device source image and surround it with a
         // white edge (border)
+        // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         NPP_CHECK_NPP(nppiCopyConstBorder_8u_C1R_Ctx(oDeviceSrc.data(),
                                                      oDeviceSrc.pitch(),
                                                      oSrcSize,
@@ -284,6 +289,7 @@ int main(int argc, char *argv[])
                                                      oMaskSize.width / 2,
                                                      oMaskSize.height / 2,
                                                      255,
+                                                     // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                                                      nppStreamCtx));
 
         // adjust oEnlargedDeviceSrc pixel pointer to point to the first pixel of
@@ -304,6 +310,7 @@ int main(int argc, char *argv[])
 
         // run Prewitt edge detection gradient vector filter bypassing border
         // control due to enlarged source image
+        // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         NPP_CHECK_NPP(nppiGradientVectorPrewittBorder_8u16s_C1R_Ctx(pAdjustedSrc,
                                                                     oEnlargedDeviceSrc.pitch(),
                                                                     oEnlargedSrcSize,
@@ -318,6 +325,7 @@ int main(int argc, char *argv[])
                                                                     0,
                                                                     oSizeROI,
                                                                     NPP_MASK_SIZE_3_X_3,
+                                                                    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                                                                     nppiNormL1,
                                                                     NPP_BORDER_REPLICATE,
                                                                     nppStreamCtx));
@@ -366,6 +374,7 @@ int main(int argc, char *argv[])
 
         // diff the two 8u_C1 result images one with and one without border control
 
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         NPP_CHECK_NPP(nppiAbsDiff_8u_C1R_Ctx(oDeviceDstOutXNoBorders.data(),
                                              oDeviceDstOutXNoBorders.pitch(),
                                              oDeviceDstOutX.data(),
@@ -445,6 +454,7 @@ int main(int argc, char *argv[])
 
         // run Prewitt edge detection gradient vector filter to generate the left
         // side of the output image
+        // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         NPP_CHECK_NPP(nppiGradientVectorPrewittBorder_8u16s_C1R_Ctx(pAdjustedSrc,
                                                                     oEnlargedDeviceSrc.pitch(),
                                                                     oEnlargedSrcSize,
@@ -459,6 +469,7 @@ int main(int argc, char *argv[])
                                                                     0,
                                                                     oSizeROI,
                                                                     NPP_MASK_SIZE_3_X_3,
+                                                                    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                                                                     nppiNormL1,
                                                                     NPP_BORDER_REPLICATE,
                                                                     nppStreamCtx));
@@ -478,6 +489,7 @@ int main(int argc, char *argv[])
         // run Prewitt edge detection gradient vector filter to generate the right
         // side of the output image adjusting the destination image pointers
         // appropriately
+        // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         NPP_CHECK_NPP(nppiGradientVectorPrewittBorder_8u16s_C1R_Ctx(pAdjustedSrc,
                                                                     oEnlargedDeviceSrc.pitch(),
                                                                     oEnlargedSrcSize,
@@ -492,6 +504,7 @@ int main(int argc, char *argv[])
                                                                     0,
                                                                     oSizeROI,
                                                                     NPP_MASK_SIZE_3_X_3,
+                                                                    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                                                                     nppiNormL1,
                                                                     NPP_BORDER_REPLICATE,
                                                                     nppStreamCtx));
@@ -534,6 +547,7 @@ int main(int argc, char *argv[])
         // diff the original 8u_C1 result images with border control and the mixed
         // border control images, they should match (diff image will be all black)
 
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         NPP_CHECK_NPP(nppiAbsDiff_8u_C1R_Ctx(oDeviceDstOutXMixedBorders.data(),
                                              oDeviceDstOutXMixedBorders.pitch(),
                                              oDeviceDstOutX.data(),
@@ -568,6 +582,7 @@ int main(int argc, char *argv[])
         saveImage(sResultYMixedDiffFilename, oHostDstY);
         std::cout << "Saved image: " << sResultYMixedDiffFilename << std::endl;
 
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         nppiFree(oDeviceSrc.data());
         nppiFree(oDeviceDstX.data());
         nppiFree(oDeviceDstY.data());

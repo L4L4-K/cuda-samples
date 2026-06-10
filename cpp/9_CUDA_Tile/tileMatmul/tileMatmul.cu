@@ -241,6 +241,7 @@ void run_with_size(int M, int N, int K) {
           },
           [&]() {
             std::vector<float> h_C(M * N);
+            // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
             checkCudaErrors(cudaMemcpy(h_C.data(), d_C, M * N * sizeof(float),
                                        cudaMemcpyDeviceToHost));
 
@@ -254,6 +255,7 @@ void run_with_size(int M, int N, int K) {
 
     // run and validate the optimized kernel
     passed &= run_kernel("matmul", [&]() {
+      // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
       matmul<<<grid, 1>>>(d_C, d_A, d_B, M, N, K);
     });
 

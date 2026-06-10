@@ -128,6 +128,7 @@ void ComputeFlowCUDA(const float *I0,
         int nh = pH[currentLevel] / 2;
         int ns = iAlignUp(nw);
 
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         checkCudaErrors(cudaMalloc(pI0 + currentLevel - 1, ns * nh * sizeof(float)));
         checkCudaErrors(cudaMalloc(pI1 + currentLevel - 1, ns * nh * sizeof(float)));
 
@@ -154,6 +155,7 @@ void ComputeFlowCUDA(const float *I0,
         pS[currentLevel - 1] = ns;
     }
 
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemset(d_u, 0, stride * height * sizeof(float)));
     checkCudaErrors(cudaMemset(d_v, 0, stride * height * sizeof(float)));
 
@@ -226,6 +228,7 @@ void ComputeFlowCUDA(const float *I0,
         }
     }
 
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(u, d_u, dataSize, cudaMemcpyDeviceToHost));
     checkCudaErrors(cudaMemcpy(v, d_v, dataSize, cudaMemcpyDeviceToHost));
 
@@ -242,6 +245,7 @@ void ComputeFlowCUDA(const float *I0,
     delete[] pH;
     delete[] pS;
 
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(d_tmp));
     checkCudaErrors(cudaFree(d_du0));
     checkCudaErrors(cudaFree(d_dv0));

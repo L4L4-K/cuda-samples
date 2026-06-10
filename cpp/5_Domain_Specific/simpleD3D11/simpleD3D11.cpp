@@ -209,6 +209,7 @@ bool findDXDevice(char *dev_name)
     wcstombs(dev_name, adapterDesc.Description, 128);
 
     checkCudaErrors(cudaSetDevice(cuda_dev));
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamCreateWithFlags(&cuda_stream, cudaStreamNonBlocking));
 
     printf("> Found 1 D3D11 Adapater(s) /w Compute capability.\n");

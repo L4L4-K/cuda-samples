@@ -41,50 +41,74 @@ __forceinline__ __device__ void reduceInShared_intrinsics(half2 *const v)
     // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     if (threadIdx.x < 64)
         v[threadIdx.x] = __hadd2(v[threadIdx.x], v[threadIdx.x + 64]);
-    // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     __syncthreads();
     if (threadIdx.x < 32)
         v[threadIdx.x] = __hadd2(v[threadIdx.x], v[threadIdx.x + 32]);
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x < 16)
         v[threadIdx.x] = __hadd2(v[threadIdx.x], v[threadIdx.x + 16]);
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x < 8)
         v[threadIdx.x] = __hadd2(v[threadIdx.x], v[threadIdx.x + 8]);
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x < 4)
         v[threadIdx.x] = __hadd2(v[threadIdx.x], v[threadIdx.x + 4]);
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x < 2)
         v[threadIdx.x] = __hadd2(v[threadIdx.x], v[threadIdx.x + 2]);
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x < 1)
         v[threadIdx.x] = __hadd2(v[threadIdx.x], v[threadIdx.x + 1]);
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
 }
 
 __forceinline__ __device__ void reduceInShared_native(half2 *const v)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x < 64)
         v[threadIdx.x] = v[threadIdx.x] + v[threadIdx.x + 64];
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x < 32)
         v[threadIdx.x] = v[threadIdx.x] + v[threadIdx.x + 32];
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x < 16)
         v[threadIdx.x] = v[threadIdx.x] + v[threadIdx.x + 16];
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x < 8)
         v[threadIdx.x] = v[threadIdx.x] + v[threadIdx.x + 8];
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x < 4)
         v[threadIdx.x] = v[threadIdx.x] + v[threadIdx.x + 4];
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x < 2)
         v[threadIdx.x] = v[threadIdx.x] + v[threadIdx.x + 2];
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x < 1)
         v[threadIdx.x] = v[threadIdx.x] + v[threadIdx.x + 1];
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
 }
 
@@ -103,9 +127,11 @@ scalarProductKernel_intrinsics(half2 const *const a, half2 const *const b, float
     }
 
     shArray[threadIdx.x] = value;
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
     reduceInShared_intrinsics(shArray);
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x == 0) {
         half2 result        = shArray[0];
         float f_result      = __low2float(result) + __high2float(result);
@@ -117,9 +143,11 @@ __global__ void
 scalarProductKernel_native(half2 const *const a, half2 const *const b, float *const results, size_t const size)
 {
     const int        stride = gridDim.x * blockDim.x;
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ half2 shArray[NUM_OF_THREADS];
 
     half2 value(0.f, 0.f);
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     shArray[threadIdx.x] = value;
 
     for (int i = threadIdx.x + blockDim.x * blockIdx.x; i < size; i += stride) {
@@ -127,9 +155,11 @@ scalarProductKernel_native(half2 const *const a, half2 const *const b, float *co
     }
 
     shArray[threadIdx.x] = value;
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
     reduceInShared_native(shArray);
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x == 0) {
         half2 result        = shArray[0];
         float f_result      = (float)result.y + (float)result.x;
@@ -177,6 +207,7 @@ int main(int argc, char *argv[])
     }
 
     checkCudaErrors(cudaMallocHost((void **)&results, NUM_OF_BLOCKS * sizeof *results));
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&devResults, NUM_OF_BLOCKS * sizeof *devResults));
 
     for (int i = 0; i < 2; ++i) {
@@ -196,8 +227,10 @@ int main(int argc, char *argv[])
     }
     printf("Result native operators\t: %f \n", result_native);
 
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     scalarProductKernel_intrinsics<<<NUM_OF_BLOCKS, NUM_OF_THREADS>>>(devVec[0], devVec[1], devResults, size);
 
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(results, devResults, NUM_OF_BLOCKS * sizeof *results, cudaMemcpyDeviceToHost));
 
     float result_intrinsics = 0;

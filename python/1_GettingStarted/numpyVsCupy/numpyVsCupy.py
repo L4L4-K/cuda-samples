@@ -73,6 +73,7 @@ def gpu_timer(message, stream):
 def warmup():
     # Pre-runs a simple GPU operation to avoid first-run overhead in benchmarking.
     print("Warmup...")
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     a_cp = cp.ones((16, 16))
     b_cp = cp.ones((16, 16))
     result_cp = cp.dot(a_cp, b_cp)
@@ -108,6 +109,7 @@ def run(n):
 
         # Transfer NumPy arrays to GPU (using events for timing)
         with gpu_timer("Transfer arrays to GPU", stream):
+            # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
             a_cp = cp.asarray(a_np)
             b_cp = cp.asarray(b_np)
 

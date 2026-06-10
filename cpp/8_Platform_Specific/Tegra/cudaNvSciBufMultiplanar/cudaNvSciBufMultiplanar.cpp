@@ -182,6 +182,7 @@ void cudaNvSciBufMultiplanar::initCuda(int devId)
 /*
 Caller1 flips a YUV image which is allocated to nvscibuf APIs and copied into CUDA Array.
 It is mapped to CUDA surface and bit flip is done. Caller2 in the same thread copies
+// JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
 CUDA Array to a YUV image file. The original image is compared with the double bit
 flipped image.
 */
@@ -221,11 +222,13 @@ void cudaNvSciBufMultiplanar::runCudaNvSciBufPlanar(std::string &imageFilename, 
     printf("Bit flip of the surface memory done\n");
 
     caller2.copyCudaArrayToYUV(imageFilenameOut, levelArray2);
+    // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
     compareFiles(imageFilename, imageFilenameOut);
 
     // Release memory
     printf("Releasing memory\n");
     for (int i = 0; i < numPlanes; i++) {
+        // JP: この連続する anchor 群では CUDA resource lifetime end です。未完了 work が残っていないか確認し、確保/作成/登録と対応する API で閉じます。
         checkCudaErrors(cudaFreeMipmappedArray(caller1.multiPlanarArray[i]));
         checkCudaErrors(cudaFreeMipmappedArray(caller2.multiPlanarArray[i]));
     }
@@ -434,6 +437,7 @@ void Caller::copyCudaArrayToYUV(std::string &path, cudaArray_t *cudaArr)
                                               0,
                                               copyWidthInBytes,
                                               copyHeight,
+                                              // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                                               cudaMemcpyDeviceToHost));
 
         checkCudaDrvErrors(cuCtxSynchronize());

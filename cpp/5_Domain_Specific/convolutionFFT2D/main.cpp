@@ -136,10 +136,12 @@ bool test0(void)
     }
 
     printf("...creating R2C & C2R FFT plans for %i x %i\n", fftH, fftW);
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cufftPlan2d(&fftPlanFwd, fftH, fftW, CUFFT_R2C));
     checkCudaErrors(cufftPlan2d(&fftPlanInv, fftH, fftW, CUFFT_C2R));
 
     printf("...uploading to GPU and padding convolution kernel and input data\n");
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(d_Kernel, h_Kernel, kernelH * kernelW * sizeof(float), cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_Data, h_Data, dataH * dataW * sizeof(float), cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemset(d_PaddedKernel, 0, fftH * fftW * sizeof(float)));
@@ -152,6 +154,7 @@ bool test0(void)
     // Not including kernel transformation into time measurement,
     // since convolution kernel is not changed very frequently
     printf("...transforming convolution kernel\n");
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cufftExecR2C(fftPlanFwd, (cufftReal *)d_PaddedKernel, (cufftComplex *)d_KernelSpectrum));
 
     printf("...running GPU FFT convolution: ");
@@ -161,14 +164,17 @@ bool test0(void)
     sdkStartTimer(&hTimer);
     checkCudaErrors(cufftExecR2C(fftPlanFwd, (cufftReal *)d_PaddedData, (cufftComplex *)d_DataSpectrum));
     modulateAndNormalize(d_DataSpectrum, d_KernelSpectrum, fftH, fftW, 1);
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cufftExecC2R(fftPlanInv, (cufftComplex *)d_DataSpectrum, (cufftReal *)d_PaddedData));
 
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
     sdkStopTimer(&hTimer);
     double gpuTime = sdkGetTimerValue(&hTimer);
     printf("%f MPix/s (%f ms)\n", (double)dataH * (double)dataW * 1e-6 / (gpuTime * 0.001), gpuTime);
 
     printf("...reading back GPU convolution results\n");
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_ResultGPU, d_PaddedData, fftH * fftW * sizeof(float), cudaMemcpyDeviceToHost));
 
     printf("...running reference CPU convolution\n");
@@ -229,6 +235,7 @@ bool test1(void)
 
     fComplex *d_DataSpectrum0, *d_KernelSpectrum0, *d_DataSpectrum, *d_KernelSpectrum;
 
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cufftHandle fftPlan;
 
     bool                bRetVal;
@@ -252,6 +259,7 @@ bool test1(void)
     h_ResultCPU = (float *)malloc(dataH * dataW * sizeof(float));
     h_ResultGPU = (float *)malloc(fftH * fftW * sizeof(float));
 
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&d_Data, dataH * dataW * sizeof(float)));
     checkCudaErrors(cudaMalloc((void **)&d_Kernel, kernelH * kernelW * sizeof(float)));
 
@@ -275,9 +283,11 @@ bool test1(void)
     }
 
     printf("...creating C2C FFT plan for %i x %i\n", fftH, fftW / 2);
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cufftPlan2d(&fftPlan, fftH, fftW / 2, CUFFT_C2C));
 
     printf("...uploading to GPU and padding convolution kernel and input data\n");
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(d_Data, h_Data, dataH * dataW * sizeof(float), cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_Kernel, h_Kernel, kernelH * kernelW * sizeof(float), cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemset(d_PaddedData, 0, fftH * fftW * sizeof(float)));
@@ -293,14 +303,17 @@ bool test1(void)
     // Not including kernel transformation into time measurement,
     // since convolution kernel is not changed very frequently
     printf("...transforming convolution kernel\n");
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cufftExecC2C(fftPlan, (cufftComplex *)d_PaddedKernel, (cufftComplex *)d_KernelSpectrum0, FFT_DIR));
     spPostprocess2D(d_KernelSpectrum, d_KernelSpectrum0, fftH, fftW / 2, fftPadding, FFT_DIR);
 
     printf("...running GPU FFT convolution: ");
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
     sdkResetTimer(&hTimer);
     sdkStartTimer(&hTimer);
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cufftExecC2C(fftPlan, (cufftComplex *)d_PaddedData, (cufftComplex *)d_DataSpectrum0, FFT_DIR));
 
     spPostprocess2D(d_DataSpectrum, d_DataSpectrum0, fftH, fftW / 2, fftPadding, FFT_DIR);
@@ -309,12 +322,14 @@ bool test1(void)
 
     checkCudaErrors(cufftExecC2C(fftPlan, (cufftComplex *)d_DataSpectrum0, (cufftComplex *)d_PaddedData, -FFT_DIR));
 
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
     sdkStopTimer(&hTimer);
     double gpuTime = sdkGetTimerValue(&hTimer);
     printf("%f MPix/s (%f ms)\n", (double)dataH * (double)dataW * 1e-6 / (gpuTime * 0.001), gpuTime);
 
     printf("...reading back GPU FFT results\n");
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_ResultGPU, d_PaddedData, fftH * fftW * sizeof(float), cudaMemcpyDeviceToHost));
 
     printf("...running reference CPU convolution\n");
@@ -347,8 +362,10 @@ bool test1(void)
 
     printf("...shutting down\n");
     sdkDeleteTimer(&hTimer);
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cufftDestroy(fftPlan));
 
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(d_KernelSpectrum));
     checkCudaErrors(cudaFree(d_DataSpectrum));
     checkCudaErrors(cudaFree(d_KernelSpectrum0));
@@ -374,6 +391,7 @@ bool test2(void)
 
     fComplex *d_DataSpectrum0, *d_KernelSpectrum0;
 
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cufftHandle fftPlan;
 
     bool                bRetVal;
@@ -396,6 +414,7 @@ bool test2(void)
     h_ResultCPU = (float *)malloc(dataH * dataW * sizeof(float));
     h_ResultGPU = (float *)malloc(fftH * fftW * sizeof(float));
 
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&d_Data, dataH * dataW * sizeof(float)));
     checkCudaErrors(cudaMalloc((void **)&d_Kernel, kernelH * kernelW * sizeof(float)));
 
@@ -417,9 +436,11 @@ bool test2(void)
     }
 
     printf("...creating C2C FFT plan for %i x %i\n", fftH, fftW / 2);
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cufftPlan2d(&fftPlan, fftH, fftW / 2, CUFFT_C2C));
 
     printf("...uploading to GPU and padding convolution kernel and input data\n");
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(d_Data, h_Data, dataH * dataW * sizeof(float), cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_Kernel, h_Kernel, kernelH * kernelW * sizeof(float), cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemset(d_PaddedData, 0, fftH * fftW * sizeof(float)));
@@ -435,23 +456,28 @@ bool test2(void)
     // Not including kernel transformation into time measurement,
     // since convolution kernel is not changed very frequently
     printf("...transforming convolution kernel\n");
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cufftExecC2C(fftPlan, (cufftComplex *)d_PaddedKernel, (cufftComplex *)d_KernelSpectrum0, FFT_DIR));
 
     printf("...running GPU FFT convolution: ");
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
     sdkResetTimer(&hTimer);
     sdkStartTimer(&hTimer);
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cufftExecC2C(fftPlan, (cufftComplex *)d_PaddedData, (cufftComplex *)d_DataSpectrum0, FFT_DIR));
     spProcess2D(d_DataSpectrum0, d_DataSpectrum0, d_KernelSpectrum0, fftH, fftW / 2, FFT_DIR);
     checkCudaErrors(cufftExecC2C(fftPlan, (cufftComplex *)d_DataSpectrum0, (cufftComplex *)d_PaddedData, -FFT_DIR));
 
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
     sdkStopTimer(&hTimer);
     double gpuTime = sdkGetTimerValue(&hTimer);
     printf("%f MPix/s (%f ms)\n", (double)dataH * (double)dataW * 1e-6 / (gpuTime * 0.001), gpuTime);
 
     printf("...reading back GPU FFT results\n");
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_ResultGPU, d_PaddedData, fftH * fftW * sizeof(float), cudaMemcpyDeviceToHost));
 
     printf("...running reference CPU convolution\n");
@@ -485,8 +511,10 @@ bool test2(void)
 
     printf("...shutting down\n");
     sdkDeleteTimer(&hTimer);
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cufftDestroy(fftPlan));
 
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(d_KernelSpectrum0));
     checkCudaErrors(cudaFree(d_DataSpectrum0));
     checkCudaErrors(cudaFree(d_PaddedKernel));

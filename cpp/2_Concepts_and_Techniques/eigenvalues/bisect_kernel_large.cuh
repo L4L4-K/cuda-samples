@@ -260,6 +260,7 @@ __global__ void bisectKernelLarge(float             *g_d,
         all_threads_converged = 1;
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     // for all active threads read intervals from the last level
@@ -278,6 +279,7 @@ __global__ void bisectKernelLarge(float             *g_d,
                                 mid,
                                 all_threads_converged);
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         // check if done
@@ -291,8 +293,10 @@ __global__ void bisectKernelLarge(float             *g_d,
         // use s_left and s_right as scratch space for diagonal and
         // superdiagonal of matrix
         mid_count = computeNumSmallerEigenvalsLarge(
+            // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
             g_d, g_s, n, mid, threadIdx.x, num_threads_active, s_left, s_right, (left == right), cta);
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         // store intervals
@@ -339,6 +343,7 @@ __global__ void bisectKernelLarge(float             *g_d,
         }
 
         // necessary so that compact_second_chunk is up-to-date
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         // perform compaction of chunk where second children are stored
@@ -361,6 +366,7 @@ __global__ void bisectKernelLarge(float             *g_d,
                              is_active_second);
         }
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         // update state variables
@@ -373,13 +379,16 @@ __global__ void bisectKernelLarge(float             *g_d,
             all_threads_converged = 1;
         }
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         if (num_threads_compaction > blockDim.x) {
             break;
         }
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     // generate two lists of intervals; one with intervals that contain one
@@ -391,6 +400,7 @@ __global__ void bisectKernelLarge(float             *g_d,
     unsigned int left_count_2;
     unsigned int right_count_2;
 
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned int tid_2 = tid + blockDim.x;
 
     // cache in per thread registers so that s_left_count and s_right_count
@@ -413,6 +423,7 @@ __global__ void bisectKernelLarge(float             *g_d,
     // eigenvalues
     unsigned short *s_cl_blocking = s_compaction_list_exc;
     // helper compaction list for generating blocks of intervals
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ unsigned short s_cl_helper[2 * MAX_THREADS_BLOCK + 1];
 
     if (0 == tid) {
@@ -421,6 +432,7 @@ __global__ void bisectKernelLarge(float             *g_d,
         s_right_count[0] = 0;
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     // flag if interval contains one or multiple eigenvalues
@@ -461,6 +473,7 @@ __global__ void bisectKernelLarge(float             *g_d,
     scanSumBlocks(tid, tid_2, num_threads_active, num_threads_compaction, s_cl_blocking, s_cl_helper, cta);
 
     // end down sweep of scan
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     unsigned int c_block_iend   = 0;
@@ -486,9 +499,11 @@ __global__ void bisectKernelLarge(float             *g_d,
     scanCompactBlocksStartAddress(tid, tid_2, num_threads_compaction, s_cl_blocking, s_cl_helper, cta);
 
     // finished second scan for s_cl_blocking
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     // determine the global results
+    // JP: この連続する anchor 群では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ unsigned int num_blocks_mult;
     __shared__ unsigned int num_mult;
     __shared__ unsigned int offset_mult_lambda;
@@ -502,6 +517,7 @@ __global__ void bisectKernelLarge(float             *g_d,
         *g_num_blocks_mult = num_blocks_mult;
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     float left_2, right_2;
@@ -536,6 +552,7 @@ __global__ void bisectKernelLarge(float             *g_d,
                         c_sum_block_2,
                         cta);
 
+    // JP: この連続する anchor 群では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     // final adjustment before writing out data to global memory
@@ -675,6 +692,7 @@ __device__ void compactStreamsFinal(const unsigned int tid,
         right_2 = s_right[tid_2];
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     // determine addresses for intervals containing multiple eigenvalues and
@@ -698,6 +716,7 @@ __device__ void compactStreamsFinal(const unsigned int tid,
         }
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     // store compactly in shared mem
@@ -743,6 +762,7 @@ __device__ void scanCompactBlocksStartAddress(const unsigned int tid,
         s_cl_blocking[tid_2] = s_cl_helper[tid_2];
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     // additional scan to compact s_cl_blocking that permits to generate a
@@ -754,6 +774,7 @@ __device__ void scanCompactBlocksStartAddress(const unsigned int tid,
 
     // build scan tree
     for (int d = (num_threads_compaction >> 1); d > 0; d >>= 1) {
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         if (tid < d) {
@@ -768,6 +789,7 @@ __device__ void scanCompactBlocksStartAddress(const unsigned int tid,
     // traverse down tree: first down to level 2 across
     for (int d = 2; d < num_threads_compaction; d <<= 1) {
         offset >>= 1;
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         //
@@ -795,6 +817,7 @@ __device__ void scanSumBlocks(const unsigned int tid,
     // first step of scan to build the sum of elements within each block
     // build up tree
     for (int d = num_threads_compaction >> 1; d > 0; d >>= 1) {
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         if (tid < d) {
@@ -811,6 +834,7 @@ __device__ void scanSumBlocks(const unsigned int tid,
     // traverse down tree
     for (int d = 2; d < (num_threads_compaction - 1); d <<= 1) {
         offset >>= 1;
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         if (tid < (d - 1)) {
@@ -821,6 +845,7 @@ __device__ void scanSumBlocks(const unsigned int tid,
         }
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     if (0 == tid) {
@@ -855,6 +880,7 @@ __device__ void scanInitial(const unsigned int tid,
 
     // build scan tree
     for (int d = (num_threads_compaction >> 1); d > 0; d >>= 1) {
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         if (tid < d) {
@@ -905,6 +931,7 @@ __device__ void scanInitial(const unsigned int tid,
     // construction
     for (int d = 2; d < num_threads_compaction; d <<= 1) {
         offset >>= 1;
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
         //
@@ -944,6 +971,7 @@ __device__ void storeNonEmptyIntervalsLarge(unsigned int         addr,
         storeInterval(addr, s_left, s_right, s_left_count, s_right_count, left, mid, left_count, mid_count, epsilon);
 
         is_active_second               = 1;
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         s_compaction_list[threadIdx.x] = 1;
         atomicExch(&compact_second_chunk, 1);
     }

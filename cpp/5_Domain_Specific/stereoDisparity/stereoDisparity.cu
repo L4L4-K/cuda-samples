@@ -203,10 +203,12 @@ void runTest(int argc, char **argv)
     checkCudaErrors(cudaEventRecord(start, NULL));
 
     // launch the stereoDisparity kernel
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     stereoDisparityKernel<<<numBlocks, numThreads>>>(
         d_img0, d_img1, d_odata, w, h, minDisp, maxDisp, tex2Dleft, tex2Dright);
 
     // Record the stop event
+    // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaEventRecord(stop, NULL));
 
     // Wait for the stop event to complete
@@ -219,6 +221,7 @@ void runTest(int argc, char **argv)
     checkCudaErrors(cudaEventElapsedTime(&msecTotal, start, stop));
 
     // Copy result from device to host for verification
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_odata, d_odata, memSize, cudaMemcpyDeviceToHost));
 
     printf("Input Size  [%dx%d], ", w, h);

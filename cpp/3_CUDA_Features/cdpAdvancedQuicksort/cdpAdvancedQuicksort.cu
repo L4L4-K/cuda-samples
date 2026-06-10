@@ -277,6 +277,7 @@ __global__ void qsort_warp(unsigned        *indata,
                         atomicData->lt_offset = atomicData->gt_offset = atomicData->sorted_count = 0;
                         unsigned int numblocks =
                             (unsigned int)(lt_len + (QSORT_BLOCKSIZE - 1)) >> QSORT_BLOCKSIZE_SHIFT;
+                        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
                         qsort_warp<<<numblocks, QSORT_BLOCKSIZE, 0, lstream>>>(
                             outdata, indata, offset, lt_len, atomicData, atomicDataStack, !source_is_indata, depth + 1);
                     }
@@ -287,6 +288,7 @@ __global__ void qsort_warp(unsigned        *indata,
                 // make sure the final stage ends up in the correct (original) buffer.
                 // We launch the smallest power-of-2 number of threads that we can.
                 unsigned int bitonic_len = 1 << (__qsflo(lt_len - 1U) + 1);
+                // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
                 bitonicsort<<<1, bitonic_len, 0, lstream>>>(
                     outdata, source_is_indata ? indata : outdata, offset, lt_len);
             }
@@ -303,6 +305,7 @@ __global__ void qsort_warp(unsigned        *indata,
                 // If we've exceeded maximum depth, fall through to backup
                 // big_bitonicsort
                 if (depth >= QSORT_MAXDEPTH)
+                    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
                     big_bitonicsort<<<1, BITONICSORT_LEN, 0, rstream>>>(
                         outdata, source_is_indata ? indata : outdata, indata, offset + lt_len, gt_len);
                 else {
@@ -313,6 +316,7 @@ __global__ void qsort_warp(unsigned        *indata,
                         atomicData->lt_offset = atomicData->gt_offset = atomicData->sorted_count = 0;
                         unsigned int numblocks =
                             (unsigned int)(gt_len + (QSORT_BLOCKSIZE - 1)) >> QSORT_BLOCKSIZE_SHIFT;
+                        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
                         qsort_warp<<<numblocks, QSORT_BLOCKSIZE, 0, rstream>>>(outdata,
                                                                                indata,
                                                                                offset + lt_len,
@@ -326,6 +330,7 @@ __global__ void qsort_warp(unsigned        *indata,
             }
             else if (gt_len > 1) {
                 unsigned int bitonic_len = 1 << (__qsflo(gt_len - 1U) + 1);
+                // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
                 bitonicsort<<<1, bitonic_len, 0, rstream>>>(
                     outdata, source_is_indata ? indata : outdata, offset + lt_len, gt_len);
             }
@@ -351,6 +356,7 @@ __global__ void qsort_warp(unsigned        *indata,
 //  Returns the time elapsed for the sort.
 //
 ////////////////////////////////////////////////////////////////////////////////
+// JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
 float run_quicksort_cdp(unsigned *gpudata, unsigned *scratchdata, unsigned int count, cudaStream_t stream)
 {
     unsigned int stacksize = QSORT_STACK_ELEMS;
@@ -365,6 +371,7 @@ float run_quicksort_cdp(unsigned *gpudata, unsigned *scratchdata, unsigned int c
     // Initialise everything to where it needs to be.
     qsortRingbuf  buf;
     qsortRingbuf *ringbuf;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&ringbuf, sizeof(qsortRingbuf)));
     buf.head      = 1; // We start with one allocation
     buf.tail      = 0;
@@ -372,9 +379,11 @@ float run_quicksort_cdp(unsigned *gpudata, unsigned *scratchdata, unsigned int c
     buf.max       = 0;
     buf.stacksize = stacksize;
     buf.stackbase = gpustack;
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(ringbuf, &buf, sizeof(buf), cudaMemcpyHostToDevice));
 
     // Timing events...
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaEvent_t ev1, ev2;
     checkCudaErrors(cudaEventCreate(&ev1));
     checkCudaErrors(cudaEventCreate(&ev2));
@@ -383,6 +392,7 @@ float run_quicksort_cdp(unsigned *gpudata, unsigned *scratchdata, unsigned int c
     // Now we trivially launch the qsort kernel
     if (count > BITONICSORT_LEN) {
         unsigned int numblocks = (unsigned int)(count + (QSORT_BLOCKSIZE - 1)) >> QSORT_BLOCKSIZE_SHIFT;
+        // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         qsort_warp<<<numblocks, QSORT_BLOCKSIZE, 0, stream>>>(
             gpudata, scratchdata, 0U, count, gpustack, ringbuf, true, 0);
     }
@@ -400,9 +410,11 @@ float run_quicksort_cdp(unsigned *gpudata, unsigned *scratchdata, unsigned int c
     if (cudaPeekAtLastError() != cudaSuccess)
         printf("Launch failure: %s\n", cudaGetErrorString(cudaGetLastError()));
     else
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         checkCudaErrors(cudaEventElapsedTime(&elapse, ev1, ev2));
 
     // Sanity check that the stack allocator is doing the right thing
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(&buf, ringbuf, sizeof(*ringbuf), cudaMemcpyDeviceToHost));
 
     if (count > BITONICSORT_LEN && buf.head != buf.tail) {
@@ -430,6 +442,7 @@ int run_qsort(unsigned int size, int seed, int debug, int loop, int verbose)
 
     // Create and set up our test
     unsigned *gpudata, *scratchdata;
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&gpudata, size * sizeof(unsigned)));
     checkCudaErrors(cudaMalloc((void **)&scratchdata, size * sizeof(unsigned)));
 
@@ -469,6 +482,7 @@ int run_qsort(unsigned int size, int seed, int debug, int loop, int verbose)
         if (verbose)
             printf("\n");
 
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemcpy(gpudata, data, size * sizeof(unsigned), cudaMemcpyHostToDevice));
 
         // So we're now populated and ready to go! We size our launch as
@@ -478,9 +492,11 @@ int run_qsort(unsigned int size, int seed, int debug, int loop, int verbose)
         elapse = run_quicksort_cdp(gpudata, scratchdata, size, NULL);
 
         // run_bitonicsort<SORTTYPE>(gpudata, scratchdata, size, verbose);
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaDeviceSynchronize());
 
         // Copy back the data and verify correct sort
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemcpy(data, gpudata, size * sizeof(unsigned), cudaMemcpyDeviceToHost));
 
         if (verbose) {
@@ -518,6 +534,7 @@ int run_qsort(unsigned int size, int seed, int debug, int loop, int verbose)
     }
 
     // Release everything and we're done
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(scratchdata));
     checkCudaErrors(cudaFree(gpudata));
     delete (data);

@@ -76,6 +76,7 @@ sumReduce(T *sum, T *sum2, cg::thread_block &cta, cg::thread_block_tile<32> &til
         __TOptionValue t = {beta, beta2};
         *d_CallValue     = t;
     }
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 }
 

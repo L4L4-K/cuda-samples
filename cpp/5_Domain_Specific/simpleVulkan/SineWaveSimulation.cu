@@ -68,6 +68,7 @@ void SineWaveSimulation::initCudaLaunchConfig(int device)
 
     // We don't need large block sizes, since there's not much inter-thread
     // communication
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     m_threads = prop.warpSize;
 
     // Use the occupancy calculator and fill the gpu as best as we can

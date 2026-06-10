@@ -174,11 +174,13 @@ int main(int argc, char **argv)
 
     // execute the kernel
     for (unsigned int layer = 0; layer < num_layers; layer++)
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         transformKernel<<<dimGrid, dimBlock, 0>>>(d_data, width, height, layer, tex);
 
     // check if kernel execution generated an error
     getLastCudaError("Kernel execution failed");
 
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
     sdkStopTimer(&timer);
     printf("Processing time: %.3f msec\n", sdkGetTimerValue(&timer));
@@ -188,6 +190,7 @@ int main(int argc, char **argv)
     // allocate mem for the result on host side
     float *h_odata = (float *)malloc(size);
     // copy result from device to host
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_odata, d_data, size, cudaMemcpyDeviceToHost));
 
     // write regression file if necessary
@@ -209,6 +212,7 @@ int main(int argc, char **argv)
     free(h_data_ref);
     free(h_odata);
 
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaDestroyTextureObject(tex));
     checkCudaErrors(cudaFree(d_data));
     checkCudaErrors(cudaFreeArray(cu_3darray));

@@ -61,6 +61,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "Utilities"))
 
 try:
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     import cupy as cp
     import numpy as np
     from cuda.core import (
@@ -98,6 +99,7 @@ def check_ipc_support(device) -> bool:
 
 def child_worker(q_in, q_out, n_elements, parent_seed, child_seed):
     """Runs in a separate process. Verifies and modifies the shared buffer."""
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     device = Device(0)
     device.set_current()
     pid = mp.current_process().pid
@@ -112,6 +114,7 @@ def child_worker(q_in, q_out, n_elements, parent_seed, child_seed):
     )
 
     # Build a zero-copy CuPy view of the shared device memory.
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     arr = cp.from_dlpack(buffer).view(dtype=cp.float32)
 
     # Verify the parent's pattern.
@@ -149,6 +152,7 @@ def main() -> int:
     # children inherit a corrupt CUDA state. Always use ``spawn``.
     mp.set_start_method("spawn", force=True)
 
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     device = Device(args.device)
     device.set_current()
     print_gpu_info(device)

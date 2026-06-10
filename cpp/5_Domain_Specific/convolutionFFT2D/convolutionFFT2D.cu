@@ -132,6 +132,7 @@ extern "C" void padDataClampToBorder(float *d_Dst,
     checkCudaErrors(cudaCreateTextureObject(&texFloat, &texRes, &texDescr, NULL));
 #endif
 
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     padDataClampToBorder_kernel<<<grid, threads>>>(d_Dst,
                                                    d_Src,
                                                    fftH,
@@ -150,6 +151,7 @@ extern "C" void padDataClampToBorder(float *d_Dst,
     getLastCudaError("padDataClampToBorder_kernel<<<>>> execution failed\n");
 
 #if (USE_TEXTURE)
+    // JP: この anchor では CUDA resource lifetime end です。未完了 work が残っていないか確認し、確保/作成/登録と対応する API で閉じます。
     checkCudaErrors(cudaDestroyTextureObject(texFloat));
 #endif
 }
@@ -163,6 +165,7 @@ extern "C" void modulateAndNormalize(fComplex *d_Dst, fComplex *d_Src, int fftH,
     assert(fftW % 2 == 0);
     const int dataSize = fftH * (fftW / 2 + padding);
 
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     modulateAndNormalize_kernel<<<iDivUp(dataSize, 256), 256>>>(d_Dst, d_Src, dataSize, 1.0f / (float)(fftW * fftH));
     getLastCudaError("modulateAndNormalize() execution failed\n");
 }
@@ -209,6 +212,7 @@ extern "C" void spPostprocess2D(void *d_Dst, void *d_Src, uint DY, uint DX, uint
     checkCudaErrors(cudaCreateTextureObject(&texComplex, &texRes, &texDescr, NULL));
 #endif
 
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     spPostprocess2D_kernel<<<iDivUp(threadCount, BLOCKDIM), BLOCKDIM>>>((fComplex *)d_Dst,
                                                                         (fComplex *)d_Src,
                                                                         DY,
@@ -224,6 +228,7 @@ extern "C" void spPostprocess2D(void *d_Dst, void *d_Src, uint DY, uint DX, uint
     getLastCudaError("spPostprocess2D_kernel<<<>>> execution failed\n");
 
 #if (USE_TEXTURE)
+    // JP: この anchor では CUDA resource lifetime end です。未完了 work が残っていないか確認し、確保/作成/登録と対応する API で閉じます。
     checkCudaErrors(cudaDestroyTextureObject(texComplex));
 #endif
 }
@@ -263,6 +268,7 @@ extern "C" void spPreprocess2D(void *d_Dst, void *d_Src, uint DY, uint DX, uint 
 
     checkCudaErrors(cudaCreateTextureObject(&texComplex, &texRes, &texDescr, NULL));
 #endif
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     spPreprocess2D_kernel<<<iDivUp(threadCount, BLOCKDIM), BLOCKDIM>>>((fComplex *)d_Dst,
                                                                        (fComplex *)d_Src,
                                                                        DY,
@@ -278,6 +284,7 @@ extern "C" void spPreprocess2D(void *d_Dst, void *d_Src, uint DY, uint DX, uint 
     getLastCudaError("spPreprocess2D_kernel<<<>>> execution failed\n");
 
 #if (USE_TEXTURE)
+    // JP: この anchor では CUDA resource lifetime end です。未完了 work が残っていないか確認し、確保/作成/登録と対応する API で閉じます。
     checkCudaErrors(cudaDestroyTextureObject(texComplex));
 #endif
 }
@@ -335,6 +342,7 @@ extern "C" void spProcess2D(void *d_Dst, void *d_SrcA, void *d_SrcB, uint DY, ui
 
     checkCudaErrors(cudaCreateTextureObject(&texComplexB, &texRes, &texDescr, NULL));
 #endif
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     spProcess2D_kernel<<<iDivUp(threadCount, BLOCKDIM), BLOCKDIM>>>((fComplex *)d_Dst,
                                                                     (fComplex *)d_SrcA,
                                                                     (fComplex *)d_SrcB,
@@ -352,6 +360,7 @@ extern "C" void spProcess2D(void *d_Dst, void *d_SrcA, void *d_SrcB, uint DY, ui
     getLastCudaError("spProcess2D_kernel<<<>>> execution failed\n");
 
 #if (USE_TEXTURE)
+    // JP: この連続する anchor 群では CUDA resource lifetime end です。未完了 work が残っていないか確認し、確保/作成/登録と対応する API で閉じます。
     checkCudaErrors(cudaDestroyTextureObject(texComplexA));
     checkCudaErrors(cudaDestroyTextureObject(texComplexB));
 #endif

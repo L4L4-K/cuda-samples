@@ -66,6 +66,7 @@ extern double JacobiMethodGpuCudaGraphExecUpdate(const float  *A,
                                                  const int     max_iter,
                                                  double       *x,
                                                  double       *x_new,
+                                                 // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
                                                  cudaStream_t  stream);
 
 // Run the Jacobi method for A*x = b on GPU without CUDA Graph.
@@ -75,6 +76,7 @@ extern double JacobiMethodGpu(const float  *A,
                               const int     max_iter,
                               double       *x,
                               double       *x_new,
+                              // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
                               cudaStream_t  stream);
 
 // creates N_ROWS x N_ROWS matrix A with N_ROWS+1 on the diagonal and 1

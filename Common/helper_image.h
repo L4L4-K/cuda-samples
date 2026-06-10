@@ -518,6 +518,7 @@ inline bool sdkWriteFile(const char *filename, const T *data, unsigned int len,
 //! @param epsilon    epsilon to use for the comparison
 //////////////////////////////////////////////////////////////////////////////
 template <class T, class S>
+// JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
 inline bool compareData(const T *reference, const T *data,
                         const unsigned int len, const S epsilon,
                         const float threshold) {
@@ -572,6 +573,7 @@ inline bool compareData(const T *reference, const T *data,
 //! @param epsilon    threshold % of (# of bytes) for pass/fail
 //////////////////////////////////////////////////////////////////////////////
 template <class T, class S>
+// JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
 inline bool compareDataAsFloatThreshold(const T *reference, const T *data,
                                         const unsigned int len, const S epsilon,
                                         const float threshold) {
@@ -619,6 +621,7 @@ inline void sdkDumpBin(void *data, unsigned int bytes, const char *filename) {
   fclose(fp);
 }
 
+// JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
 inline bool sdkCompareBin2BinUint(const char *src_file, const char *ref_file,
                                   unsigned int nelements, const float epsilon,
                                   const float threshold, char *exec_path) {
@@ -677,6 +680,7 @@ inline bool sdkCompareBin2BinUint(const char *src_file, const char *ref_file,
       printf("   ref_file <%s>, size=%d bytes\n", ref_file_path,
              static_cast<int>(fsize));
 
+      // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
       if (!compareData<unsigned int, float>(ref_buffer, src_buffer, nelements,
                                             epsilon, threshold)) {
         error_count++;
@@ -707,6 +711,7 @@ inline bool sdkCompareBin2BinUint(const char *src_file, const char *ref_file,
   return (error_count == 0);  // returns true if all pixels pass
 }
 
+// JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
 inline bool sdkCompareBin2BinFloat(const char *src_file, const char *ref_file,
                                    unsigned int nelements, const float epsilon,
                                    const float threshold, char *exec_path) {
@@ -761,6 +766,7 @@ inline bool sdkCompareBin2BinFloat(const char *src_file, const char *ref_file,
       printf("   ref_file <%s>, size=%d bytes\n", ref_file_path,
              static_cast<int>(fsize * sizeof(float)));
 
+      // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
       if (!compareDataAsFloatThreshold<float, float>(
               ref_buffer, src_buffer, nelements, epsilon, threshold)) {
         error_count++;
@@ -791,6 +797,7 @@ inline bool sdkCompareBin2BinFloat(const char *src_file, const char *ref_file,
   return (error_count == 0);  // returns true if all pixels pass
 }
 
+// JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
 inline bool sdkCompareL2fe(const float *reference, const float *data,
                            const unsigned int len, const float epsilon) {
   assert(epsilon >= 0);
@@ -862,6 +869,7 @@ inline bool sdkLoadPPM4ub(const char *file, unsigned char **data,
   }
 }
 
+// JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
 inline bool sdkComparePPM(const char *src_file, const char *ref_file,
                           const float epsilon, const float threshold,
                           bool verboseErrors) {
@@ -913,6 +921,7 @@ inline bool sdkComparePPM(const char *src_file, const char *ref_file,
               << threshold * 100 << "%)\n";
   }
 
+  // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
   if (compareData(ref_data, src_data, src_width * src_height * 4, epsilon,
                   threshold) == false) {
     error_count = 1;
@@ -932,6 +941,7 @@ inline bool sdkComparePPM(const char *src_file, const char *ref_file,
   return (error_count == 0) ? true : false;
 }
 
+// JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
 inline bool sdkComparePGM(const char *src_file, const char *ref_file,
                           const float epsilon, const float threshold,
                           bool verboseErrors) {
@@ -982,6 +992,7 @@ inline bool sdkComparePGM(const char *src_file, const char *ref_file,
               << src_height << ") epsilon(" << epsilon << "), threshold("
               << threshold * 100 << "%)\n";
 
+  // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
   if (compareData(ref_data, src_data, src_width * src_height, epsilon,
                   threshold) == false) {
     error_count = 1;

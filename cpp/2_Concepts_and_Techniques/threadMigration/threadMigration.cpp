@@ -118,6 +118,7 @@ bool runTest(int argc, char **argv);
 
 // This sample uses the Driver API interface.  The CUDA context needs
 // to be setup and the CUDA module (CUBIN) is built by NVCC
+// JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
 static CUresult InitCUDAContext(CUDAContext *pContext, CUdevice hcuDevice, int deviceID, char **argv)
 {
     CUcontext         hcuContext      = 0;
@@ -162,6 +163,7 @@ static CUresult InitCUDAContext(CUDAContext *pContext, CUdevice hcuDevice, int d
     }
 
     // Here we must release the CUDA context from the thread context
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     status = cuCtxPopCurrent(NULL);
 
     if (CUDA_SUCCESS != status) {
@@ -194,6 +196,7 @@ void *ThreadProc(CUDAContext *pParams)
            pParams->threadNum);
 
     // cuCtxPushCurrent: Attach the caller CUDA context to the thread context.
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     CUresult status = cuCtxPushCurrent(pParams->hcuContext);
 
     if (CUDA_SUCCESS != status) {
@@ -235,6 +238,7 @@ void *ThreadProc(CUDAContext *pParams)
             CU_LAUNCH_PARAM_BUFFER_POINTER, argBuffer, CU_LAUNCH_PARAM_BUFFER_SIZE, &offset, CU_LAUNCH_PARAM_END};
 
         // new CUDA 4.0 Driver API Kernel launch call
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         status = cuLaunchKernel(pParams->hcuFunction, 1, 1, 1, 32, 1, 1, 0, 0, NULL, (void **)&kernel_launch_config);
 
         if (CUDA_SUCCESS != status) {
@@ -295,6 +299,7 @@ bool FinalErrorCheck(CUDAContext *pContext, int NumThreads, int deviceCount)
     else {
         for (int iDevice = 0; iDevice < deviceCount; iDevice++) {
             // cuCtxDestroy called on current context or a floating context
+            // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
             if (CUDA_SUCCESS != cuCtxDestroy(pContext[iDevice].hcuContext))
                 return false;
         }
@@ -344,6 +349,7 @@ bool runTest(int argc, char **argv)
     int      deviceCount;
     int      hcuDevice = 0;
     CUresult status;
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     status = cuInit(0);
 
     if (CUDA_SUCCESS != status)
@@ -372,6 +378,7 @@ bool runTest(int argc, char **argv)
         if (CUDA_SUCCESS != status)
             return false;
 
+        // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
         status = cuDeviceGetName(szName, 256, hcuDevice);
 
         if (CUDA_SUCCESS != status)

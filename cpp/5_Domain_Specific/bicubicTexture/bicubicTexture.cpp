@@ -216,6 +216,7 @@ void display()
 
     // map PBO to get CUDA device pointer
     uchar4 *d_output;
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsMapResources(1, &cuda_pbo_resource, 0));
     size_t num_bytes;
     checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&d_output, &num_bytes, cuda_pbo_resource));
@@ -427,6 +428,7 @@ void reshape(int x, int y)
 void cleanup()
 {
     freeTexture();
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsUnregisterResource(cuda_pbo_resource));
 
     glDeleteBuffers(1, &pbo);
@@ -447,6 +449,7 @@ void initGLBuffers()
 {
     if (pbo) {
         // delete old buffer
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         checkCudaErrors(cudaGraphicsUnregisterResource(cuda_pbo_resource));
         glDeleteBuffers(1, &pbo);
     }
@@ -457,6 +460,7 @@ void initGLBuffers()
     glBufferData(GL_PIXEL_UNPACK_BUFFER_ARB, width * height * sizeof(uchar4), 0, GL_STREAM_DRAW_ARB);
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, 0);
 
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsGLRegisterBuffer(&cuda_pbo_resource, pbo, cudaGraphicsMapFlagsWriteDiscard));
 
 #if USE_BUFFER_TEX
@@ -514,6 +518,7 @@ void runBenchmark(int iterations)
     sdkCreateTimer(&timer);
 
     uchar4 *d_output;
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsMapResources(1, &cuda_pbo_resource, 0));
     size_t num_bytes;
     checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&d_output, &num_bytes, cuda_pbo_resource));
@@ -529,6 +534,7 @@ void runBenchmark(int iterations)
     sdkStopTimer(&timer);
     float time = sdkGetTimerValue(&timer) / (float)iterations;
 
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsUnmapResources(1, &cuda_pbo_resource, 0));
 
     printf("time: %0.3f ms, %f Mpixels/sec\n", time, (width * height / (time * 0.001f)) / 1e6);

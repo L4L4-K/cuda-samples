@@ -60,6 +60,7 @@ __device__ void                checkProducerDataGPU(char *data, int size, char e
 
 __device__ void checkConsumerDataGPU(char *data, int size, char expectedVal, int frameNumber)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if ((data[blockDim.x * blockIdx.x + threadIdx.x] != expectedVal) && (!errorFound)) {
         printf("Consumer FOUND:%d expected: %d at %d for trial %d %d\n",
                data[blockDim.x * blockIdx.x + threadIdx.x],
@@ -73,6 +74,7 @@ __device__ void checkConsumerDataGPU(char *data, int size, char expectedVal, int
     }
 }
 
+// JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
 __global__ void writeDataToBuffer(char *pSrc, char newVal) { pSrc[blockDim.x * blockIdx.x + threadIdx.x] = newVal; }
 
 __global__ void testKernelConsumer(char *pSrc, char size, char expectedVal, char newVal, int frameNumber)
@@ -107,6 +109,7 @@ cudaError_t cudaProducer_filter(cudaStream_t pStream,
     return cudaSuccess;
 };
 
+// JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
 cudaError_t cudaConsumer_filter(cudaStream_t cStream,
                                 char        *pSrc,
                                 int          width,
@@ -115,6 +118,7 @@ cudaError_t cudaConsumer_filter(cudaStream_t cStream,
                                 char         newVal,
                                 int          frameNumber)
 {
+    // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     testKernelConsumer<<<(width * height) / 1024, 1024, 1, cStream>>>(
         pSrc, width * height, expectedVal, newVal, frameNumber);
     writeDataToBuffer<<<(width * height) / 1024, 1024, 1, cStream>>>(pSrc, newVal);

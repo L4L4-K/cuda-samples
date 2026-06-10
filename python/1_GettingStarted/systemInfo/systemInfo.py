@@ -196,6 +196,7 @@ def main() -> int:
         )
         return 0
 
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     devices = [system.Device(index=i) for i in range(num_devices)]
     for device in devices:
         print_device_info(device)

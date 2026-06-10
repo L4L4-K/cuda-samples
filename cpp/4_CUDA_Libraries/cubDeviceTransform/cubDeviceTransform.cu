@@ -107,6 +107,7 @@ static bool run_n_to_m_transform()
                                                     cuda::std::tuple{sum.begin(), diff.begin()},
                                                     a.size(),
                                                     op));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
 
     thrust::host_vector<int> ha = a, hb = b, got_sum = sum, got_diff = diff;

@@ -112,6 +112,7 @@ int basicStreamOrderedAllocation(const int dev, const int nelem, const float *a,
     if (errorNorm / refNorm < 1.e-6f)
         printf("basicStreamOrderedAllocation PASSED\n");
 
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamDestroy(stream));
 
     return errorNorm / refNorm < 1.e-6f ? EXIT_SUCCESS : EXIT_FAILURE;
@@ -127,6 +128,7 @@ int streamOrderedAllocationPostSync(const int dev, const int nelem, const float 
     float  errorNorm, refNorm, ref, diff;
     size_t bytes = nelem * sizeof(float);
 
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaStream_t  stream;
     cudaMemPool_t memPool;
     cudaEvent_t   start, end;
@@ -146,22 +148,29 @@ int streamOrderedAllocationPostSync(const int dev, const int nelem, const float 
     checkCudaErrors(cudaMemPoolSetAttribute(memPool, cudaMemPoolAttrReleaseThreshold, (void *)&thresholdVal));
 
     // Record the start event
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaEventRecord(start, stream));
     for (int i = 0; i < MAX_ITER; i++) {
         checkCudaErrors(cudaMallocAsync(&d_a, bytes, stream));
         checkCudaErrors(cudaMallocAsync(&d_b, bytes, stream));
         checkCudaErrors(cudaMallocAsync(&d_c, bytes, stream));
+        // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemcpyAsync(d_a, a, bytes, cudaMemcpyHostToDevice, stream));
         checkCudaErrors(cudaMemcpyAsync(d_b, b, bytes, cudaMemcpyHostToDevice, stream));
 
         dim3 block(256);
         dim3 grid((unsigned int)ceil(nelem / (float)block.x));
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         vectorAddGPU<<<grid, block, 0, stream>>>(d_a, d_b, d_c, nelem);
 
+        // JP: この連続する anchor 群では CUDA resource lifetime end です。未完了 work が残っていないか確認し、確保/作成/登録と対応する API で閉じます。
         checkCudaErrors(cudaFreeAsync(d_a, stream));
         checkCudaErrors(cudaFreeAsync(d_b, stream));
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemcpyAsync(c, d_c, bytes, cudaMemcpyDeviceToHost, stream));
+        // JP: この anchor では CUDA resource lifetime end です。未完了 work が残っていないか確認し、確保/作成/登録と対応する API で閉じます。
         checkCudaErrors(cudaFreeAsync(d_c, stream));
+        // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaStreamSynchronize(stream));
     }
     checkCudaErrors(cudaEventRecord(end, stream));
@@ -189,6 +198,7 @@ int streamOrderedAllocationPostSync(const int dev, const int nelem, const float 
     if (errorNorm / refNorm < 1.e-6f)
         printf("streamOrderedAllocationPostSync PASSED\n");
 
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamDestroy(stream));
 
     return errorNorm / refNorm < 1.e-6f ? EXIT_SUCCESS : EXIT_FAILURE;

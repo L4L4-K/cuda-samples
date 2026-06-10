@@ -89,6 +89,7 @@ RNG::RNG(unsigned long prngSeed, unsigned int qrngDimensions, unsigned int nSamp
     }
 
     // Create the Random Number Generators
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     curandResult = curandCreateGenerator(&m_prng, CURAND_RNG_PSEUDO_XORWOW);
 
     if (curandResult != CURAND_STATUS_SUCCESS) {
@@ -124,6 +125,7 @@ RNG::RNG(unsigned long prngSeed, unsigned int qrngDimensions, unsigned int nSamp
 
 RNG::~RNG()
 {
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     curandDestroyGenerator(m_prng);
     curandDestroyGenerator(m_qrng);
     curandDestroyGenerator(m_sqrng);
@@ -144,6 +146,7 @@ void RNG::generateBatch(void)
     using std::string;
 
     cudaError_t    cudaResult;
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     curandStatus_t curandResult;
 
     // Generate random numbers
@@ -231,6 +234,7 @@ void RNG::resetSeed(void)
 {
     using std::runtime_error;
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     curandStatus_t curandResult;
     curandResult = curandSetPseudoRandomGeneratorSeed(m_prng, m_prngSeed);
 
@@ -272,6 +276,7 @@ void RNG::updateDimensions(void)
 {
     using std::runtime_error;
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     curandStatus_t curandResult;
     curandResult = curandSetQuasiRandomGeneratorDimensions(m_qrng, m_qrngDimensions);
 

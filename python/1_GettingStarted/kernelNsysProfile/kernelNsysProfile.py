@@ -54,6 +54,7 @@ import sys
 from pathlib import Path
 
 try:
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     import cupy as cp
     import numpy as np
     import nvtx
@@ -108,6 +109,7 @@ def get_cuda_core_kernels(device):
     Returns:
         dict: Dictionary of compiled kernels
     """
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     from cuda.core import Program, ProgramOptions
 
     # Compile all kernels at once
@@ -163,6 +165,7 @@ def run(size):
     alpha = 2.5
 
     # Initialize random seed
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     rng = cp.random.default_rng(42)
 
     # =================================================================
@@ -216,6 +219,7 @@ def run(size):
                     a_gpu.data.ptr,
                     b_gpu.data.ptr,
                     c_cuda.data.ptr,
+                    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
                     cp.uint64(size),
                 )
                 stream.sync()
@@ -230,6 +234,7 @@ def run(size):
                     np.float32(alpha),
                     a_gpu.data.ptr,
                     y_cuda.data.ptr,
+                    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
                     cp.uint64(size),
                 )
                 stream.sync()
@@ -268,6 +273,7 @@ def run(size):
             dev.sync()
 
         with nvtx.annotate("Vector Transform (Reference)", color="cyan"):
+            # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
             transform_cupy = cp.sqrt(a_gpu * a_gpu + 1.0) + cp.sin(a_gpu)
             dev.sync()
 

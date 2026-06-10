@@ -188,6 +188,7 @@ public:
 
     static void selectDemo(int index) { m_singleton->_selectDemo(index); }
 
+    // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
     static bool compareResults(int numBodies) { return m_singleton->_compareResults(numBodies); }
 
     static void runBenchmark(int iterations) { m_singleton->_runBenchmark(iterations); }
@@ -248,6 +249,7 @@ public:
         m_singleton->m_nbody->setArray(BODYSYSTEM_POSITION, m_singleton->m_hPos);
         m_singleton->m_nbody->setArray(BODYSYSTEM_VELOCITY, m_singleton->m_hVel);
 
+        // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
         if (!benchmark && !useCpu && !compareToCPU) {
             m_singleton->_resetRenderer();
         }
@@ -302,6 +304,7 @@ private:
 
         sdkDeleteTimer(&demoTimer);
 
+        // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
         if (!benchmark && !compareToCPU)
             delete m_renderer;
     }
@@ -339,11 +342,13 @@ private:
             sdkStartTimer(&timer);
         }
         else {
+            // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
             checkCudaErrors(cudaEventCreate(&startEvent));
             checkCudaErrors(cudaEventCreate(&stopEvent));
             checkCudaErrors(cudaEventCreate(&hostMemSyncEvent));
         }
 
+        // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
         if (!benchmark && !compareToCPU) {
             m_renderer = new ParticleRenderer;
             _resetRenderer();
@@ -445,6 +450,7 @@ private:
             sdkStartTimer(&timer);
         }
         else {
+            // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
             checkCudaErrors(cudaEventRecord(startEvent, 0));
         }
 
@@ -460,6 +466,7 @@ private:
             sdkStartTimer(&timer);
         }
         else {
+            // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
             checkCudaErrors(cudaEventRecord(stopEvent, 0));
             checkCudaErrors(cudaEventSynchronize(stopEvent));
             checkCudaErrors(cudaEventElapsedTime(&milliseconds, startEvent, stopEvent));
@@ -481,6 +488,7 @@ private:
 void finalize()
 {
     if (!useCpu) {
+        // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         checkCudaErrors(cudaEventDestroy(startEvent));
         checkCudaErrors(cudaEventDestroy(stopEvent));
         checkCudaErrors(cudaEventDestroy(hostMemSyncEvent));
@@ -497,6 +505,7 @@ template <> NBodyDemo<float>  *NBodyDemo<float>::m_singleton  = 0;
 
 template <typename T_new, typename T_old> void switchDemoPrecision()
 {
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     cudaDeviceSynchronize();
 
     fp64                = !fp64;
@@ -518,6 +527,7 @@ template <typename T_new, typename T_old> void switchDemoPrecision()
 
     NBodyDemo<T_new>::setArrays(newPos, newVel);
 
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     cudaDeviceSynchronize();
 
     delete[] oldPos;
@@ -646,6 +656,7 @@ void display()
         updateSimulation();
 
         if (!useCpu) {
+            // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
             cudaEventRecord(hostMemSyncEvent,
                             0); // insert an event to wait on before rendering
         }
@@ -725,6 +736,7 @@ void display()
             sdkResetTimer(&timer);
         }
         else {
+            // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
             checkCudaErrors(cudaEventRecord(stopEvent, 0));
             checkCudaErrors(cudaEventSynchronize(stopEvent));
             checkCudaErrors(cudaEventElapsedTime(&milliseconds, startEvent, stopEvent));
@@ -753,6 +765,7 @@ void display()
 
         // restart timer
         if (!useCpu) {
+            // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
             checkCudaErrors(cudaEventRecord(startEvent, 0));
         }
     }
@@ -1007,6 +1020,7 @@ int main(int argc, char **argv)
 
     benchmark = (checkCmdLineFlag(argc, (const char **)argv, "benchmark") != 0);
 
+    // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
     compareToCPU = ((checkCmdLineFlag(argc, (const char **)argv, "compare") != 0)
                     || (checkCmdLineFlag(argc, (const char **)argv, "qatest") != 0));
 
@@ -1074,6 +1088,7 @@ int main(int argc, char **argv)
 
     if (useCpu) {
         useHostMem     = true;
+        // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
         compareToCPU   = false;
         bSupportDouble = true;
 
@@ -1085,6 +1100,7 @@ int main(int argc, char **argv)
     }
 
     // Initialize GL and GLUT if necessary
+    // JP: この連続する anchor 群では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
     if (!benchmark && !compareToCPU) {
         initGL(&argc, argv);
         initParameters();
@@ -1206,6 +1222,7 @@ int main(int argc, char **argv)
         numBodies = 4096;
 #endif
     else if (numDevsRequested == 1) {
+        // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
         numBodies = compareToCPU ? 4096 : blockSize * 4 * props.multiProcessorCount;
     }
     else {
@@ -1281,6 +1298,7 @@ int main(int argc, char **argv)
     NBodyDemo<float>::init(numBodies,
                            numDevsRequested,
                            blockSize,
+                           // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
                            !(benchmark || compareToCPU || useHostMem),
                            useHostMem,
                            useP2P,
@@ -1293,6 +1311,7 @@ int main(int argc, char **argv)
         NBodyDemo<double>::init(numBodies,
                                 numDevsRequested,
                                 blockSize,
+                                // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
                                 !(benchmark || compareToCPU || useHostMem),
                                 useHostMem,
                                 useP2P,
@@ -1314,6 +1333,7 @@ int main(int argc, char **argv)
 
             NBodyDemo<double>::runBenchmark(numIterations);
         }
+        // JP: この連続する anchor 群では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
         else if (compareToCPU) {
             bTestResults = NBodyDemo<double>::compareResults(numBodies);
         }
@@ -1327,6 +1347,7 @@ int main(int argc, char **argv)
             glutIdleFunc(idle);
 
             if (!useCpu) {
+                // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
                 checkCudaErrors(cudaEventRecord(startEvent, 0));
             }
 
@@ -1341,6 +1362,7 @@ int main(int argc, char **argv)
 
             NBodyDemo<float>::runBenchmark(numIterations);
         }
+        // JP: この連続する anchor 群では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
         else if (compareToCPU) {
             bTestResults = NBodyDemo<float>::compareResults(numBodies);
         }
@@ -1354,6 +1376,7 @@ int main(int argc, char **argv)
             glutIdleFunc(idle);
 
             if (!useCpu) {
+                // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
                 checkCudaErrors(cudaEventRecord(startEvent, 0));
             }
 

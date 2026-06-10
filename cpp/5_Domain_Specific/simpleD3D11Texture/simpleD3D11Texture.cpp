@@ -260,6 +260,7 @@ struct
 {
     ID3D11Texture3D          *pTexture;
     ID3D11ShaderResourceView *pSRView;
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     cudaGraphicsResource     *cudaResource;
     void                     *cudaLinearMemory;
     size_t                    pitch;
@@ -276,6 +277,7 @@ struct
 {
     ID3D11Texture2D          *pTexture;
     ID3D11ShaderResourceView *pSRView;
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     cudaGraphicsResource     *cudaResource;
     void                     *cudaLinearMemory;
     size_t                    pitch;
@@ -516,6 +518,7 @@ int main(int argc, char *argv[])
         // register the Direct3D resources that we'll use
         // we'll read to and write from g_texture_2d, so don't set any special map
         // flags for it
+        // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         cudaGraphicsD3D11RegisterResource(
             &g_texture_2d.cudaResource, g_texture_2d.pTexture, cudaGraphicsRegisterFlagsNone);
         getLastCudaError("cudaGraphicsD3D11RegisterResource (g_texture_2d) failed");
@@ -537,22 +540,27 @@ int main(int argc, char *argv[])
             &g_texture_cube.cudaResource, g_texture_cube.pTexture, cudaGraphicsRegisterFlagsNone);
         getLastCudaError("cudaGraphicsD3D11RegisterResource (g_texture_cube) failed");
         // create the buffer. pixel fmt is DXGI_FORMAT_R8G8B8A8_SNORM
+        // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         cudaMallocPitch(
             &g_texture_cube.cudaLinearMemory, &g_texture_cube.pitch, g_texture_cube.size * 4, g_texture_cube.size);
         getLastCudaError("cudaMallocPitch (g_texture_cube) failed");
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         cudaMemset(g_texture_cube.cudaLinearMemory, 1, g_texture_cube.pitch * g_texture_cube.size);
         getLastCudaError("cudaMemset (g_texture_cube) failed");
 
         // 3D
+        // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         cudaGraphicsD3D11RegisterResource(
             &g_texture_3d.cudaResource, g_texture_3d.pTexture, cudaGraphicsRegisterFlagsNone);
         getLastCudaError("cudaGraphicsD3D11RegisterResource (g_texture_3d) failed");
         // create the buffer. pixel fmt is DXGI_FORMAT_R8G8B8A8_SNORM
         // cudaMallocPitch(&g_texture_3d.cudaLinearMemory, &g_texture_3d.pitch,
         // g_texture_3d.width * 4, g_texture_3d.height * g_texture_3d.depth);
+        // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         cudaMalloc(&g_texture_3d.cudaLinearMemory, g_texture_3d.width * 4 * g_texture_3d.height * g_texture_3d.depth);
         g_texture_3d.pitch = g_texture_3d.width * 4;
         getLastCudaError("cudaMallocPitch (g_texture_3d) failed");
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         cudaMemset(g_texture_3d.cudaLinearMemory, 1, g_texture_3d.pitch * g_texture_3d.height * g_texture_3d.depth);
         getLastCudaError("cudaMemset (g_texture_3d) failed");
     }
@@ -953,6 +961,7 @@ void RunKernels()
     // populate the 2d texture
     {
         cudaArray *cuArray;
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         cudaGraphicsSubResourceGetMappedArray(&cuArray, g_texture_2d.cudaResource, 0, 0);
         getLastCudaError("cudaGraphicsSubResourceGetMappedArray (cuda_texture_2d) failed");
 
@@ -977,6 +986,7 @@ void RunKernels()
     {
         size_t     pitchSlice = g_texture_3d.pitch * g_texture_3d.height;
         cudaArray *cuArray;
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         cudaGraphicsSubResourceGetMappedArray(&cuArray, g_texture_3d.cudaResource, 0, 0);
         getLastCudaError("cudaGraphicsSubResourceGetMappedArray (cuda_texture_3d) failed");
 
@@ -1003,6 +1013,7 @@ void RunKernels()
         memcpyParams.extent.height            = g_texture_3d.height;
         memcpyParams.extent.depth             = g_texture_3d.depth;
         memcpyParams.kind                     = cudaMemcpyDeviceToDevice;
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         cudaMemcpy3D(&memcpyParams);
         getLastCudaError("cudaMemcpy3D failed");
     }
@@ -1010,6 +1021,7 @@ void RunKernels()
     // populate the faces of the cube map
     for (int face = 0; face < 6; ++face) {
         cudaArray *cuArray;
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         cudaGraphicsSubResourceGetMappedArray(&cuArray, g_texture_cube.cudaResource, face, 0);
         getLastCudaError("cudaGraphicsSubResourceGetMappedArray (cuda_texture_cube) failed");
 
@@ -1136,11 +1148,14 @@ void Cleanup()
 
     cudaGraphicsUnregisterResource(g_texture_cube.cudaResource);
     getLastCudaError("cudaGraphicsUnregisterResource (g_texture_cube) failed");
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     cudaFree(g_texture_cube.cudaLinearMemory);
     getLastCudaError("cudaFree (g_texture_2d) failed");
 
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     cudaGraphicsUnregisterResource(g_texture_3d.cudaResource);
     getLastCudaError("cudaGraphicsUnregisterResource (g_texture_3d) failed");
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     cudaFree(g_texture_3d.cudaLinearMemory);
     getLastCudaError("cudaFree (g_texture_2d) failed");
 
@@ -1235,6 +1250,7 @@ void Render()
         //
         // unmap the resources
         //
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         cudaGraphicsUnmapResources(nbResources, ppResources, stream);
         getLastCudaError("cudaGraphicsUnmapResources(3) failed");
     }

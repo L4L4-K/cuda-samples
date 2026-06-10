@@ -118,6 +118,7 @@ __device__ void loadColorBlock(const uint      *image,
         colors[idx].y = ((c >> 8) & 0xFF) * (1.0f / 255.0f);
         colors[idx].z = ((c >> 16) & 0xFF) * (1.0f / 255.0f);
 
+        // JP: この連続する anchor 群では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(tile);
         // Sort colors along the best fit line.
         colorSums(colors, sums, tile);
@@ -307,10 +308,12 @@ __device__ void evalAllPermutations(const float3    *colors,
                                     float3           color_sum,
                                     cg::thread_block cta)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const int idx = threadIdx.x;
 
     float bestError = FLT_MAX;
 
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ uint s_permutations[160];
 
     for (int i = 0; i < 16; i++) {
@@ -342,6 +345,7 @@ __device__ void evalAllPermutations(const float3    *colors,
         bestPermutation ^= 0x55555555; // Flip indices.
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta); // Sync here to ensure s_permutations is valid going forward
 
     for (int i = 0; i < 3; i++) {
@@ -376,10 +380,13 @@ __device__ void evalAllPermutations(const float3    *colors,
 ////////////////////////////////////////////////////////////////////////////////
 __device__ int findMinError(float *errors, cg::thread_block cta)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const int      idx = threadIdx.x;
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ int indices[NUM_THREADS];
     indices[idx] = idx;
 
+    // JP: この連続する anchor 群では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     for (int d = NUM_THREADS / 2; d > 0; d >>= 1) {
@@ -405,6 +412,7 @@ __device__ int findMinError(float *errors, cg::thread_block cta)
 ////////////////////////////////////////////////////////////////////////////////
 __device__ void saveBlockDXT1(ushort start, ushort end, uint permutation, int xrefs[16], uint2 *result, int blockOffset)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const int bid = blockIdx.x + blockOffset;
 
     if (start == end) {
@@ -432,21 +440,25 @@ __device__ void saveBlockDXT1(ushort start, ushort end, uint permutation, int xr
 __global__ void compress(const uint *permutations, const uint *image, uint2 *result, int blockOffset)
 {
     // Handle to thread block group
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta = cg::this_thread_block();
 
     const int idx = threadIdx.x;
 
+    // JP: この連続する anchor 群では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ float3 colors[16];
     __shared__ float3 sums[16];
     __shared__ int    xrefs[16];
 
     loadColorBlock(image, colors, sums, xrefs, blockOffset, cta);
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     ushort bestStart, bestEnd;
     uint   bestPermutation;
 
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ float errors[NUM_THREADS];
 
     evalAllPermutations(colors, permutations, bestStart, bestEnd, bestPermutation, errors, sums[0], cta);
@@ -454,6 +466,7 @@ __global__ void compress(const uint *permutations, const uint *image, uint2 *res
     // Use a parallel reduction to find minimum error.
     const int minIdx = findMinError(errors, cta);
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     // Only write the result of the winner thread.
@@ -560,6 +573,7 @@ static int compareColors(const Color32 *b0, const Color32 *b1)
     return sum;
 }
 
+// JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
 static int compareBlock(const BlockDXT1 *b0, const BlockDXT1 *b1)
 {
     Color32 colors0[16];
@@ -572,6 +586,7 @@ static int compareBlock(const BlockDXT1 *b0, const BlockDXT1 *b1)
         b0->decompress(colors0);
         b1->decompress(colors1);
 
+        // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
         return compareColors(colors0, colors1);
     }
 }
@@ -673,6 +688,7 @@ int main(int argc, char **argv)
 
     for (int i = -1; i < numIterations; ++i) {
         if (i == 0) {
+            // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
             checkCudaErrors(cudaDeviceSynchronize());
             sdkStartTimer(&timer);
         }
@@ -686,6 +702,7 @@ int main(int argc, char **argv)
     getLastCudaError("compress");
 
     // sync to host, stop timer, record perf
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
     sdkStopTimer(&timer);
     double dAvgTime = 1.0e-3 * sdkGetTimerValue(&timer) / (double)numIterations;
@@ -698,6 +715,7 @@ int main(int argc, char **argv)
            NUM_THREADS);
 
     // copy result data from device to host
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_result, d_result, compressedSize, cudaMemcpyDeviceToHost));
 
     // Write out result data to DDS file
@@ -770,6 +788,7 @@ int main(int argc, char **argv)
             uint resultBlockIdx    = ((y / 4) * (w / 4) + (x / 4));
 
             int cmp =
+                // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
                 compareBlock(((BlockDXT1 *)h_result) + resultBlockIdx, ((BlockDXT1 *)reference) + referenceBlockIdx);
 
             if (cmp != 0.0f) {

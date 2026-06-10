@@ -71,10 +71,12 @@ __global__ void reduce(float *inputVec, double *outputVec, size_t inputSize, siz
             beta += temp;
             tmp[cta.thread_rank()] = beta;
         }
+        // JP: この連続する anchor 群では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(tile32);
     }
     cg::sync(cta);
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (cta.thread_rank() == 0 && blockIdx.x < outputSize) {
         beta = 0.0;
         for (int i = 0; i < cta.size(); i += tile32.size()) {
@@ -86,8 +88,10 @@ __global__ void reduce(float *inputVec, double *outputVec, size_t inputSize, siz
 
 __global__ void reduceFinal(double *inputVec, double *result, size_t inputSize)
 {
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ double tmp[THREADS_PER_BLOCK];
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta       = cg::this_thread_block();
     size_t           globaltid = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -97,31 +101,39 @@ __global__ void reduceFinal(double *inputVec, double *result, size_t inputSize)
     }
     tmp[cta.thread_rank()] = temp_sum;
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     cg::thread_block_tile<32> tile32 = cg::tiled_partition<32>(cta);
 
     // do reduction in shared mem
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if ((blockDim.x >= 512) && (cta.thread_rank() < 256)) {
         tmp[cta.thread_rank()] = temp_sum = temp_sum + tmp[cta.thread_rank() + 256];
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if ((blockDim.x >= 256) && (cta.thread_rank() < 128)) {
         tmp[cta.thread_rank()] = temp_sum = temp_sum + tmp[cta.thread_rank() + 128];
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if ((blockDim.x >= 128) && (cta.thread_rank() < 64)) {
         tmp[cta.thread_rank()] = temp_sum = temp_sum + tmp[cta.thread_rank() + 64];
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     if (cta.thread_rank() < 32) {
         // Fetch final intermediate sum from 2nd warp
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         if (blockDim.x >= 64)
             temp_sum += tmp[cta.thread_rank() + 32];
         // Reduce final warp using shuffle
@@ -167,6 +179,7 @@ void cudaGraphsManual(float  *inputVec_h,
     cudaGraphNode_t              memcpyNode, kernelNode, memsetNode;
     double                       result_h = 0.0;
 
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamCreate(&streamForGraph));
 
     cudaKernelNodeParams kernelNodeParams = {0};
@@ -190,6 +203,7 @@ void cudaGraphsManual(float  *inputVec_h,
     memsetParams.width       = numOfBlocks * 2;
     memsetParams.height      = 1;
 
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphCreate(&graph, 0));
     checkCudaErrors(cudaGraphAddMemcpyNode(&memcpyNode, graph, NULL, 0, &memcpyParams));
     checkCudaErrors(cudaGraphAddMemsetNode(&memsetNode, graph, NULL, 0, &memsetParams));
@@ -200,12 +214,14 @@ void cudaGraphsManual(float  *inputVec_h,
     void *kernelArgs[4] = {(void *)&inputVec_d, (void *)&outputVec_d, &inputSize, &numOfBlocks};
 
     kernelNodeParams.func           = (void *)reduce;
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     kernelNodeParams.gridDim        = dim3(numOfBlocks, 1, 1);
     kernelNodeParams.blockDim       = dim3(THREADS_PER_BLOCK, 1, 1);
     kernelNodeParams.sharedMemBytes = 0;
     kernelNodeParams.kernelParams   = (void **)kernelArgs;
     kernelNodeParams.extra          = NULL;
 
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphAddKernelNode(
         &kernelNode, graph, nodeDependencies.data(), nodeDependencies.size(), &kernelNodeParams));
 
@@ -218,12 +234,14 @@ void cudaGraphsManual(float  *inputVec_h,
     memsetParams.elementSize = sizeof(float);
     memsetParams.width       = 2;
     memsetParams.height      = 1;
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphAddMemsetNode(&memsetNode, graph, NULL, 0, &memsetParams));
 
     nodeDependencies.push_back(memsetNode);
 
     memset(&kernelNodeParams, 0, sizeof(kernelNodeParams));
     kernelNodeParams.func           = (void *)reduceFinal;
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     kernelNodeParams.gridDim        = dim3(1, 1, 1);
     kernelNodeParams.blockDim       = dim3(THREADS_PER_BLOCK, 1, 1);
     kernelNodeParams.sharedMemBytes = 0;
@@ -231,6 +249,7 @@ void cudaGraphsManual(float  *inputVec_h,
     kernelNodeParams.kernelParams   = kernelArgs2;
     kernelNodeParams.extra          = NULL;
 
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphAddKernelNode(
         &kernelNode, graph, nodeDependencies.data(), nodeDependencies.size(), &kernelNodeParams));
     nodeDependencies.clear();
@@ -245,8 +264,10 @@ void cudaGraphsManual(float  *inputVec_h,
     memcpyParams.dstPos   = make_cudaPos(0, 0, 0);
     memcpyParams.dstPtr   = make_cudaPitchedPtr(&result_h, sizeof(double), 1, 1);
     memcpyParams.extent   = make_cudaExtent(sizeof(double), 1, 1);
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     memcpyParams.kind     = cudaMemcpyDeviceToHost;
     checkCudaErrors(
+        // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         cudaGraphAddMemcpyNode(&memcpyNode, graph, nodeDependencies.data(), nodeDependencies.size(), &memcpyParams));
     nodeDependencies.clear();
     nodeDependencies.push_back(memcpyNode);
@@ -260,6 +281,7 @@ void cudaGraphsManual(float  *inputVec_h,
     hostParams.userData = &hostFnData;
 
     checkCudaErrors(
+        // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         cudaGraphAddHostNode(&hostNode, graph, nodeDependencies.data(), nodeDependencies.size(), &hostParams));
 
     cudaGraphNode_t *nodes    = NULL;
@@ -279,12 +301,15 @@ void cudaGraphsManual(float  *inputVec_h,
         checkCudaErrors(cudaGraphLaunch(graphExec, streamForGraph));
     }
 
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaStreamSynchronize(streamForGraph));
 
     printf("Cloned Graph Output.. \n");
     for (int i = 0; i < GRAPH_LAUNCH_ITERATIONS; i++) {
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         checkCudaErrors(cudaGraphLaunch(clonedGraphExec, streamForGraph));
     }
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaStreamSynchronize(streamForGraph));
 
     checkCudaErrors(cudaGraphExecDestroy(graphExec));
@@ -302,11 +327,14 @@ void cudaGraphsUsingStreamCapture(float  *inputVec_h,
                                   size_t  inputSize,
                                   size_t  numOfBlocks)
 {
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaStream_t stream1, stream2, stream3, streamForGraph;
     cudaEvent_t  forkStreamEvent, memsetEvent1, memsetEvent2;
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     cudaGraph_t  graph;
     double       result_h = 0.0;
 
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamCreate(&stream1));
     checkCudaErrors(cudaStreamCreate(&stream2));
     checkCudaErrors(cudaStreamCreate(&stream3));
@@ -322,13 +350,17 @@ void cudaGraphsUsingStreamCapture(float  *inputVec_h,
     checkCudaErrors(cudaStreamWaitEvent(stream2, forkStreamEvent, 0));
     checkCudaErrors(cudaStreamWaitEvent(stream3, forkStreamEvent, 0));
 
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpyAsync(inputVec_d, inputVec_h, sizeof(float) * inputSize, cudaMemcpyDefault, stream1));
 
     checkCudaErrors(cudaMemsetAsync(outputVec_d, 0, sizeof(double) * numOfBlocks, stream2));
 
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaEventRecord(memsetEvent1, stream2));
 
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemsetAsync(result_d, 0, sizeof(double), stream3));
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaEventRecord(memsetEvent2, stream3));
 
     checkCudaErrors(cudaStreamWaitEvent(stream1, memsetEvent1, 0));
@@ -338,7 +370,9 @@ void cudaGraphsUsingStreamCapture(float  *inputVec_h,
 
     checkCudaErrors(cudaStreamWaitEvent(stream1, memsetEvent2, 0));
 
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     reduceFinal<<<1, THREADS_PER_BLOCK, 0, stream1>>>(outputVec_d, result_d, numOfBlocks);
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpyAsync(&result_h, result_d, sizeof(double), cudaMemcpyDefault, stream1));
 
     callBackData_t hostFnData = {0};
@@ -346,8 +380,10 @@ void cudaGraphsUsingStreamCapture(float  *inputVec_h,
     hostFnData.fn_name        = "cudaGraphsUsingStreamCapture";
     cudaHostFn_t fn           = myHostNodeCallback;
     checkCudaErrors(cudaLaunchHostFunc(stream1, fn, &hostFnData));
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamEndCapture(stream1, &graph));
 
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     cudaGraphNode_t *nodes    = NULL;
     size_t           numNodes = 0;
     checkCudaErrors(cudaGraphGetNodes(graph, nodes, &numNodes));
@@ -365,19 +401,24 @@ void cudaGraphsUsingStreamCapture(float  *inputVec_h,
         checkCudaErrors(cudaGraphLaunch(graphExec, streamForGraph));
     }
 
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaStreamSynchronize(streamForGraph));
 
     printf("Cloned Graph Output.. \n");
     for (int i = 0; i < GRAPH_LAUNCH_ITERATIONS; i++) {
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         checkCudaErrors(cudaGraphLaunch(clonedGraphExec, streamForGraph));
     }
 
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaStreamSynchronize(streamForGraph));
 
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphExecDestroy(graphExec));
     checkCudaErrors(cudaGraphExecDestroy(clonedGraphExec));
     checkCudaErrors(cudaGraphDestroy(graph));
     checkCudaErrors(cudaGraphDestroy(clonedGraph));
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamDestroy(stream1));
     checkCudaErrors(cudaStreamDestroy(stream2));
     checkCudaErrors(cudaStreamDestroy(streamForGraph));
@@ -407,9 +448,11 @@ int main(int argc, char **argv)
 
     init_input(inputVec_h, size);
 
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     cudaGraphsManual(inputVec_h, inputVec_d, outputVec_d, result_d, size, maxBlocks);
     cudaGraphsUsingStreamCapture(inputVec_h, inputVec_d, outputVec_d, result_d, size, maxBlocks);
 
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(inputVec_d));
     checkCudaErrors(cudaFree(outputVec_d));
     checkCudaErrors(cudaFree(result_d));

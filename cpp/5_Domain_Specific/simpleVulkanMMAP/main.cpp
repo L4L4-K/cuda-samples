@@ -108,10 +108,12 @@ public:
         }
 
         if (m_vkSignalSemaphore != VK_NULL_HANDLE) {
+            // JP: この連続する anchor 群では CUDA resource lifetime end です。未完了 work が残っていないか確認し、確保/作成/登録と対応する API で閉じます。
             checkCudaErrors(cudaDestroyExternalSemaphore(m_cudaSignalSemaphore));
             vkDestroySemaphore(m_device, m_vkSignalSemaphore, nullptr);
         }
         if (m_vkWaitSemaphore != VK_NULL_HANDLE) {
+            // JP: wait semaphore 側の CUDA external semaphore も Vulkan semaphore と対で閉じます。signal 側と同じ cleanup pair として lifetime を確認します。
             checkCudaErrors(cudaDestroyExternalSemaphore(m_cudaWaitSemaphore));
             vkDestroySemaphore(m_device, m_vkWaitSemaphore, nullptr);
         }
@@ -214,6 +216,7 @@ public:
 
         // On the corresponding cuda device, create the cuda stream we'll using
         checkCudaErrors(cudaSetDevice(cudaDevice));
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         checkCudaErrors(cudaStreamCreateWithFlags(&m_stream, cudaStreamNonBlocking));
         m_sim.initSimulation(cudaDevice, m_stream);
 

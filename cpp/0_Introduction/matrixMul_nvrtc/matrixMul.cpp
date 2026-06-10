@@ -118,6 +118,7 @@ int matrixMultiply(int argc, char **argv, int block_size, dim3 &dimsA, dim3 &dim
     // Create and start timer
     printf("Computing result using CUDA Kernel...\n");
 
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     CUfunction kernel_addr;
     if (block_size == 16) {
         checkCudaErrors(cuModuleGetFunction(&kernel_addr, module, "matrixMulCUDA_block16"));
@@ -149,6 +150,7 @@ int matrixMultiply(int argc, char **argv, int block_size, dim3 &dimsA, dim3 &dim
     }
 
     // Copy result from device to host
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cuMemcpyDtoH(h_C, d_C, mem_size_C));
 
     printf("Checking computed result for correctness: ");
@@ -184,6 +186,7 @@ int matrixMultiply(int argc, char **argv, int block_size, dim3 &dimsA, dim3 &dim
     free(h_B);
     free(h_C);
 
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cuMemFree(d_A));
     checkCudaErrors(cuMemFree(d_B));
     checkCudaErrors(cuMemFree(d_C));

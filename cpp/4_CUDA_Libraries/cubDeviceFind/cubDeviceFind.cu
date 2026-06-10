@@ -117,6 +117,7 @@ static bool run_lower_bound()
                                                 static_cast<int>(d_values.size()),
                                                 d_out.begin(),
                                                 cuda::std::less{}));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
 
     thrust::host_vector<int> h_range  = d_range;
@@ -191,6 +192,7 @@ static bool run_upper_bound()
                                                 static_cast<int>(d_values.size()),
                                                 d_ub.begin(),
                                                 cuda::std::less{}));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
 
     thrust::host_vector<int> h_range  = d_range;

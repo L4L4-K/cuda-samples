@@ -159,6 +159,7 @@ int main(int argc, char **argv)
     float            error_norm;
     float            ref_norm;
     float            diff;
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cublasXtHandle_t handle;
     int             *devices = NULL;
 
@@ -182,6 +183,7 @@ int main(int argc, char **argv)
     /* Initialize CUBLAS */
     printf("simpleCUBLASXT test running..\n");
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     status = cublasXtCreate(&handle);
 
     if (status != CUBLAS_STATUS_SUCCESS) {
@@ -246,6 +248,7 @@ int main(int argc, char **argv)
     simple_sgemm(N, alpha, h_A, h_B, beta, h_C_ref);
 
     /* Performs operation using cublas */
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     status = cublasXtSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, N, N, &alpha, h_A, N, h_B, N, &beta, h_C, N);
 
     if (status != CUBLAS_STATUS_SUCCESS) {
@@ -294,6 +297,7 @@ int main(int argc, char **argv)
     }
 
     /* Shutdown */
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     status = cublasXtDestroy(handle);
 
     if (status != CUBLAS_STATUS_SUCCESS) {

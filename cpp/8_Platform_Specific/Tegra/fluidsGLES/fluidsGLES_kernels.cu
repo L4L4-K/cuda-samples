@@ -133,6 +133,7 @@ __global__ void advectVelocity_k(cData              *v,
                                  int                 lb,
                                  cudaTextureObject_t texObject)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int gtidx = blockIdx.x * blockDim.x + threadIdx.x;
     int gtidy = blockIdx.y * (lb * blockDim.y) + threadIdx.y * lb;
     int p;
@@ -171,6 +172,7 @@ __global__ void advectVelocity_k(cData              *v,
 // wavenumber: v(k,t) = v(k,t) - ((k dot v(k,t) * k) / k^2.
 __global__ void diffuseProject_k(cData *vx, cData *vy, int dx, int dy, float dt, float visc, int lb)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int gtidx = blockIdx.x * blockDim.x + threadIdx.x;
     int gtidy = blockIdx.y * (lb * blockDim.y) + threadIdx.y * lb;
     int p;
@@ -226,6 +228,7 @@ __global__ void diffuseProject_k(cData *vx, cData *vy, int dx, int dy, float dt,
 // real components by 1/(dx*dy) to account for an unnormalized FFT.
 __global__ void updateVelocity_k(cData *v, float *vx, float *vy, int dx, int pdx, int dy, int lb, size_t pitch)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int gtidx = blockIdx.x * blockDim.x + threadIdx.x;
     int gtidy = blockIdx.y * (lb * blockDim.y) + threadIdx.y * lb;
     int p;
@@ -261,6 +264,7 @@ __global__ void updateVelocity_k(cData *v, float *vx, float *vy, int dx, int pdx
 // particle: p(t+1) = p(t) + dt * v(p(t)).
 __global__ void advectParticles_k(cData *part, cData *v, int dx, int dy, float dt, int lb, size_t pitch)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int gtidx = blockIdx.x * blockDim.x + threadIdx.x;
     int gtidy = blockIdx.y * (lb * blockDim.y) + threadIdx.y * lb;
     int p;
@@ -313,6 +317,7 @@ extern "C" void advectVelocity(cData *v, float *vx, float *vy, int dx, int pdx, 
     dim3 tids(TIDSX, TIDSY);
 
     updateTexture(v, DIM * sizeof(cData), DIM, tPitch);
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     advectVelocity_k<<<grid, tids>>>(v, vx, vy, dx, pdx, dy, dt, TILEY / TIDSY, texObj);
     getLastCudaError("advectVelocity_k failed.");
 }
@@ -320,16 +325,19 @@ extern "C" void advectVelocity(cData *v, float *vx, float *vy, int dx, int pdx, 
 extern "C" void diffuseProject(cData *vx, cData *vy, int dx, int dy, float dt, float visc)
 {
     // Forward FFT
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cufftExecR2C(planr2c, (cufftReal *)vx, (cufftComplex *)vx));
     checkCudaErrors(cufftExecR2C(planr2c, (cufftReal *)vy, (cufftComplex *)vy));
 
     uint3 grid = make_uint3((dx / TILEX) + (!(dx % TILEX) ? 0 : 1), (dy / TILEY) + (!(dy % TILEY) ? 0 : 1), 1);
     uint3 tids = make_uint3(TIDSX, TIDSY, 1);
 
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     diffuseProject_k<<<grid, tids>>>(vx, vy, dx, dy, dt, visc, TILEY / TIDSY);
     getLastCudaError("diffuseProject_k failed.");
 
     // Inverse FFT
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(cufftExecC2R(planc2r, (cufftComplex *)vx, (cufftReal *)vx));
     checkCudaErrors(cufftExecC2R(planc2r, (cufftComplex *)vy, (cufftReal *)vy));
 }
@@ -339,6 +347,7 @@ extern "C" void updateVelocity(cData *v, float *vx, float *vy, int dx, int pdx, 
     dim3 grid((dx / TILEX) + (!(dx % TILEX) ? 0 : 1), (dy / TILEY) + (!(dy % TILEY) ? 0 : 1));
     dim3 tids(TIDSX, TIDSY);
 
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     updateVelocity_k<<<grid, tids>>>(v, vx, vy, dx, pdx, dy, TILEY / TIDSY, tPitch);
     getLastCudaError("updateVelocity_k failed.");
 }
@@ -349,6 +358,7 @@ extern "C" void advectParticles(GLuint vbo, cData *v, int dx, int dy, float dt)
     dim3 tids(TIDSX, TIDSY);
 
     cData *p;
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsMapResources(1, &cuda_vbo_resource, 0));
     getLastCudaError("cudaGraphicsMapResources failed");
 
@@ -356,8 +366,10 @@ extern "C" void advectParticles(GLuint vbo, cData *v, int dx, int dy, float dt)
     checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&p, &num_bytes, cuda_vbo_resource));
     getLastCudaError("cudaGraphicsResourceGetMappedPointer failed");
 
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     advectParticles_k<<<grid, tids>>>(p, v, dx, dy, dt, TILEY / TIDSY, tPitch);
     getLastCudaError("advectParticles_k failed.");
 
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsUnmapResources(1, &cuda_vbo_resource, 0));
 }

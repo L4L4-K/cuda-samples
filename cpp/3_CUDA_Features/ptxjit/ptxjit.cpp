@@ -128,6 +128,7 @@ void ptxJIT(int argc, char **argv, CUmodule *phModule, CUfunction *phKernel, CUl
     optionVals[5] = (void *)1;
 
     // Create a pending linker invocation
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuLinkCreate(6, options, optionVals, lState));
 
     // first search for the module path before we load the results
@@ -157,6 +158,7 @@ void ptxJIT(int argc, char **argv, CUmodule *phModule, CUfunction *phKernel, CUl
     printf("CUDA Link Completed in %fms. Linker Output:\n%s\n", walltime, info_log);
 
     // Load resulting cuBin into module
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuModuleLoadData(phModule, cuOut));
 
     // Locate the kernel entry poin
@@ -172,6 +174,7 @@ int main(int argc, char **argv)
     const unsigned int nBlocks  = 64;
     const size_t       memSize  = nThreads * nBlocks * sizeof(int);
 
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     CUmodule    hModule = 0;
     CUfunction  hKernel = 0;
     CUlinkState lState;
@@ -182,6 +185,7 @@ int main(int argc, char **argv)
 
     printf("[%s] - Starting...\n", sSDKname);
 
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     CUdevice dev = findCudaDeviceDRV(argc, (const char **)argv);
     int      driverVersion;
     cudaDriverGetVersion(&driverVersion);
@@ -245,6 +249,7 @@ int main(int argc, char **argv)
     }
 
     if (hModule) {
+        // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
         checkCudaErrors(cuModuleUnload(hModule));
         hModule = 0;
     }

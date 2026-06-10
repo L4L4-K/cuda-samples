@@ -94,6 +94,7 @@ template <> __device__ __forceinline__ int warpReduceSum<int>(unsigned int mask,
 #endif
 
 /*
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     Parallel sum reduction using shared memory
     - takes log(n) steps for n input elements
     - uses n threads
@@ -107,10 +108,13 @@ template <> __device__ __forceinline__ int warpReduceSum<int>(unsigned int mask,
 template <class T> __global__ void reduce0(T *g_idata, T *g_odata, unsigned int n)
 {
     // Handle to thread block group
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta   = cg::this_thread_block();
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     T               *sdata = SharedMemory<T>();
 
     // load shared mem
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned int tid = threadIdx.x;
     unsigned int i   = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -126,32 +130,40 @@ template <class T> __global__ void reduce0(T *g_idata, T *g_odata, unsigned int 
             sdata[tid] += sdata[tid + s];
         }
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
     }
 
     // write result for this block to global mem
     if (tid == 0)
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         g_odata[blockIdx.x] = sdata[0];
 }
 
 /* This version uses contiguous threads, but its interleaved
+   // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
    addressing results in many shared memory bank conflicts.
 */
 template <class T> __global__ void reduce1(T *g_idata, T *g_odata, unsigned int n)
 {
     // Handle to thread block group
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta   = cg::this_thread_block();
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     T               *sdata = SharedMemory<T>();
 
     // load shared mem
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned int tid = threadIdx.x;
     unsigned int i   = blockIdx.x * blockDim.x + threadIdx.x;
 
     sdata[tid] = (i < n) ? g_idata[i] : 0;
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     // do reduction in shared mem
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     for (unsigned int s = 1; s < blockDim.x; s *= 2) {
         int index = 2 * s * tid;
 
@@ -159,11 +171,13 @@ template <class T> __global__ void reduce1(T *g_idata, T *g_odata, unsigned int 
             sdata[index] += sdata[index + s];
         }
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
     }
 
     // write result for this block to global mem
     if (tid == 0)
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         g_odata[blockIdx.x] = sdata[0];
 }
 
@@ -173,28 +187,35 @@ template <class T> __global__ void reduce1(T *g_idata, T *g_odata, unsigned int 
 template <class T> __global__ void reduce2(T *g_idata, T *g_odata, unsigned int n)
 {
     // Handle to thread block group
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta   = cg::this_thread_block();
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     T               *sdata = SharedMemory<T>();
 
     // load shared mem
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned int tid = threadIdx.x;
     unsigned int i   = blockIdx.x * blockDim.x + threadIdx.x;
 
     sdata[tid] = (i < n) ? g_idata[i] : 0;
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     // do reduction in shared mem
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
         if (tid < s) {
             sdata[tid] += sdata[tid + s];
         }
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
     }
 
     // write result for this block to global mem
     if (tid == 0)
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         g_odata[blockIdx.x] = sdata[0];
 }
 
@@ -205,11 +226,14 @@ template <class T> __global__ void reduce2(T *g_idata, T *g_odata, unsigned int 
 template <class T> __global__ void reduce3(T *g_idata, T *g_odata, unsigned int n)
 {
     // Handle to thread block group
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta   = cg::this_thread_block();
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     T               *sdata = SharedMemory<T>();
 
     // perform first level of reduction,
     // reading from global memory, writing to shared memory
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned int tid = threadIdx.x;
     unsigned int i   = blockIdx.x * (blockDim.x * 2) + threadIdx.x;
 
@@ -219,19 +243,23 @@ template <class T> __global__ void reduce3(T *g_idata, T *g_odata, unsigned int 
         mySum += g_idata[i + blockDim.x];
 
     sdata[tid] = mySum;
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     // do reduction in shared mem
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
         if (tid < s) {
             sdata[tid] = mySum = mySum + sdata[tid + s];
         }
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
     }
 
     // write result for this block to global mem
     if (tid == 0)
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         g_odata[blockIdx.x] = mySum;
 }
 
@@ -245,6 +273,7 @@ template <class T> __global__ void reduce3(T *g_idata, T *g_odata, unsigned int 
     for additional information about using shuffle to perform a reduction
     within a warp.
 
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     Note, this kernel needs a minimum of 64*sizeof(T) bytes of shared memory.
     In other words if blockSize <= 32, allocate 64*sizeof(T) bytes.
     If blockSize > 32, allocate blockSize*sizeof(T) bytes.
@@ -252,11 +281,14 @@ template <class T> __global__ void reduce3(T *g_idata, T *g_odata, unsigned int 
 template <class T, unsigned int blockSize> __global__ void reduce4(T *g_idata, T *g_odata, unsigned int n)
 {
     // Handle to thread block group
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta   = cg::this_thread_block();
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     T               *sdata = SharedMemory<T>();
 
     // perform first level of reduction,
     // reading from global memory, writing to shared memory
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned int tid = threadIdx.x;
     unsigned int i   = blockIdx.x * (blockDim.x * 2) + threadIdx.x;
 
@@ -266,14 +298,17 @@ template <class T, unsigned int blockSize> __global__ void reduce4(T *g_idata, T
         mySum += g_idata[i + blockSize];
 
     sdata[tid] = mySum;
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     // do reduction in shared mem
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     for (unsigned int s = blockDim.x / 2; s > 32; s >>= 1) {
         if (tid < s) {
             sdata[tid] = mySum = mySum + sdata[tid + s];
         }
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
     }
 
@@ -291,6 +326,7 @@ template <class T, unsigned int blockSize> __global__ void reduce4(T *g_idata, T
 
     // write result for this block to global mem
     if (cta.thread_rank() == 0)
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         g_odata[blockIdx.x] = mySum;
 }
 
@@ -302,6 +338,7 @@ template <class T, unsigned int blockSize> __global__ void reduce4(T *g_idata, T
     compile time. When shuffle is available, it is used to reduce warp
    synchronization.
 
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     Note, this kernel needs a minimum of 64*sizeof(T) bytes of shared memory.
     In other words if blockSize <= 32, allocate 64*sizeof(T) bytes.
     If blockSize > 32, allocate blockSize*sizeof(T) bytes.
@@ -309,11 +346,14 @@ template <class T, unsigned int blockSize> __global__ void reduce4(T *g_idata, T
 template <class T, unsigned int blockSize> __global__ void reduce5(T *g_idata, T *g_odata, unsigned int n)
 {
     // Handle to thread block group
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta   = cg::this_thread_block();
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     T               *sdata = SharedMemory<T>();
 
     // perform first level of reduction,
     // reading from global memory, writing to shared memory
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned int tid = threadIdx.x;
     unsigned int i   = blockIdx.x * (blockSize * 2) + threadIdx.x;
 
@@ -323,6 +363,7 @@ template <class T, unsigned int blockSize> __global__ void reduce5(T *g_idata, T
         mySum += g_idata[i + blockSize];
 
     sdata[tid] = mySum;
+    // JP: この連続する anchor 群では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     // do reduction in shared mem
@@ -358,6 +399,7 @@ template <class T, unsigned int blockSize> __global__ void reduce5(T *g_idata, T
 
     // write result for this block to global mem
     if (cta.thread_rank() == 0)
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         g_odata[blockIdx.x] = mySum;
 }
 
@@ -366,6 +408,7 @@ template <class T, unsigned int blockSize> __global__ void reduce5(T *g_idata, T
    the overall cost of the algorithm while keeping the work complexity O(n) and
    the step complexity O(log n). (Brent's Theorem optimization)
 
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     Note, this kernel needs a minimum of 64*sizeof(T) bytes of shared memory.
     In other words if blockSize <= 32, allocate 64*sizeof(T) bytes.
     If blockSize > 32, allocate blockSize*sizeof(T) bytes.
@@ -373,11 +416,14 @@ template <class T, unsigned int blockSize> __global__ void reduce5(T *g_idata, T
 template <class T, unsigned int blockSize, bool nIsPow2> __global__ void reduce6(T *g_idata, T *g_odata, unsigned int n)
 {
     // Handle to thread block group
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta   = cg::this_thread_block();
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     T               *sdata = SharedMemory<T>();
 
     // perform first level of reduction,
     // reading from global memory, writing to shared memory
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned int tid      = threadIdx.x;
     unsigned int gridSize = blockSize * gridDim.x;
 
@@ -401,6 +447,7 @@ template <class T, unsigned int blockSize, bool nIsPow2> __global__ void reduce6
         }
     }
     else {
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         unsigned int i = blockIdx.x * blockSize + threadIdx.x;
         while (i < n) {
             mySum += g_idata[i];
@@ -410,6 +457,7 @@ template <class T, unsigned int blockSize, bool nIsPow2> __global__ void reduce6
 
     // each thread puts its local sum into shared memory
     sdata[tid] = mySum;
+    // JP: この連続する anchor 群では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     // do reduction in shared mem
@@ -445,16 +493,19 @@ template <class T, unsigned int blockSize, bool nIsPow2> __global__ void reduce6
 
     // write result for this block to global mem
     if (cta.thread_rank() == 0)
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         g_odata[blockIdx.x] = mySum;
 }
 
 template <typename T, unsigned int blockSize, bool nIsPow2>
 __global__ void reduce7(const T *__restrict__ g_idata, T *__restrict__ g_odata, unsigned int n)
 {
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     T *sdata = SharedMemory<T>();
 
     // perform first level of reduction,
     // reading from global memory, writing to shared memory
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned int tid        = threadIdx.x;
     unsigned int gridSize   = blockSize * gridDim.x;
     unsigned int maskLength = (blockSize & 31); // 31 = warpSize-1
@@ -467,6 +518,7 @@ __global__ void reduce7(const T *__restrict__ g_idata, T *__restrict__ g_odata, 
     // number of active thread blocks (via gridDim).  More blocks will result
     // in a larger gridSize and therefore fewer elements per thread
     if (nIsPow2) {
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         unsigned int i = blockIdx.x * blockSize * 2 + threadIdx.x;
         gridSize       = gridSize << 1;
 
@@ -481,6 +533,7 @@ __global__ void reduce7(const T *__restrict__ g_idata, T *__restrict__ g_odata, 
         }
     }
     else {
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         unsigned int i = blockIdx.x * blockSize + threadIdx.x;
         while (i < n) {
             mySum += g_idata[i];
@@ -493,12 +546,15 @@ __global__ void reduce7(const T *__restrict__ g_idata, T *__restrict__ g_odata, 
     mySum = warpReduceSum<T>(mask, mySum);
 
     // each thread puts its local sum into shared memory
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if ((tid % warpSize) == 0) {
         sdata[tid / warpSize] = mySum;
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
 
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const unsigned int shmem_extent  = (blockSize / warpSize) > 0 ? (blockSize / warpSize) : 1;
     const unsigned int ballot_result = __ballot_sync(mask, tid < shmem_extent);
     if (tid < shmem_extent) {
@@ -510,6 +566,7 @@ __global__ void reduce7(const T *__restrict__ g_idata, T *__restrict__ g_odata, 
 
     // write result for this block to global mem
     if (tid == 0) {
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         g_odata[blockIdx.x] = mySum;
     }
 }
@@ -523,8 +580,10 @@ template <typename T, typename Group> __device__ T cg_reduce_n(T in, Group &thre
 template <class T> __global__ void cg_reduce(T *g_idata, T *g_odata, unsigned int n)
 {
     // Shared memory for intermediate steps
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     T *sdata = SharedMemory<T>();
     // Handle to thread block group
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta = cg::this_thread_block();
     // Handle to tile in thread block
     cg::thread_block_tile<32> tile = cg::tiled_partition<32>(cta);
@@ -569,6 +628,7 @@ template <class T> __global__ void cg_reduce(T *g_idata, T *g_odata, unsigned in
     }
 
     if (threadRank == 0)
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         g_odata[blockIdx.x] = threadVal;
 }
 
@@ -576,10 +636,12 @@ template <class T, size_t BlockSize, size_t MultiWarpGroupSize>
 __global__ void multi_warp_cg_reduce(T *g_idata, T *g_odata, unsigned int n)
 {
     // Shared memory for intermediate steps
+    // JP: この連続する anchor 群では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     T         *sdata = SharedMemory<T>();
     __shared__ cg::block_tile_memory<BlockSize> scratch;
 
     // Handle to thread block group
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     auto cta = cg::this_thread_block(scratch);
     // Handle to multiWarpTile in thread block
     auto multiWarpTile = cg::tiled_partition<MultiWarpGroupSize>(cta);
@@ -618,8 +680,10 @@ __global__ void multi_warp_cg_reduce(T *g_idata, T *g_odata, unsigned int n)
     if (multiWarpTile.thread_rank() == 0) {
         sdata[multiWarpTile.meta_group_rank()] = threadVal;
     }
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x == 0) {
         threadVal = 0;
         for (int i = 0; i < multiWarpTile.meta_group_size(); i++) {
@@ -716,6 +780,7 @@ template <class T> void reduce(int size, int threads, int blocks, int whichKerne
     case 5:
         switch (threads) {
         case 512:
+            // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
             reduce5<T, 512><<<dimGrid, dimBlock, smemSize>>>(d_idata, d_odata, size);
             break;
 
@@ -762,6 +827,7 @@ template <class T> void reduce(int size, int threads, int blocks, int whichKerne
         if (isPow2(size)) {
             switch (threads) {
             case 512:
+                // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
                 reduce6<T, 512, true><<<dimGrid, dimBlock, smemSize>>>(d_idata, d_odata, size);
                 break;
 
@@ -855,6 +921,7 @@ template <class T> void reduce(int size, int threads, int blocks, int whichKerne
         if (isPow2(size)) {
             switch (threads) {
             case 1024:
+                // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
                 reduce7<T, 1024, true><<<dimGrid, dimBlock, smemSize>>>(d_idata, d_odata, size);
                 break;
             case 512:

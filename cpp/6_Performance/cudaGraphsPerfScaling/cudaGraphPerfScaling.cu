@@ -73,6 +73,7 @@ public:
 #define RANGE(name)
 #endif
 
+// JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
 std::vector<cudaStream_t> stream;
 cudaEvent_t               event[1];
 cudaEvent_t               timingEvent[2];
@@ -133,6 +134,7 @@ cudaGraph_t createParallelChain(int length, int width, bool singleEntry = false)
     RANGE_PUSH(__func__);
     RANGE("capture");
     cudaGraph_t graph;
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaStreamBeginCapture(stream[0], cudaStreamCaptureModeGlobal);
     int streamIdx = 0;
     if (singleEntry) {
@@ -142,17 +144,20 @@ cudaGraph_t createParallelChain(int length, int width, bool singleEntry = false)
 
     cudaEventRecord(event[0], stream[0]);
     for (int i = 1; i < width; i++) {
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         cudaStreamWaitEvent(stream[i], event[0]);
     }
 
     for (int i = 0; i < width; i++) {
         streamIdx = i;
         for (int j = 0; j < length; j++) {
+            // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
             empty<<<1, 1, 0, stream[streamIdx]>>>();
         }
     }
 
     for (int i = 1; i < width; i++) {
+        // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         cudaEventRecord(event[0], stream[i]);
         cudaStreamWaitEvent(stream[0], event[0]);
     }
@@ -165,6 +170,7 @@ std::vector<const char *> metricName;
 std::vector<float>        metricValue;
 
 int  counter2 = 0;
+// JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
 void runDemo(cudaGraph_t graph, int length, int width)
 {
     cudaGraphExec_t graphExec;
@@ -191,8 +197,10 @@ void runDemo(cudaGraph_t graph, int length, int width)
     {
         RANGE("repeat lauch in empty stream");
         auto start = getCpuTime();
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         cudaGraphLaunch(graphExec, stream[0]);
         auto apiReturn = getCpuTime();
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         cudaStreamSynchronize(stream[0]);
         auto streamSync = getCpuTime();
         metricName.push_back("repeat_launch_api");
@@ -202,16 +210,21 @@ void runDemo(cudaGraph_t graph, int length, int width)
     }
     {
         // re-instantiating the exec to simulate first launch into a busy stream.
+        // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         cudaGraphExecDestroy(graphExec);
         cudaGraphInstantiateWithFlags(&graphExec, graph, 0);
 
         long long maxTimeoutNanoSeconds = 4000 + 500 * length * width;
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         waitWithTimeout<<<1, 1, 0, stream[0]>>>(
             maxTimeoutNanoSeconds, &hostData->timeoutDetected, &hostData->timeElapsed, &hostData->latch);
 
         RANGE("launch including upload in busy stream");
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         cudaEventRecord(timingEvent[0], stream[0]);
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         cudaGraphLaunch(graphExec, stream[0]);
+        // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         cudaEventRecord(timingEvent[1], stream[0]);
 
         hostData->latch = 1;
@@ -227,10 +240,14 @@ void runDemo(cudaGraph_t graph, int length, int width)
     {
         RANGE("repeat lauch in busy stream");
         long long maxTimeoutNanoSeconds = 4000 + 500 * length * width;
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         waitWithTimeout<<<1, 1, 0, stream[0]>>>(
             maxTimeoutNanoSeconds, &hostData->timeoutDetected, &hostData->timeElapsed, &hostData->latch);
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         cudaEventRecord(timingEvent[0], stream[0]);
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         cudaGraphLaunch(graphExec, stream[0]);
+        // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         cudaEventRecord(timingEvent[1], stream[0]);
 
         hostData->latch = 1;
@@ -245,9 +262,11 @@ void runDemo(cudaGraph_t graph, int length, int width)
     }
     {
         // re-instantiating the exec to provide upload with work to do.
+        // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         cudaGraphExecDestroy(graphExec);
         cudaGraphInstantiateWithFlags(&graphExec, graph, 0);
         long long maxTimeoutNanoSeconds = 4000 + 1000 * length * width;
+        // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         waitWithTimeout<<<1, 1, 0, stream[0]>>>(
             maxTimeoutNanoSeconds, &hostData->timeoutDetected2, &hostData->timeElapsed2, &hostData->latch2);
         maxTimeoutNanoSeconds = 2000 + 500 * length * width;
@@ -256,17 +275,24 @@ void runDemo(cudaGraph_t graph, int length, int width)
 
         RANGE("uploading a graph off of the critical path");
         preUploadAnnotation<<<1, 1, 0, stream[1]>>>();
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         cudaEventRecord(timingEvent[0], stream[0]);
         auto start = getCpuTime();
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         cudaGraphUpload(graphExec, stream[1]);
         auto apiReturn = getCpuTime();
+        // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         cudaEventRecord(event[0], stream[1]);
         cudaEventRecord(timingEvent[1], stream[0]);
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         postUploadAnnotation<<<1, 1, 0, stream[1]>>>();
 
         hostData->latch = 1; // release the blocking kernel for the upload
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         cudaStreamWaitEvent(stream[0], event[0]);
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         cudaGraphLaunch(graphExec, stream[0]);
+        // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         cudaEventSynchronize(event[0]); // upload done, similuate critical path being ready for the graph to run by the
                                         // release of the second latch
 
@@ -285,6 +311,7 @@ void runDemo(cudaGraph_t graph, int length, int width)
         hostData->timeoutDetected  = 0;
         hostData->timeoutDetected2 = 0;
     }
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     cudaGraphExecDestroy(graphExec);
     cudaGraphDestroy(graph);
     RANGE_POP();
@@ -363,6 +390,7 @@ int main(int argc, char **argv)
         numStreams = 2; // demo needs two streams even if capture only needs 1.
     stream.resize(numStreams);
     for (int i = 0; i < numStreams; i++) {
+        // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         cudaStreamCreate(&stream[i]);
     }
 
@@ -373,8 +401,10 @@ int main(int argc, char **argv)
     {
         RANGE("warmup");
         for (int i = 0; i < width; i++) {
+            // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
             empty<<<1, 1, 0, stream[i]>>>();
         }
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         cudaStreamSynchronize(stream[0]);
 
         auto start = getCpuTime();
@@ -438,6 +468,7 @@ int main(int argc, char **argv)
         length += stride;
     }
 
+    // JP: この anchor では pinned host memory の登録/確保/解放です。async transfer や overlap の条件と lifetime を確認します。
     cudaFreeHost(hostData);
 
     printf("\n");

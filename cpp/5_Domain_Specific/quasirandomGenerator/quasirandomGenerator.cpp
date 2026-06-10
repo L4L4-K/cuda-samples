@@ -115,6 +115,7 @@ int main(int argc, char **argv)
            128 * QRNG_DIMENSIONS);
 
     printf("\nReading GPU results...\n");
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_OutputGPU, d_Output, QRNG_DIMENSIONS * N * sizeof(float), cudaMemcpyDeviceToHost));
 
     printf("Comparing to the CPU results...\n\n");
@@ -132,10 +133,12 @@ int main(int argc, char **argv)
     printf("L1 norm: %E\n", sumDelta / sumRef);
 
     printf("\nTesting inverseCNDgpu()...\n\n");
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemset(d_Output, 0, QRNG_DIMENSIONS * N * sizeof(float)));
 
     for (int i = -1; i < numIterations; i++) {
         if (i == 0) {
+            // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
             checkCudaErrors(cudaDeviceSynchronize());
             sdkResetTimer(&hTimer);
             sdkStartTimer(&hTimer);
@@ -156,6 +159,7 @@ int main(int argc, char **argv)
            128);
 
     printf("Reading GPU results...\n");
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_OutputGPU, d_Output, QRNG_DIMENSIONS * N * sizeof(float), cudaMemcpyDeviceToHost));
 
     printf("\nComparing to the CPU results...\n");

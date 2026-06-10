@@ -97,6 +97,7 @@ int main(int argc, char **argv)
     printf("Time: %f ms\n", sdkGetTimerValue(&hTimer));
 
     printf("Reading back GPU merge sort results...\n");
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_DstKey, d_DstKey, N * sizeof(uint), cudaMemcpyDeviceToHost));
     checkCudaErrors(cudaMemcpy(h_DstVal, d_DstVal, N * sizeof(uint), cudaMemcpyDeviceToHost));
 

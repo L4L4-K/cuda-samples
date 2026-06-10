@@ -24,7 +24,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-// JP: この file では stream/event による非同期実行と同期、shared memory と block 内同期、Unified Memory の migration と同期 を確認します。英語の識別子/API/出力文字列は保持します。
+// JP: この file は Runtime API で device count と cudaDeviceProp を取得し、GPU capability と制限値を表示します。kernel 実行や memory migration は行いません。
 
 /* This sample queries the properties of the CUDA devices present in the system
  * via CUDA Runtime API. */
@@ -78,7 +78,7 @@ int main(int argc, char **argv)
 
     if (error_id != cudaSuccess) {
         printf("cudaGetDeviceCount returned %d\n-> %s\n", static_cast<int>(error_id), cudaGetErrorString(error_id));
-        // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+        // JP: validation: `cudaGetDeviceCount` の API error path です。結果配列ではなく、CUDA device query 自体の失敗を扱います。
         printf("Result = FAIL\n");
         exit(EXIT_FAILURE);
     }
@@ -188,11 +188,12 @@ int main(int argc, char **argv)
                deviceProp.maxTexture2DLayered[2]);
 
         printf("  Total amount of constant memory:               %zu bytes\n", deviceProp.totalConstMem);
-        // JP: shared_memory: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+        // JP: `deviceProp.sharedMemPerBlock`: device capability として shared memory 容量を表示します。kernel が実際に使う 1 block あたりの上限です。
         printf("  Total amount of shared memory per block:       %zu bytes\n", deviceProp.sharedMemPerBlock);
         printf("  Total shared memory per multiprocessor:        %zu bytes\n", deviceProp.sharedMemPerMultiprocessor);
         printf("  Total number of registers available per block: %d\n", deviceProp.regsPerBlock);
-        // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+        // JP: `warpSize`/thread limits: launch 条件になる device property です。index 計算では block/grid 設計の前提になります。
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         printf("  Warp size:                                     %d\n", deviceProp.warpSize);
         printf("  Maximum number of threads per multiprocessor:  %d\n", deviceProp.maxThreadsPerMultiProcessor);
         printf("  Maximum number of threads per block:           %d\n", deviceProp.maxThreadsPerBlock);

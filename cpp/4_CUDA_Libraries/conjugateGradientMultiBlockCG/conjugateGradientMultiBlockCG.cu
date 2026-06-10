@@ -284,6 +284,7 @@ extern "C" __global__ void gpuConjugateGradient(int    *I,
 
     gpuSpMV(I, J, val, nnz, N, alpha, x, Ax, cta, grid);
 
+    // JP: この連続する anchor 群では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(grid);
 
     gpuSaxpy(Ax, r, alpham1, N, grid);
@@ -306,13 +307,16 @@ extern "C" __global__ void gpuConjugateGradient(int    *I,
             gpuCopyVector(r, p, N, grid);
         }
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(grid);
 
         gpuSpMV(I, J, val, nnz, N, alpha, p, Ax, cta, grid);
 
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         if (threadIdx.x == 0 && blockIdx.x == 0)
             *dot_result = 0.0;
 
+        // JP: この連続する anchor 群では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(grid);
 
         gpuDotProduct(p, Ax, dot_result, N, cta, grid);
@@ -327,10 +331,13 @@ extern "C" __global__ void gpuConjugateGradient(int    *I,
 
         r0 = r1;
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(grid);
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         if (threadIdx.x == 0 && blockIdx.x == 0)
             *dot_result = 0.0;
 
+        // JP: この連続する anchor 群では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(grid);
 
         gpuDotProduct(r, r, dot_result, N, cta, grid);
@@ -409,6 +416,7 @@ int main(int argc, char **argv)
     N  = 1048576;
     nz = (N - 2) * 3 + 4;
 
+    // JP: この連続する anchor 群では Unified Memory allocation/prefetch/advice です。migration、host/device visibility、同期位置 を確認します。
     cudaMallocManaged(reinterpret_cast<void **>(&I), sizeof(int) * (N + 1));
     cudaMallocManaged(reinterpret_cast<void **>(&J), sizeof(int) * nz);
     cudaMallocManaged(reinterpret_cast<void **>(&val), sizeof(float) * nz);
@@ -429,8 +437,10 @@ int main(int argc, char **argv)
     checkCudaErrors(cudaMallocManaged(reinterpret_cast<void **>(&p), N * sizeof(float)));
     checkCudaErrors(cudaMallocManaged(reinterpret_cast<void **>(&Ax), N * sizeof(float)));
 
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     cudaDeviceSynchronize();
 
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaEventCreate(&start));
     checkCudaErrors(cudaEventCreate(&stop));
 
@@ -475,13 +485,16 @@ int main(int argc, char **argv)
 
     int  numSms = deviceProp.multiProcessorCount;
     dim3 dimGrid(numSms * numBlocksPerSm, 1, 1), dimBlock(THREADS_PER_BLOCK, 1, 1);
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaEventRecord(start, 0));
     checkCudaErrors(
         cudaLaunchCooperativeKernel((void *)gpuConjugateGradient, dimGrid, dimBlock, kernelArgs, sMemSize, NULL));
     checkCudaErrors(cudaEventRecord(stop, 0));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
 
     float time;
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaEventElapsedTime(&time, start, stop));
 
     r1 = *dot_result;

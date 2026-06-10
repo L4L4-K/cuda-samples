@@ -26,4 +26,5 @@
  */
 // JP: この file では kernel launch と thread indexing、stream/event による非同期実行と同期 を確認します。英語の識別子/API/出力文字列は保持します。
 
+// JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
 extern "C" __global__ void kernelFunction(int *input) { input[threadIdx.x] = 32 - threadIdx.x; }

@@ -105,6 +105,7 @@ int main(int argc, char *argv[])
         printf("CUDA Driver  Version: %d.%d\n", driverVersion / 1000, (driverVersion % 100) / 10);
         printf("CUDA Runtime Version: %d.%d\n\n", runtimeVersion / 1000, (runtimeVersion % 100) / 10);
 
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         cudaError = cudaDeviceGetAttribute(&nppStreamCtx.nCudaDevAttrComputeCapabilityMajor,
                                            cudaDevAttrComputeCapabilityMajor,
                                            nppStreamCtx.nCudaDeviceId);
@@ -122,6 +123,7 @@ int main(int argc, char *argv[])
 
         cudaDeviceProp oDeviceProperties;
 
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         cudaError = cudaGetDeviceProperties(&oDeviceProperties, nppStreamCtx.nCudaDeviceId);
 
         nppStreamCtx.nMultiProcessorCount         = oDeviceProperties.multiProcessorCount;
@@ -204,12 +206,15 @@ int main(int argc, char *argv[])
         NppiSize oSizeROI = {(int)oDeviceSrc.width(), (int)oDeviceSrc.height()}; // full image
         // create device scratch buffer for nppiHistogram
         size_t nDeviceBufferSize;
+        // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         nppiHistogramEvenGetBufferSize_8u_C1R_Ctx(oSizeROI, levelCount, &nDeviceBufferSize, nppStreamCtx);
         Npp8u *pDeviceBuffer;
+        // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         NPP_CHECK_CUDA(cudaMalloc((void **)&pDeviceBuffer, nDeviceBufferSize));
 
         // compute levels values on host
         Npp32s levelsHost[levelCount];
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         NPP_CHECK_NPP(nppiEvenLevelsHost_32s(levelsHost, levelCount, 0, binCount));
         // compute the histogram
         NPP_CHECK_NPP(nppiHistogramEven_8u_C1R_Ctx(oDeviceSrc.data(),
@@ -269,9 +274,11 @@ int main(int argc, char *argv[])
         Npp32s *lutDevice  = 0;
         Npp32s *lvlsDevice = 0;
 
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         NPP_CHECK_CUDA(cudaMalloc((void **)&lutDevice, sizeof(Npp32s) * (levelCount)));
         NPP_CHECK_CUDA(cudaMalloc((void **)&lvlsDevice, sizeof(Npp32s) * (levelCount)));
 
+        // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         NPP_CHECK_CUDA(cudaMemcpy(lutDevice, lutHost, sizeof(Npp32s) * (levelCount), cudaMemcpyHostToDevice));
         NPP_CHECK_CUDA(cudaMemcpy(lvlsDevice, levelsHost, sizeof(Npp32s) * (levelCount), cudaMemcpyHostToDevice));
 
@@ -305,9 +312,11 @@ int main(int argc, char *argv[])
         npp::ImageCPU_8u_C1 oHostDst(oDeviceDst.size());
         oDeviceDst.copyTo(oHostDst.data(), oHostDst.pitch());
 
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         cudaFree(histDevice);
         cudaFree(levelsDevice);
         cudaFree(pDeviceBuffer);
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         nppiFree(oDeviceSrc.data());
         nppiFree(oDeviceDst.data());
 

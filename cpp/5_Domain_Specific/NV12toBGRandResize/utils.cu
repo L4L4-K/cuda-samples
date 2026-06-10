@@ -144,6 +144,7 @@ void dumpYUV(unsigned char *d_nv12, int size, char *folder, char *tag)
         return;
     }
 
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     cudaMemcpy((void *)nv12Data, (void *)d_nv12, size, cudaMemcpyDeviceToHost);
 
     nv12File->write((const char *)nv12Data, size);

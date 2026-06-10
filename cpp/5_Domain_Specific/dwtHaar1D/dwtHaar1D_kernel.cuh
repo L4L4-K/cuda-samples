@@ -130,6 +130,7 @@ __global__ void dwtHaar1D(float             *id,
                           const int          bdim)
 {
     // Handle to thread block group
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta = cg::this_thread_block();
 
     // shared memory for part of the signal
@@ -149,6 +150,7 @@ __global__ void dwtHaar1D(float             *id,
     // read data from global memory
     shared[tid]        = id[idata];
     shared[tid + bdim] = id[idata + bdim];
+    // JP: この連続する anchor 群では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     // this operation has a two way bank conflicts for all threads, this are two
@@ -172,6 +174,7 @@ __global__ void dwtHaar1D(float             *id,
 
     // all threads have to write approximation coefficient to shared memory before
     // next steps can take place
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
     // early out if possible
@@ -237,6 +240,7 @@ __global__ void dwtHaar1D(float             *id,
             }
 
             // sync after each decomposition step
+            // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
             cg::sync(cta);
         }
 

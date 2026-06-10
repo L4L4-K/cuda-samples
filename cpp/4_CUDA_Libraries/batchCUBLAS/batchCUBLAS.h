@@ -114,6 +114,7 @@ static __inline__ unsigned cuRand(void)
 // cuGet and cuEqual versions
 //==============================================================================
 
+// JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
 template <typename T_ELEM> __inline__ __device__ __host__ T_ELEM cuGet(double);
 template <> __inline__ __device__ __host__ float                 cuGet<float>(double x) { return float(x); }
 template <> __inline__ __device__ __host__ double                cuGet<double>(double x) { return double(x); }

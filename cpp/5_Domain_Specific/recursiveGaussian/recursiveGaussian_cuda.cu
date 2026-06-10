@@ -134,6 +134,7 @@ gaussianFilterRGBA(uint *d_src, uint *d_dest, uint *d_temp, int width, int heigh
 
 // process columns
 #if USE_SIMPLE_FILTER
+    // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     d_simpleRecursive_rgba<<<iDivUp(width, nthreads), nthreads>>>(d_src, d_temp, width, height, ema);
 #else
     d_recursiveGaussian_rgba<<<iDivUp(width, nthreads), nthreads>>>(
@@ -146,6 +147,7 @@ gaussianFilterRGBA(uint *d_src, uint *d_dest, uint *d_temp, int width, int heigh
 
 // process rows
 #if USE_SIMPLE_FILTER
+    // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     d_simpleRecursive_rgba<<<iDivUp(height, nthreads), nthreads>>>(d_dest, d_temp, height, width, ema);
 #else
     d_recursiveGaussian_rgba<<<iDivUp(height, nthreads), nthreads>>>(

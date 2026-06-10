@@ -104,6 +104,7 @@ extern "C" void binomialOptionsGPU(real *callValue, TOptionData *optionData, int
         h_OptionData[i].pdByDf = (real)pdByDf;
     }
 
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     CUfunction kernel_addr;
     checkCudaErrors(cuModuleGetFunction(&kernel_addr, module, "binomialOptionsKernel"));
 
@@ -132,5 +133,6 @@ extern "C" void binomialOptionsGPU(real *callValue, TOptionData *optionData, int
 
     CUdeviceptr d_CallValue;
     checkCudaErrors(cuModuleGetGlobal(&d_CallValue, NULL, module, "d_CallValue"));
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cuMemcpyDtoH(callValue, d_CallValue, optN * sizeof(real)));
 }

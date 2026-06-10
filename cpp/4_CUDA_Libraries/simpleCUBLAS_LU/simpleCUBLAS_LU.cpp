@@ -239,6 +239,7 @@ void getPmatFromPivot(DATA_TYPE *Pmat, int *P)
 int main(int argc, char **argv)
 {
     // cuBLAS variables
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cublasStatus_t status;
     cublasHandle_t handle;
 
@@ -326,6 +327,7 @@ int main(int argc, char **argv)
     // perform LU decomposition
     printf("> performing LU decomposition..\n");
 #ifdef PIVOT
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     status = cublasXgetrfBatched(handle, N, d_ptr_array, N, d_pivotArray, d_infoArray, BATCH_SIZE);
 #else
     status = cublasXgetrfBatched(handle, N, d_ptr_array, N, NULL, d_infoArray, BATCH_SIZE);
@@ -337,6 +339,7 @@ int main(int argc, char **argv)
 
     // copy data to host from device
     printf("> copying data from GPU memory to host memory..\n");
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_AarrayOutput, d_Aarray, BATCH_SIZE * matSize, cudaMemcpyDeviceToHost));
     checkCudaErrors(cudaMemcpy(h_infoArray, d_infoArray, BATCH_SIZE * sizeof(int), cudaMemcpyDeviceToHost));
 #ifdef PIVOT
@@ -408,6 +411,7 @@ int main(int argc, char **argv)
         free(h_AarrayInput);
 
     // destroy cuBLAS handle
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     status = cublasDestroy(handle);
     if (status != CUBLAS_STATUS_SUCCESS) {
         printf("> ERROR: cuBLAS uninitialization failed..\n");

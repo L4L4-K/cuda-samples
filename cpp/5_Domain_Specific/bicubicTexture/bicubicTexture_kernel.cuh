@@ -306,6 +306,7 @@ __global__ void d_renderBicubic(uchar4             *d_output,
                                 float               cy,
                                 cudaTextureObject_t texObj)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     uint x = __umul24(blockIdx.x, blockDim.x) + threadIdx.x;
     uint y = __umul24(blockIdx.y, blockDim.y) + threadIdx.y;
     uint i = __umul24(y, width) + x;
@@ -331,6 +332,7 @@ __global__ void d_renderFastBicubic(uchar4             *d_output,
                                     float               cy,
                                     cudaTextureObject_t texObj)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     uint x = __umul24(blockIdx.x, blockDim.x) + threadIdx.x;
     uint y = __umul24(blockIdx.y, blockDim.y) + threadIdx.y;
     uint i = __umul24(y, width) + x;
@@ -356,6 +358,7 @@ __global__ void d_renderCatRom(uchar4             *d_output,
                                float               cy,
                                cudaTextureObject_t texObj)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     uint x = __umul24(blockIdx.x, blockDim.x) + threadIdx.x;
     uint y = __umul24(blockIdx.y, blockDim.y) + threadIdx.y;
     uint i = __umul24(y, width) + x;

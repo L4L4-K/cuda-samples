@@ -150,7 +150,9 @@ void MonteCarloPiSimulation::initSimulation(int cudaDevice, cudaStream_t stream)
     // position buffer is inside the unit circle or not.
     setupSimulationAllocations();
 
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((float **)&m_numPointsInCircle, sizeof(*m_numPointsInCircle)));
+    // JP: この anchor では pinned host memory の登録/確保/解放です。async transfer や overlap の条件と lifetime を確認します。
     checkCudaErrors(cudaMallocHost((float **)&m_hostNumPointsInCircle, sizeof(*m_hostNumPointsInCircle)));
 }
 
@@ -164,6 +166,7 @@ void MonteCarloPiSimulation::stepSimulation(float time, cudaStream_t stream)
         m_xyVector, m_pointsInsideCircle, m_numPointsInCircle, m_numPoints, time);
     getLastCudaError("Failed to launch CUDA simulation");
 
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpyAsync(
         m_hostNumPointsInCircle, m_numPointsInCircle, sizeof(*m_numPointsInCircle), cudaMemcpyDeviceToHost, stream));
 
@@ -182,6 +185,7 @@ void MonteCarloPiSimulation::computePiCallback(void *args)
 
 void MonteCarloPiSimulation::getIdealExecutionConfiguration()
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     int warpSize            = 0;
     int multiProcessorCount = 0;
 
@@ -258,6 +262,7 @@ void MonteCarloPiSimulation::setupSimulationAllocations()
     m_xyVector              = (vec2 *)va_position;
 
     // Assign the chunk to the appropriate VA range
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuMemMap(va_position, xyPositionSize, 0, cudaPositionHandle, 0));
     checkCudaErrors(cuMemMap(va_InCircle, inCircleSize, 0, cudaInCircleHandle, 0));
 
@@ -275,6 +280,7 @@ void MonteCarloPiSimulation::setupSimulationAllocations()
 
     // Apply the access descriptor to the whole VA range. Essentially enables
     // Read-Write access to the range.
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     checkCudaErrors(cuMemSetAccess(d_ptr, m_totalAllocationSize, &accessDescriptor, 1));
 }
 

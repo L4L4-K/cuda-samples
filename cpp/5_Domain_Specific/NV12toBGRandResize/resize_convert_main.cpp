@@ -268,6 +268,7 @@ void nv12ResizeAndNV12ToBGR(unsigned char *d_inputNV12)
     size = g_ctx.dst_pitch * g_ctx.dst_height * 3 * g_ctx.batch * sizeof(float);
     checkCudaErrors(cudaMalloc((void **)&d_outputBGR, size));
 
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaStream_t stream;
     checkCudaErrors(cudaStreamCreate(&stream));
     /* create cuda event handles */
@@ -308,6 +309,7 @@ void nv12ResizeAndNV12ToBGR(unsigned char *d_inputNV12)
     sprintf(filename, "resized_nv12_%dx%d", g_ctx.dst_width, g_ctx.dst_height);
 
     /* convert nv12 to bgr 3 progressive planars */
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaEventRecord(start, 0);
     for (int i = 0; i < TEST_LOOP; i++) {
         nv12ToBGRplanarBatch(d_resizedNV12,
@@ -319,6 +321,7 @@ void nv12ResizeAndNV12ToBGR(unsigned char *d_inputNV12)
                              g_ctx.batch,
                              0);
     }
+    // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     cudaEventRecord(stop, 0);
     cudaEventSynchronize(stop);
 
@@ -338,6 +341,7 @@ void nv12ResizeAndNV12ToBGR(unsigned char *d_inputNV12)
     dumpBGR(d_outputBGR, g_ctx.dst_pitch, g_ctx.dst_width, g_ctx.dst_height, g_ctx.batch, (char *)"t1", filename);
 
     /* release resources */
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaEventDestroy(start));
     checkCudaErrors(cudaEventDestroy(stop));
     checkCudaErrors(cudaStreamDestroy(stream));
@@ -358,12 +362,14 @@ void nv12ToBGRandBGRresize(unsigned char *d_inputNV12)
 
     /* allocate device memory for bgr output */
     size = g_ctx.ctx_pitch * g_ctx.height * 3 * g_ctx.batch * sizeof(float);
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&d_bgr, size));
 
     /* allocate device memory for resized bgr output */
     size = g_ctx.dst_width * g_ctx.dst_height * 3 * g_ctx.batch * sizeof(float);
     checkCudaErrors(cudaMalloc((void **)&d_resizedBGR, size));
 
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaStream_t stream;
     checkCudaErrors(cudaStreamCreate(&stream));
     /* create cuda event handles */
@@ -374,6 +380,7 @@ void nv12ToBGRandBGRresize(unsigned char *d_inputNV12)
 
     /* convert interlace nv12 to bgr 3 progressive planars */
     cudaEventRecord(start, 0);
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     cudaDeviceSynchronize();
     for (int i = 0; i < TEST_LOOP; i++) {
         nv12ToBGRplanarBatch(d_inputNV12,
@@ -385,6 +392,7 @@ void nv12ToBGRandBGRresize(unsigned char *d_inputNV12)
                              g_ctx.batch,
                              0);
     }
+    // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     cudaEventRecord(stop, 0);
     cudaEventSynchronize(stop);
 
@@ -402,6 +410,7 @@ void nv12ToBGRandBGRresize(unsigned char *d_inputNV12)
     sprintf(filename, "converted_bgr_%dx%d", g_ctx.width, g_ctx.height);
 
     /* resize bgr 3 progressive planars */
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaEventRecord(start, 0);
     for (int i = 0; i < TEST_LOOP; i++) {
         resizeBGRplanarBatch(d_bgr,
@@ -414,6 +423,7 @@ void nv12ToBGRandBGRresize(unsigned char *d_inputNV12)
                              g_ctx.dst_height,
                              g_ctx.batch);
     }
+    // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     cudaEventRecord(stop, 0);
     cudaEventSynchronize(stop);
 
@@ -433,6 +443,7 @@ void nv12ToBGRandBGRresize(unsigned char *d_inputNV12)
     dumpBGR(d_resizedBGR, g_ctx.dst_pitch, g_ctx.dst_width, g_ctx.dst_height, g_ctx.batch, (char *)"t2", filename);
 
     /* release resources */
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaEventDestroy(start));
     checkCudaErrors(cudaEventDestroy(stop));
     checkCudaErrors(cudaStreamDestroy(stream));
@@ -460,6 +471,7 @@ int main(int argc, char *argv[])
         (void **)&d_inputNV12, (g_ctx.ctx_pitch * g_ctx.ctx_heights * g_ctx.batch), cudaMemAttachHost));
     printf("\nUSE_UVM_MEM\n");
 #else
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&d_inputNV12, (g_ctx.ctx_pitch * g_ctx.ctx_heights * g_ctx.batch)));
 #endif
     if (loadNV12Frame(d_inputNV12)) {
@@ -475,6 +487,7 @@ int main(int argc, char *argv[])
     printf("\nTEST#2:\n");
     nv12ToBGRandBGRresize(d_inputNV12);
 
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(d_inputNV12));
 
     return EXIT_SUCCESS;

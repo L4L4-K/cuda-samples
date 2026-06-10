@@ -57,7 +57,7 @@ extern "C" __global__ void timedReduction(const float *input, float *output, clo
 
     // Perform reduction to find minimum.
     for (int d = blockDim.x; d > 0; d /= 2) {
-        // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         __syncthreads();
 
         if (tid < d) {
@@ -74,8 +74,10 @@ extern "C" __global__ void timedReduction(const float *input, float *output, clo
     if (tid == 0)
         output[bid] = shared[0];
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     __syncthreads();
 
     if (tid == 0)
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         timer[bid + gridDim.x] = clock();
 }

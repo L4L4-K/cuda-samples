@@ -103,9 +103,11 @@ template <typename T> struct Task
         // allocate unified memory outside of constructor
         id   = unique_id;
         size = s;
+        // JP: この連続する anchor 群では Unified Memory allocation/prefetch/advice です。migration、host/device visibility、同期位置 を確認します。
         checkCudaErrors(cudaMallocManaged(&data, sizeof(T) * size * size));
         checkCudaErrors(cudaMallocManaged(&result, sizeof(T) * size));
         checkCudaErrors(cudaMallocManaged(&vector, sizeof(T) * size));
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaDeviceSynchronize());
 
         // populate data with random elements
@@ -153,7 +155,9 @@ template <typename T> void gemv(int m, int n, T alpha, T *A, T *x, T beta, T *re
 void *execute(void *inpArgs)
 {
     threadData     *dataPtr = (threadData *)inpArgs;
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaStream_t   *stream  = dataPtr->streams;
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cublasHandle_t *handle  = dataPtr->handles;
     int             tid     = dataPtr->tid;
 
@@ -166,6 +170,7 @@ void *execute(void *inpArgs)
 
             // attach managed memory to a (dummy) stream to allow host access while
             // the device is running
+            // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
             checkCudaErrors(cudaStreamAttachMemAsync(stream[0], t.data, 0, cudaMemAttachHost));
             checkCudaErrors(cudaStreamAttachMemAsync(stream[0], t.vector, 0, cudaMemAttachHost));
             checkCudaErrors(cudaStreamAttachMemAsync(stream[0], t.result, 0, cudaMemAttachHost));
@@ -181,11 +186,14 @@ void *execute(void *inpArgs)
             double zero = 0.0;
 
             // attach managed memory to my stream
+            // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
             checkCudaErrors(cublasSetStream(handle[tid + 1], stream[tid + 1]));
+            // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
             checkCudaErrors(cudaStreamAttachMemAsync(stream[tid + 1], t.data, 0, cudaMemAttachSingle));
             checkCudaErrors(cudaStreamAttachMemAsync(stream[tid + 1], t.vector, 0, cudaMemAttachSingle));
             checkCudaErrors(cudaStreamAttachMemAsync(stream[tid + 1], t.result, 0, cudaMemAttachSingle));
             // call the device operation
+            // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
             checkCudaErrors(cublasDgemv(
                 handle[tid + 1], CUBLAS_OP_N, t.size, t.size, &one, t.data, t.size, t.vector, 1, &zero, t.result, 1));
         }
@@ -194,6 +202,7 @@ void *execute(void *inpArgs)
     pthread_exit(NULL);
 }
 #else
+// JP: この host fallback path は cublasHandle と dummy stream を受け取り、managed memory を host へ attach してから stream sync で visibility をそろえます。
 template <typename T> void execute(Task<T> &t, cublasHandle_t *handle, cudaStream_t *stream, int tid)
 {
     if (t.size < 100) {
@@ -217,11 +226,14 @@ template <typename T> void execute(Task<T> &t, cublasHandle_t *handle, cudaStrea
         double zero = 0.0;
 
         // attach managed memory to my stream
+        // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         checkCudaErrors(cublasSetStream(handle[tid + 1], stream[tid + 1]));
+        // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         checkCudaErrors(cudaStreamAttachMemAsync(stream[tid + 1], t.data, 0, cudaMemAttachSingle));
         checkCudaErrors(cudaStreamAttachMemAsync(stream[tid + 1], t.vector, 0, cudaMemAttachSingle));
         checkCudaErrors(cudaStreamAttachMemAsync(stream[tid + 1], t.result, 0, cudaMemAttachSingle));
         // call the device operation
+        // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         checkCudaErrors(cublasDgemv(
             handle[tid + 1], CUBLAS_OP_N, t.size, t.size, &one, t.data, t.size, t.vector, 1, &zero, t.result, 1));
     }
@@ -272,11 +284,15 @@ int main(int argc, char **argv)
     const int nthreads = 4;
 
     // number of streams = number of threads
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaStream_t   *streams = new cudaStream_t[nthreads + 1];
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     cublasHandle_t *handles = new cublasHandle_t[nthreads + 1];
 
     for (int i = 0; i < nthreads + 1; i++) {
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         checkCudaErrors(cudaStreamCreate(&streams[i]));
+        // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         checkCudaErrors(cublasCreate(&handles[i]));
     }
 
@@ -329,11 +345,14 @@ int main(int argc, char **argv)
     }
 #endif
 
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     cudaDeviceSynchronize();
 
     // Destroy CUDA Streams, cuBlas handles
     for (int i = 0; i < nthreads + 1; i++) {
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         cudaStreamDestroy(streams[i]);
+        // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         cublasDestroy(handles[i]);
     }
 

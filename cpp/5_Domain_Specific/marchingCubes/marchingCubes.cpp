@@ -252,6 +252,7 @@ void cleanup();
 
 bool initGL(int *argc, char **argv);
 void createVBO(GLuint *vbo, unsigned int size);
+// JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
 void deleteVBO(GLuint *vbo, struct cudaGraphicsResource **cuda_resource);
 
 void display();
@@ -342,6 +343,7 @@ template <class T> void dumpBuffer(T *d_buffer, int nelements, int size_element)
 {
     uint bytes    = nelements * size_element;
     T   *h_buffer = (T *)malloc(bytes);
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(h_buffer, d_buffer, bytes, cudaMemcpyDeviceToHost));
 
     for (int i = 0; i < nelements; i++) {
@@ -497,6 +499,7 @@ void initMC(int argc, char **argv)
 #endif
 
     if (g_bValidate) {
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         cudaMalloc((void **)&(d_pos), maxVerts * sizeof(float) * 4);
         cudaMalloc((void **)&(d_normal), maxVerts * sizeof(float) * 4);
     }
@@ -504,6 +507,7 @@ void initMC(int argc, char **argv)
         // create VBOs
         createVBO(&posVbo, maxVerts * sizeof(float) * 4);
         // DEPRECATED: checkCudaErrors( cudaGLRegisterBufferObject(posVbo) );
+        // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         checkCudaErrors(cudaGraphicsGLRegisterBuffer(&cuda_posvbo_resource, posVbo, cudaGraphicsMapFlagsWriteDiscard));
 
         createVBO(&normalVbo, maxVerts * sizeof(float) * 4);
@@ -517,6 +521,7 @@ void initMC(int argc, char **argv)
 
     // allocate device memory
     unsigned int memSize = sizeof(uint) * numVoxels;
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&d_voxelVerts, memSize));
     checkCudaErrors(cudaMalloc((void **)&d_voxelVertsScan, memSize));
     checkCudaErrors(cudaMalloc((void **)&d_voxelOccupied, memSize));
@@ -537,6 +542,7 @@ void cleanup()
         deleteVBO(&normalVbo, &cuda_normalvbo_resource);
     }
     destroyAllTextureObjects();
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(d_edgeTable));
     checkCudaErrors(cudaFree(d_triTable));
     checkCudaErrors(cudaFree(d_numVertsTable));
@@ -652,6 +658,7 @@ void computeIsosurface()
     // the scan result plus the last value in the input array
     {
         uint lastElement, lastScanElement;
+        // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemcpy(
             (void *)&lastElement, (void *)(d_voxelOccupied + numVoxels - 1), sizeof(uint), cudaMemcpyDeviceToHost));
         checkCudaErrors(cudaMemcpy((void *)&lastScanElement,
@@ -684,6 +691,7 @@ void computeIsosurface()
     // readback total number of vertices
     {
         uint lastElement, lastScanElement;
+        // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         checkCudaErrors(cudaMemcpy(
             (void *)&lastElement, (void *)(d_voxelVerts + numVoxels - 1), sizeof(uint), cudaMemcpyDeviceToHost));
         checkCudaErrors(cudaMemcpy((void *)&lastScanElement,
@@ -698,6 +706,7 @@ void computeIsosurface()
         size_t num_bytes;
         // DEPRECATED: checkCudaErrors(cudaGLMapBufferObject((void**)&d_pos,
         // posVbo));
+        // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         checkCudaErrors(cudaGraphicsMapResources(1, &cuda_posvbo_resource, 0));
         checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&d_pos, &num_bytes, cuda_posvbo_resource));
 
@@ -751,6 +760,7 @@ void computeIsosurface()
 
     if (!g_bValidate) {
         // DEPRECATED:      checkCudaErrors(cudaGLUnmapBufferObject(normalVbo));
+        // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         checkCudaErrors(cudaGraphicsUnmapResources(1, &cuda_normalvbo_resource, 0));
         // DEPRECATED:      checkCudaErrors(cudaGLUnmapBufferObject(posVbo));
         checkCudaErrors(cudaGraphicsUnmapResources(1, &cuda_posvbo_resource, 0));
@@ -851,6 +861,7 @@ void createVBO(GLuint *vbo, unsigned int size)
 ////////////////////////////////////////////////////////////////////////////////
 //! Delete VBO
 ////////////////////////////////////////////////////////////////////////////////
+// JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
 void deleteVBO(GLuint *vbo, struct cudaGraphicsResource **cuda_resource)
 {
     glBindBuffer(1, *vbo);

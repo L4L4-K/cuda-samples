@@ -62,6 +62,7 @@ __global__ void scalarProdGPU(float *d_C, float *d_A, float *d_B, int vectorN, i
     // taking into account that vector counts can be different
     // from total number of thread blocks
     ////////////////////////////////////////////////////////////////////////////
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     for (int vec = blockIdx.x; vec < vectorN; vec += gridDim.x) {
         int vectorBase = IMUL(elementN, vec);
         int vectorEnd  = vectorBase + elementN;
@@ -72,6 +73,7 @@ __global__ void scalarProdGPU(float *d_C, float *d_A, float *d_B, int vectorN, i
         // At this stage ACCUM_N is only preferred be a multiple of warp size
         // to meet memory coalescing alignment constraints.
         ////////////////////////////////////////////////////////////////////////
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         for (int iAccum = threadIdx.x; iAccum < ACCUM_N; iAccum += blockDim.x) {
             float sum = 0;
 
@@ -93,8 +95,10 @@ __global__ void scalarProdGPU(float *d_C, float *d_A, float *d_B, int vectorN, i
                 accumResult[iAccum] += accumResult[stride + iAccum];
         }
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
 
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
         if (threadIdx.x == 0)
             d_C[vec] = accumResult[0];
     }

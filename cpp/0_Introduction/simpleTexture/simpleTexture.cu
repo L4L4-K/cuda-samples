@@ -207,11 +207,13 @@ void runTest(int argc, char **argv)
     sdkStartTimer(&timer);
 
     // Execute the kernel
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     transformKernel<<<dimGrid, dimBlock, 0>>>(dData, width, height, angle, tex);
 
     // Check if kernel execution generated an error
     getLastCudaError("Kernel execution failed");
 
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
     sdkStopTimer(&timer);
     printf("Processing time: %f (ms)\n", sdkGetTimerValue(&timer));
@@ -221,6 +223,7 @@ void runTest(int argc, char **argv)
     // Allocate mem for the result on host side
     float *hOutputData = (float *)malloc(size);
     // copy result from device to host
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy(hOutputData, dData, size, cudaMemcpyDeviceToHost));
 
     // Write result to file

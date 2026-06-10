@@ -57,6 +57,7 @@ __global__ void initRNG(curandState *const rngStates, const unsigned int seed)
     curand_init(seed, tid, 0, &rngStates[tid]);
 }
 
+// JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
 __device__ inline float getPathStep(float &drift, float &diffusion, curandState &state)
 {
     return expf(drift + diffusion * curand_normal(&state));
@@ -75,6 +76,7 @@ __global__ void generatePaths(Real *const                    paths,
                               const unsigned int             numTimesteps)
 {
     // Determine thread ID
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned int tid  = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int step = gridDim.x * blockDim.x;
 
@@ -83,6 +85,7 @@ __global__ void generatePaths(Real *const                    paths,
     Real diffusion = option->sigma * sqrt(option->dt);
 
     // Initialise the RNG
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     curandState localState = rngStates[tid];
 
     for (unsigned int i = tid; i < numSims; i += step) {
@@ -106,6 +109,7 @@ template <typename Real> __device__ Real reduce_sum(Real in, cg::thread_block ct
 
     // Perform first level of reduction:
     // - Write to shared memory
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     unsigned int ltid = threadIdx.x;
 
     sdata[ltid] = in;
@@ -118,6 +122,7 @@ template <typename Real> __device__ Real reduce_sum(Real in, cg::thread_block ct
             sdata[ltid] += sdata[ltid + s];
         }
 
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         cg::sync(cta);
     }
 
@@ -133,6 +138,7 @@ __global__ void computeValue(Real *const                    values,
                              const unsigned int             numTimesteps)
 {
     // Handle to thread block group
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta = cg::this_thread_block();
     // Determine thread ID
     unsigned int bid  = blockIdx.x;
@@ -168,6 +174,7 @@ __global__ void computeValue(Real *const                    values,
     sumPayoffs = reduce_sum<Real>(sumPayoffs, cta);
 
     // Store the result
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x == 0) {
         values[bid] = sumPayoffs;
     }
@@ -293,6 +300,7 @@ template <typename Real> void PricingEngine<Real>::operator()(AsianOption<Real> 
     // Allocate memory for paths
     Real *d_paths      = 0;
     int   numTimesteps = static_cast<int>(option.tenor / option.dt);
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     cudaResult         = cudaMalloc((void **)&d_paths, m_numSims * numTimesteps * sizeof(Real));
 
     if (cudaResult != cudaSuccess) {
@@ -302,6 +310,7 @@ template <typename Real> void PricingEngine<Real>::operator()(AsianOption<Real> 
     }
 
     // Allocate memory for RNG states
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     curandState *d_rngStates = 0;
     cudaResult               = cudaMalloc((void **)&d_rngStates, grid.x * block.x * sizeof(curandState));
 
@@ -313,6 +322,7 @@ template <typename Real> void PricingEngine<Real>::operator()(AsianOption<Real> 
 
     // Allocate memory for result
     Real *d_values = 0;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     cudaResult     = cudaMalloc((void **)&d_values, grid.x * sizeof(Real));
 
     if (cudaResult != cudaSuccess) {
@@ -333,6 +343,7 @@ template <typename Real> void PricingEngine<Real>::operator()(AsianOption<Real> 
 
     // Copy partial results back
     vector<Real> values(grid.x);
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     cudaResult = cudaMemcpy(&values[0], d_values, grid.x * sizeof(Real), cudaMemcpyDeviceToHost);
 
     if (cudaResult != cudaSuccess) {

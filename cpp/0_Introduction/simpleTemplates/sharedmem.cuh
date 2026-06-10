@@ -85,6 +85,7 @@ template <typename T> struct SharedMemory
 // int, uint, char, uchar, short, ushort, long, ulong, bool, float, and double
 // One could also specialize it for user-defined types.
 
+// JP: この連続する anchor 群では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
 template <> struct SharedMemory<int>
 {
     __device__ int *getPointer()

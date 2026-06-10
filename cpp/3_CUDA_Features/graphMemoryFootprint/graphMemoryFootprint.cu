@@ -55,6 +55,7 @@ void prepareAllocParams(cudaMemAllocNodeParams *allocParams, size_t bytes, int d
     allocParams->poolProps.location.type = cudaMemLocationTypeDevice;
 }
 
+// JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
 void createVirtAddrReuseGraph(cudaGraphExec_t *graphExec, size_t bytes, int device)
 {
     cudaGraph_t            graph;
@@ -81,6 +82,7 @@ void createVirtAddrReuseGraph(cudaGraphExec_t *graphExec, size_t bytes, int devi
         printf("Check shows that d_a and d_b DO NOT share a virtual address.\n");
     }
 
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphAddMemFreeNode(&freeNodeB, graph, &allocNodeB, 1, (void *)d_b));
 
     checkCudaErrors(cudaGraphInstantiate(graphExec, graph, NULL, NULL, 0));
@@ -99,6 +101,7 @@ void virtualAddressReuseSingleGraph(size_t bytes, int device)
            "reuse virtual addresses.\n\n");
 
     createVirtAddrReuseGraph(&graphExec, bytes, device);
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
     checkCudaErrors(cudaGraphLaunch(graphExec, stream));
@@ -139,6 +142,7 @@ __global__ void clockBlock(clock_t clock_count)
 // A pointer to the allocated device buffer is returned in dPtr so the caller
 // can compare virtual addresses. The kernel node is added to increase the
 // graph's runtime.
+// JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
 void createSimpleAllocFreeGraph(cudaGraphExec_t *graphExec, float **dPtr, size_t bytes, int device)
 {
     cudaGraph_t            graph;
@@ -168,6 +172,7 @@ void createSimpleAllocFreeGraph(cudaGraphExec_t *graphExec, float **dPtr, size_t
     blockDeviceNodeParams.extra          = NULL;
     blockDeviceNodeParams.func           = (void *)clockBlock;
     blockDeviceNodeParams.kernelParams   = (void **)blockDeviceArgs;
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphAddKernelNode(&blockDeviceNode, graph, &allocNodeA, 1, &blockDeviceNodeParams));
 
     checkCudaErrors(cudaGraphAddMemFreeNode(&freeNodeA, graph, &blockDeviceNode, 1, (void *)*dPtr));
@@ -178,7 +183,9 @@ void createSimpleAllocFreeGraph(cudaGraphExec_t *graphExec, float **dPtr, size_t
 
 void physicalMemoryReuseSingleStream(size_t bytes, int device)
 {
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaStream_t    stream;
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     cudaGraphExec_t graphExecs[NUM_GRAPHS];
     float          *dPtrs[NUM_GRAPHS];
     bool            virtualAddrDiffer = true;
@@ -195,8 +202,10 @@ void physicalMemoryReuseSingleStream(size_t bytes, int device)
     printf("Creating the graph execs does not reserve any physical memory.\n");
     printMemoryFootprint(device);
 
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphLaunch(graphExecs[0], stream));
     printf("\nThe first graph launched reserves the memory it needs.\n");
     printMemoryFootprint(device);
@@ -211,11 +220,13 @@ void physicalMemoryReuseSingleStream(size_t bytes, int device)
            "physical memory. ");
     printf("Thus the memory footprint does not grow here.\n");
     for (int i = 1; i < NUM_GRAPHS; i++) {
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         checkCudaErrors(cudaGraphLaunch(graphExecs[i], stream));
         printf("%02d: ", i);
         printMemoryFootprint(device);
     }
 
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaStreamSynchronize(stream));
 
     for (int i = 0; i < NUM_GRAPHS; i++) {
@@ -225,6 +236,7 @@ void physicalMemoryReuseSingleStream(size_t bytes, int device)
                 printf("Error: Graph exec %d and %d have the same virtual address!\n", i - 1, i);
             }
         }
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         checkCudaErrors(cudaGraphExecDestroy(graphExecs[i]));
     }
     if (virtualAddrDiffer) {
@@ -235,12 +247,14 @@ void physicalMemoryReuseSingleStream(size_t bytes, int device)
         exit(EXIT_FAILURE);
     }
 
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamDestroy(stream));
 }
 
 void simultaneousStreams(size_t bytes, int device)
 {
     cudaStream_t    streams[NUM_GRAPHS];
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     cudaGraphExec_t graphExecs[NUM_GRAPHS];
     float          *dPtrs[NUM_GRAPHS];
 
@@ -259,6 +273,7 @@ void simultaneousStreams(size_t bytes, int device)
 
     for (int i = 0; i < NUM_GRAPHS; i++) {
         createSimpleAllocFreeGraph(&graphExecs[i], &dPtrs[i], bytes, device);
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         checkCudaErrors(cudaStreamCreateWithFlags(&streams[i], cudaStreamNonBlocking));
     }
 
@@ -267,18 +282,23 @@ void simultaneousStreams(size_t bytes, int device)
 
     printf("\nEach graph launch in a seperate stream grows the memory footprint:\n");
     for (int i = 1; i < NUM_GRAPHS; i++) {
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         checkCudaErrors(cudaGraphLaunch(graphExecs[i], streams[i]));
         printf("%02d: ", i);
         printMemoryFootprint(device);
     }
 
     for (int i = 0; i < NUM_GRAPHS; i++) {
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaStreamSynchronize(streams[i]));
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         checkCudaErrors(cudaGraphExecDestroy(graphExecs[i]));
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         checkCudaErrors(cudaStreamDestroy(streams[i]));
     }
 }
 
+// JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
 void createSimpleAllocNoFreeGraph(cudaGraphExec_t *graphExec, float **dPtr, size_t bytes, int device)
 {
     cudaGraph_t            graph;
@@ -297,7 +317,9 @@ void createSimpleAllocNoFreeGraph(cudaGraphExec_t *graphExec, float **dPtr, size
 
 void unfreedAllocations(size_t bytes, int device)
 {
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     cudaStream_t    stream;
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     cudaGraphExec_t graphExecs[NUM_GRAPHS];
     float          *dPtrs[NUM_GRAPHS];
 
@@ -310,6 +332,7 @@ void unfreedAllocations(size_t bytes, int device)
         createSimpleAllocNoFreeGraph(&graphExecs[i], &dPtrs[i], bytes, device);
     }
 
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
     printf("Despite being launched in the same stream, each graph launch grows the "
@@ -317,11 +340,13 @@ void unfreedAllocations(size_t bytes, int device)
     printf("Since the allocation is not freed, CUDA keeps the memory valid for "
            "use.\n");
     for (int i = 0; i < NUM_GRAPHS; i++) {
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         checkCudaErrors(cudaGraphLaunch(graphExecs[i], stream));
         printf("%02d: ", i);
         printMemoryFootprint(device);
     }
 
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaStreamSynchronize(stream));
 
     checkCudaErrors(cudaDeviceGraphMemTrim(device));
@@ -342,8 +367,10 @@ void unfreedAllocations(size_t bytes, int device)
     printMemoryFootprint(device);
 
     for (int i = 0; i < NUM_GRAPHS; i++) {
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
         checkCudaErrors(cudaGraphExecDestroy(graphExecs[i]));
     }
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamDestroy(stream));
 }
 

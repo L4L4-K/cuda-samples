@@ -147,6 +147,7 @@ __global__ void mergeSortSharedKernel(uint *d_DstKey, uint *d_DstVal, uint *d_Sr
     }
 
     cg::sync(cta);
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     d_DstKey[0]                       = s_key[threadIdx.x + 0];
     d_DstVal[0]                       = s_val[threadIdx.x + 0];
     d_DstKey[(SHARED_SIZE_LIMIT / 2)] = s_key[threadIdx.x + (SHARED_SIZE_LIMIT / 2)];
@@ -189,6 +190,7 @@ template <uint sortDir>
 __global__ void
 generateSampleRanksKernel(uint *d_RanksA, uint *d_RanksB, uint *d_SrcKey, uint stride, uint N, uint threadCount)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     uint pos = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (pos >= threadCount) {
@@ -227,6 +229,7 @@ static void generateSampleRanks(uint *d_RanksA, uint *d_RanksB, uint *d_SrcKey, 
 
     if (sortDir) {
         generateSampleRanksKernel<1U>
+            // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
             <<<iDivUp(threadCount, 256), 256>>>(d_RanksA, d_RanksB, d_SrcKey, stride, N, threadCount);
         getLastCudaError("generateSampleRanksKernel<1U><<<>>> failed\n");
     }
@@ -242,6 +245,7 @@ static void generateSampleRanks(uint *d_RanksA, uint *d_RanksB, uint *d_SrcKey, 
 ////////////////////////////////////////////////////////////////////////////////
 __global__ void mergeRanksAndIndicesKernel(uint *d_Limits, uint *d_Ranks, uint stride, uint N, uint threadCount)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     uint pos = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (pos >= threadCount) {
@@ -279,6 +283,7 @@ static void mergeRanksAndIndices(uint *d_LimitsA, uint *d_LimitsB, uint *d_Ranks
     uint threadCount = (lastSegmentElements > stride) ? (N + 2 * stride - lastSegmentElements) / (2 * SAMPLE_STRIDE)
                                                       : (N - lastSegmentElements) / (2 * SAMPLE_STRIDE);
 
+    // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     mergeRanksAndIndicesKernel<<<iDivUp(threadCount, 256), 256>>>(d_LimitsA, d_RanksA, stride, N, threadCount);
     getLastCudaError("mergeRanksAndIndicesKernel(A)<<<>>> failed\n");
 
@@ -304,6 +309,7 @@ inline __device__ void merge(uint            *dstKey,
 {
     uint keyA, valA, keyB, valB, dstPosA, dstPosB;
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x < lenA) {
         keyA    = srcAKey[threadIdx.x];
         valA    = srcAVal[threadIdx.x];
@@ -316,8 +322,10 @@ inline __device__ void merge(uint            *dstKey,
         dstPosB = binarySearchInclusive<sortDir>(keyB, srcAKey, lenA, nPowTwoLenA) + threadIdx.x;
     }
 
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x < lenA) {
         dstKey[dstPosA] = keyA;
         dstVal[dstPosA] = valA;
@@ -340,10 +348,13 @@ __global__ void mergeElementaryIntervalsKernel(uint *d_DstKey,
                                                uint  N)
 {
     // Handle to thread block group
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     cg::thread_block cta = cg::this_thread_block();
+    // JP: この連続する anchor 群では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ uint  s_key[2 * SAMPLE_STRIDE];
     __shared__ uint  s_val[2 * SAMPLE_STRIDE];
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const uint intervalI   = blockIdx.x & ((2 * stride) / SAMPLE_STRIDE - 1);
     const uint segmentBase = (blockIdx.x - intervalI) * SAMPLE_STRIDE;
     d_SrcKey += segmentBase;
@@ -352,8 +363,10 @@ __global__ void mergeElementaryIntervalsKernel(uint *d_DstKey,
     d_DstVal += segmentBase;
 
     // Set up threadblock-wide parameters
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
     __shared__ uint startSrcA, startSrcB, lenSrcA, lenSrcB, startDstA, startDstB;
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x == 0) {
         uint segmentElementsA = stride;
         uint segmentElementsB = umin(stride, N - segmentBase - stride);
@@ -372,8 +385,10 @@ __global__ void mergeElementaryIntervalsKernel(uint *d_DstKey,
     }
 
     // Load main input data
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x < lenSrcA) {
         s_key[threadIdx.x + 0] = d_SrcKey[0 + startSrcA + threadIdx.x];
         s_val[threadIdx.x + 0] = d_SrcVal[0 + startSrcA + threadIdx.x];
@@ -385,6 +400,7 @@ __global__ void mergeElementaryIntervalsKernel(uint *d_DstKey,
     }
 
     // Merge data in shared memory
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
     merge<sortDir>(s_key,
                    s_val,
@@ -399,8 +415,10 @@ __global__ void mergeElementaryIntervalsKernel(uint *d_DstKey,
                    cta);
 
     // Store merged data
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
     cg::sync(cta);
 
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     if (threadIdx.x < lenSrcA) {
         d_DstKey[startDstA + threadIdx.x] = s_key[threadIdx.x];
         d_DstVal[startDstA + threadIdx.x] = s_val[threadIdx.x];
@@ -427,6 +445,7 @@ static void mergeElementaryIntervals(uint *d_DstKey,
 
     if (sortDir) {
         mergeElementaryIntervalsKernel<1U>
+            // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
             <<<mergePairs, SAMPLE_STRIDE>>>(d_DstKey, d_DstVal, d_SrcKey, d_SrcVal, d_LimitsA, d_LimitsB, stride, N);
         getLastCudaError("mergeElementaryIntervalsKernel<1> failed\n");
     }

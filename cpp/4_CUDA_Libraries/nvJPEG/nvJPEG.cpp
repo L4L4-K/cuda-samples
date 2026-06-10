@@ -64,6 +64,7 @@ struct decode_params_t
 
     // used with decoupled API
     nvjpegJpegState_t    nvjpeg_decoupled_state;
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     nvjpegBufferPinned_t pinned_buffers[2]; // 2 buffers for pipelining
     nvjpegBufferDevice_t device_buffer;
     nvjpegJpegStream_t   jpeg_streams[2]; //  2 streams for pipelining
@@ -135,6 +136,7 @@ int prepare_buffers(FileData                   &file_data,
                     std::vector<size_t>        &file_len,
                     std::vector<int>           &img_width,
                     std::vector<int>           &img_height,
+                    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                     std::vector<nvjpegImage_t> &ibuf,
                     std::vector<nvjpegImage_t> &isz,
                     FileNames                  &current_names,
@@ -212,6 +214,7 @@ int prepare_buffers(FileData                   &file_data,
             ibuf[i].pitch[c] = aw;
             if (sz > isz[i].pitch[c]) {
                 if (ibuf[i].channel[c]) {
+                    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
                     checkCudaErrors(cudaFree(ibuf[i].channel[c]));
                 }
                 checkCudaErrors(cudaMalloc(&ibuf[i].channel[c], sz));
@@ -225,6 +228,7 @@ int prepare_buffers(FileData                   &file_data,
 void create_decoupled_api_handles(decode_params_t &params)
 {
 
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(nvjpegDecoderCreate(params.nvjpeg_handle, NVJPEG_BACKEND_DEFAULT, &params.nvjpeg_decoder));
     checkCudaErrors(
         nvjpegDecoderStateCreate(params.nvjpeg_handle, params.nvjpeg_decoder, &params.nvjpeg_decoupled_state));
@@ -257,12 +261,14 @@ void release_buffers(std::vector<nvjpegImage_t> &ibuf)
     for (int i = 0; i < ibuf.size(); i++) {
         for (int c = 0; c < NVJPEG_MAX_COMPONENT; c++)
             if (ibuf[i].channel[c])
+                // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
                 checkCudaErrors(cudaFree(ibuf[i].channel[c]));
     }
 }
 
 int decode_images(const FileData             &img_data,
                   const std::vector<size_t>  &img_len,
+                  // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                   std::vector<nvjpegImage_t> &out,
                   decode_params_t            &params,
                   double                     &time)
@@ -272,6 +278,7 @@ int decode_images(const FileData             &img_data,
     cudaEvent_t startEvent = NULL, stopEvent = NULL;
     float       loopTime = 0;
 
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaEventCreate(&startEvent, cudaEventBlockingSync));
     checkCudaErrors(cudaEventCreate(&stopEvent, cudaEventBlockingSync));
 
@@ -280,6 +287,7 @@ int decode_images(const FileData             &img_data,
         {
             checkCudaErrors(cudaEventRecord(startEvent, params.stream));
             for (int i = 0; i < params.batch_size; i++) {
+                // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 checkCudaErrors(nvjpegDecode(params.nvjpeg_handle,
                                              params.nvjpeg_state,
                                              (const unsigned char *)img_data[i].data(),
@@ -288,11 +296,13 @@ int decode_images(const FileData             &img_data,
                                              &out[i],
                                              params.stream));
             }
+            // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
             checkCudaErrors(cudaEventRecord(stopEvent, params.stream));
         }
         else {
             // use de-coupled API in pipelined mode
             checkCudaErrors(cudaEventRecord(startEvent, params.stream));
+            // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
             checkCudaErrors(nvjpegStateAttachDeviceBuffer(params.nvjpeg_decoupled_state, params.device_buffer));
             int buffer_index = 0;
             checkCudaErrors(nvjpegDecodeParamsSetOutputFormat(params.nvjpeg_decode_params, params.fmt));
@@ -313,8 +323,10 @@ int decode_images(const FileData             &img_data,
                                                      params.nvjpeg_decode_params,
                                                      params.jpeg_streams[buffer_index]));
 
+                // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
                 checkCudaErrors(cudaStreamSynchronize(params.stream));
 
+                // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
                 checkCudaErrors(nvjpegDecodeJpegTransferToDevice(params.nvjpeg_handle,
                                                                  params.nvjpeg_decoder,
                                                                  params.nvjpeg_decoupled_state,
@@ -329,6 +341,7 @@ int decode_images(const FileData             &img_data,
                                                        &out[i],
                                                        params.stream));
             }
+            // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
             checkCudaErrors(cudaEventRecord(stopEvent, params.stream));
         }
     }
@@ -338,9 +351,12 @@ int decode_images(const FileData             &img_data,
             raw_inputs.push_back((const unsigned char *)img_data[i].data());
         }
 
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         checkCudaErrors(cudaEventRecord(startEvent, params.stream));
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
         checkCudaErrors(nvjpegDecodeBatched(
             params.nvjpeg_handle, params.nvjpeg_state, raw_inputs.data(), img_len.data(), out.data(), params.stream));
+        // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
         checkCudaErrors(cudaEventRecord(stopEvent, params.stream));
     }
     checkCudaErrors(cudaEventSynchronize(stopEvent));
@@ -350,6 +366,7 @@ int decode_images(const FileData             &img_data,
     return EXIT_SUCCESS;
 }
 
+// JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
 void write_images(std::vector<nvjpegImage_t> &iout,
                   std::vector<int>           &widths,
                   std::vector<int>           &heights,
@@ -402,11 +419,13 @@ double process_images(FileNames &image_names, decode_params_t &params, double &t
     FileNames::iterator file_iter = image_names.begin();
 
     // stream for decoding
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamCreateWithFlags(&params.stream, cudaStreamNonBlocking));
 
     int total_processed = 0;
 
     // output buffers
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     std::vector<nvjpegImage_t> iout(params.batch_size);
     // output buffer sizes, for convenience
     std::vector<nvjpegImage_t> isz(params.batch_size);
@@ -446,6 +465,7 @@ double process_images(FileNames &image_names, decode_params_t &params, double &t
 
     release_buffers(iout);
 
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamDestroy(params.stream));
 
     return EXIT_SUCCESS;
@@ -598,6 +618,7 @@ int main(int argc, const char *argv[])
            props.minor,
            props.ECCEnabled ? "on" : "off");
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     nvjpegDevAllocator_t    dev_allocator    = {&dev_malloc, &dev_free};
     nvjpegPinnedAllocator_t pinned_allocator = {&host_malloc, &host_free};
     int                     flags            = 0;
@@ -640,6 +661,7 @@ int main(int argc, const char *argv[])
         destroy_decoupled_api_handles(params);
     }
 
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
     checkCudaErrors(nvjpegJpegStateDestroy(params.nvjpeg_state));
     checkCudaErrors(nvjpegDestroy(params.nvjpeg_handle));
 

@@ -319,6 +319,7 @@ __global__ void d_render_preint_off(uint               *d_output,
 __global__ void
 d_integrate_trapezoidal(cudaExtent extent, cudaTextureObject_t transferTex, cudaSurfaceObject_t transferIntegrateSurf)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     uint x = blockIdx.x * blockDim.x + threadIdx.x;
 
     // for higher speed could use hierarchical approach for sum
@@ -356,6 +357,7 @@ __global__ void d_preintegrate(int                 layer,
                                cudaTextureObject_t transferIntegrateTex,
                                cudaSurfaceObject_t transferLayerPreintSurf)
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     uint x = blockIdx.x * blockDim.x + threadIdx.x;
     uint y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -529,6 +531,7 @@ void VolumeRender_init()
 
     checkCudaErrors(cudaCreateSurfaceObject(&transferLayerPreintSurf, &surfRes));
 
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMallocArray(
         &d_transferIntegrate, &channelFloat4, VOLUMERENDER_TF_PREINTSTEPS, 0, cudaArraySurfaceLoadStore));
 
@@ -677,6 +680,7 @@ void VolumeRender_init()
 
 void VolumeRender_deinit()
 {
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaDestroyTextureObject(transferTex));
     checkCudaErrors(cudaDestroyTextureObject(transferIntegrateTex));
     checkCudaErrors(cudaDestroySurfaceObject(transferIntegrateSurf));
@@ -704,6 +708,7 @@ void VolumeRender_render(dim3                gridSize,
                          cudaTextureObject_t volumeTex)
 {
     if (usePreInt) {
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         d_render_preint<<<gridSize, blockSize>>>(d_output,
                                                  imageW,
                                                  imageH,
@@ -716,6 +721,7 @@ void VolumeRender_render(dim3                gridSize,
                                                  transferLayerPreintTex);
     }
     else {
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         d_render_preint_off<<<gridSize, blockSize>>>(d_output,
                                                      imageW,
                                                      imageH,

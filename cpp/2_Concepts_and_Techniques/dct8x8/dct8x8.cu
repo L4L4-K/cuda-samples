@@ -261,6 +261,7 @@ float WrapperCUDA1(byte *ImgSrc, byte *ImgDst, int Stride, ROI Size)
     sdkDeleteTimer(&timerCUDA);
 
     // execute Quantization kernel
+    // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     CUDAkernelQuantizationFloat<<<grid, threads>>>(Dst, (int)DstStride);
     getLastCudaError("Kernel execution failed");
 
@@ -273,6 +274,7 @@ float WrapperCUDA1(byte *ImgSrc, byte *ImgDst, int Stride, ROI Size)
     getLastCudaError("Kernel execution failed");
 
     // copy quantized image block to host
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy2D(ImgSrcF,
                                  ImgSrcFStride * sizeof(float),
                                  Dst,
@@ -322,11 +324,13 @@ float WrapperCUDA2(byte *ImgSrc, byte *ImgDst, int Stride, ROI Size)
     // allocate device memory
     float *src, *dst;
     size_t DeviceStride;
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMallocPitch((void **)&src, &DeviceStride, Size.width * sizeof(float), Size.height));
     checkCudaErrors(cudaMallocPitch((void **)&dst, &DeviceStride, Size.width * sizeof(float), Size.height));
     DeviceStride /= sizeof(float);
 
     // copy from host memory to device
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy2D(src,
                                  DeviceStride * sizeof(float),
                                  ImgF1,
@@ -348,15 +352,18 @@ float WrapperCUDA2(byte *ImgSrc, byte *ImgDst, int Stride, ROI Size)
 
     for (int i = -1; i < numIterations; i++) {
         if (i == 0) {
+            // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
             checkCudaErrors(cudaDeviceSynchronize());
             sdkResetTimer(&timerCUDA);
             sdkStartTimer(&timerCUDA);
         }
 
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         CUDAkernel2DCT<<<GridFullWarps, ThreadsFullWarps>>>(dst, src, (int)DeviceStride);
         getLastCudaError("Kernel execution failed");
     }
 
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
     sdkStopTimer(&timerCUDA);
 
@@ -370,15 +377,18 @@ float WrapperCUDA2(byte *ImgSrc, byte *ImgDst, int Stride, ROI Size)
     dim3 GridSmallBlocks(Size.width / BLOCK_SIZE, Size.height / BLOCK_SIZE);
 
     // execute Quantization kernel
+    // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     CUDAkernelQuantizationFloat<<<GridSmallBlocks, ThreadsSmallBlocks>>>(dst, (int)DeviceStride);
     getLastCudaError("Kernel execution failed");
 
     // perform block-wise IDCT processing
     CUDAkernel2IDCT<<<GridFullWarps, ThreadsFullWarps>>>(src, dst, (int)DeviceStride);
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
     getLastCudaError("Kernel execution failed");
 
     // copy quantized image block to host
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy2D(ImgF1,
                                  StrideF * sizeof(float),
                                  src,
@@ -392,6 +402,7 @@ float WrapperCUDA2(byte *ImgSrc, byte *ImgDst, int Stride, ROI Size)
     CopyFloat2Byte(ImgF1, StrideF, ImgDst, Stride, Size);
 
     // clean up memory
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(dst));
     checkCudaErrors(cudaFree(src));
     FreePlane(ImgF1);
@@ -428,10 +439,12 @@ float WrapperCUDAshort(byte *ImgSrc, byte *ImgDst, int Stride, ROI Size)
     // allocate device memory
     short *SrcDst;
     size_t DeviceStride;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMallocPitch((void **)(&SrcDst), &DeviceStride, Size.width * sizeof(short), Size.height));
     DeviceStride /= sizeof(short);
 
     // copy from host memory to device
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy2D(SrcDst,
                                  DeviceStride * sizeof(short),
                                  ImgS1,
@@ -451,7 +464,9 @@ float WrapperCUDAshort(byte *ImgSrc, byte *ImgDst, int Stride, ROI Size)
 
     // perform block-wise DCT processing and benchmarking
     sdkStartTimer(&timerLibJpeg);
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     CUDAkernelShortDCT<<<GridShort, ThreadsShort>>>(SrcDst, (int)DeviceStride);
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
     sdkStopTimer(&timerLibJpeg);
     getLastCudaError("Kernel execution failed");
@@ -465,15 +480,18 @@ float WrapperCUDAshort(byte *ImgSrc, byte *ImgDst, int Stride, ROI Size)
     dim3 GridSmallBlocks(Size.width / BLOCK_SIZE, Size.height / BLOCK_SIZE);
 
     // execute Quantization kernel
+    // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
     CUDAkernelQuantizationShort<<<GridSmallBlocks, ThreadsSmallBlocks>>>(SrcDst, (int)DeviceStride);
     getLastCudaError("Kernel execution failed");
 
     // perform block-wise IDCT processing
     CUDAkernelShortIDCT<<<GridShort, ThreadsShort>>>(SrcDst, (int)DeviceStride);
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaDeviceSynchronize());
     getLastCudaError("Kernel execution failed");
 
     // copy quantized image block to host
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpy2D(ImgS1,
                                  StrideS * sizeof(short),
                                  SrcDst,
@@ -490,6 +508,7 @@ float WrapperCUDAshort(byte *ImgSrc, byte *ImgDst, int Stride, ROI Size)
     }
 
     // free float buffers
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaFree(SrcDst));
     FreePlane(ImgS1);
 

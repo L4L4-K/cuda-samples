@@ -267,6 +267,7 @@ void checkSync(int argc, char **argv)
     // Init values for variables
     x = y = 0;
 
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     if (CUDA_SUCCESS != (status = cuInit(0))) {
         printf("Failed to initialize CUDA\n");
     }
@@ -482,6 +483,7 @@ void checkSyncOnCPU(void)
     }
 
     // Clean up CUDA writeResource
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     status = cuGraphicsUnregisterResource(writeResource);
     if (status != CUDA_SUCCESS) {
         printf("Failed to unregister %d", status);
@@ -492,6 +494,7 @@ void checkSyncOnCPU(void)
     }
 
     // Clean up CUDA readResource
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     status = cuGraphicsUnregisterResource(readResource);
     if (status != CUDA_SUCCESS) {
         printf("Failed to unregister %d", status);
@@ -517,6 +520,7 @@ void checkSyncOnGPU(EGLDisplay dpy)
     unsigned char      expectedData, newData;
     cudaError_t        err;
     CUresult           status = CUDA_SUCCESS;
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     CUstream           stream;
     CUevent            timingDisabledEvent;
     CUDA_RESOURCE_DESC wdsc, rdsc;
@@ -577,6 +581,7 @@ void checkSyncOnGPU(EGLDisplay dpy)
         EGLBoolean   egl_status  = EGL_TRUE;
         EGLAttribKHR eglattrib[] = {EGL_CUDA_EVENT_HANDLE_NV, (EGLAttrib)timingDisabledEvent, EGL_NONE};
 
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         CUevent cudaEGLSyncEvent;
 
         eglSyncForGL = eglCreateSyncKHR(dpy, EGL_SYNC_FENCE_KHR, NULL);
@@ -593,6 +598,7 @@ void checkSyncOnGPU(EGLDisplay dpy)
         }
 
         // We wait from CUDA in GPU for GL-EGL operation completion
+        // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
         status = cuStreamWaitEvent(stream, cudaEGLSyncEvent, 0);
         if (status != CUDA_SUCCESS) {
             printf("Stream wait for event created from EGLSync failed\n");
@@ -610,9 +616,11 @@ void checkSyncOnGPU(EGLDisplay dpy)
 
         // Verifies the values in readSurface which is copied by
         // glCopyImageSubData() And writes value of newData into writeSurface
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
         verify_and_update_kernel<<<(width * height) / 256, 256, 0, stream>>>(
             writeSurface, readSurface, expectedData, newData, width, height);
 
+        // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
         status = cuEventDestroy(cudaEGLSyncEvent);
         if (status != CUDA_SUCCESS) {
             printf("Event Destroy failed\n");
@@ -648,6 +656,7 @@ void checkSyncOnGPU(EGLDisplay dpy)
     }
 
     // Clean up CUDA writeResource
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     status = cuGraphicsUnregisterResource(writeResource);
     if (status != CUDA_SUCCESS) {
         printf("Failed to unregister %d", status);
@@ -658,6 +667,7 @@ void checkSyncOnGPU(EGLDisplay dpy)
     }
 
     // Clean up CUDA readResource
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
     status = cuGraphicsUnregisterResource(readResource);
     if (status != CUDA_SUCCESS) {
         printf("Failed to unregister %d", status);
@@ -719,9 +729,11 @@ extern "C" cudaError_t cudaGetValueMismatch()
     if (err != cudaSuccess) {
         printf("Cuda Main: cudaDeviceSynchronize failed with %s\n", cudaGetErrorString(err));
     }
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     err = cudaMemcpy(&numErr_h, numErr_d, sizeof(int), cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
         printf("Cuda Main: cudaMemcpy failed with %s\n", cudaGetErrorString(err));
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         cudaFree(numErr_d);
         return err;
     }

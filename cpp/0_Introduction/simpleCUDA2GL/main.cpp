@@ -137,6 +137,7 @@ void Cleanup(int iExitCode);
 bool initGL(int *argc, char **argv);
 
 #ifdef USE_TEXSUBIMAGE2D
+// JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
 void createPBO(GLuint *pbo, struct cudaGraphicsResource **pbo_resource);
 void deletePBO(GLuint *pbo);
 #endif
@@ -155,6 +156,7 @@ void mainMenu(int i);
 ////////////////////////////////////////////////////////////////////////////////
 //! Create PBO
 ////////////////////////////////////////////////////////////////////////////////
+// JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
 void createPBO(GLuint *pbo, struct cudaGraphicsResource **pbo_resource)
 {
     // set up vertex data parameter
@@ -173,6 +175,7 @@ void createPBO(GLuint *pbo, struct cudaGraphicsResource **pbo_resource)
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
     // register this buffer object with CUDA
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsGLRegisterBuffer(pbo_resource, *pbo, cudaGraphicsMapFlagsNone));
 
     SDK_CHECK_ERROR_GL();
@@ -234,6 +237,7 @@ void generateCUDAImage()
     unsigned int *out_data;
 
 #ifdef USE_TEXSUBIMAGE2D
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsMapResources(1, &cuda_pbo_dest_resource, 0));
     size_t num_bytes;
     checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&out_data, &num_bytes, cuda_pbo_dest_resource));
@@ -255,6 +259,7 @@ void generateCUDAImage()
 // possible hidden conversion
 // - map the texture and blit the result thanks to CUDA API
 #ifdef USE_TEXSUBIMAGE2D
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsUnmapResources(1, &cuda_pbo_dest_resource, 0));
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, pbo_dest);
 
@@ -267,6 +272,7 @@ void generateCUDAImage()
     // We want to copy cuda_dest_resource data to the texture
     // map buffer objects to get CUDA device pointers
     cudaArray *texture_ptr;
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsMapResources(1, &cuda_tex_result_resource, 0));
     checkCudaErrors(cudaGraphicsSubResourceGetMappedArray(&texture_ptr, cuda_tex_result_resource, 0, 0));
 
@@ -444,6 +450,7 @@ void createTextureDst(GLuint *tex_cudaResult, unsigned int size_x, unsigned int 
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8UI_EXT, size_x, size_y, 0, GL_RGBA_INTEGER_EXT, GL_UNSIGNED_BYTE, NULL);
     SDK_CHECK_ERROR_GL();
     // register this texture with CUDA
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsGLRegisterImage(
         &cuda_tex_result_resource, *tex_cudaResult, GL_TEXTURE_2D, cudaGraphicsMapFlagsWriteDiscard));
 #endif
@@ -516,6 +523,7 @@ void FreeResource()
 // unregister this buffer object with CUDA
 //    checkCudaErrors(cudaGraphicsUnregisterResource(cuda_tex_screen_resource));
 #ifdef USE_TEXSUBIMAGE2D
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
     checkCudaErrors(cudaGraphicsUnregisterResource(cuda_pbo_dest_resource));
     deletePBO(&pbo_dest);
 #else
@@ -622,6 +630,7 @@ void initCUDABuffers()
     num_texels    = image_width * image_height;
     num_values    = num_texels * 4;
     size_tex_data = sizeof(GLubyte) * num_values;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
     checkCudaErrors(cudaMalloc((void **)&cuda_dest_resource, size_tex_data));
     // checkCudaErrors(cudaHostAlloc((void**)&cuda_dest_resource, size_tex_data,
     // ));

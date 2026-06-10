@@ -182,7 +182,7 @@ __global__ void matrixMultiplyKernel(float *C, float *A, float *B, unsigned int 
         Bs[ty][tx] = B[b + wB * ty + tx];
 
         // Synchronize to make sure the matrices are loaded
-        // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         __syncthreads();
 
         // Multiply the two matrices together;
@@ -197,6 +197,7 @@ __global__ void matrixMultiplyKernel(float *C, float *A, float *B, unsigned int 
         // Synchronize to make sure that the preceding
         // computation is done before loading two new
         // sub-matrices of A and B in the next iteration
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
         __syncthreads();
     }
 
@@ -242,6 +243,7 @@ void runMatrixMultiplyKernel(unsigned int matrixDim,
 
     cudaDeviceProp deviceProp;
     checkCudaErrors(cudaGetDeviceProperties(&deviceProp, device_id));
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     checkCudaErrors(cudaStreamCreate(&streamToRunOn));
 
     randValuesX = (float *)malloc(size);
@@ -276,7 +278,9 @@ void runMatrixMultiplyKernel(unsigned int matrixDim,
     checkCudaErrors(cudaMemcpyAsync(randValuesVerifyXmulY, dptrC, size, cudaMemcpyDeviceToHost));
     checkCudaErrors(cudaStreamSynchronize(NULL));
     matrixMultiplyKernel<<<grid, threads>>>(dptrC, dptrB, dptrA, matrixDim);
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
     checkCudaErrors(cudaMemcpyAsync(randValuesVerifyYmulX, dptrC, size, cudaMemcpyDeviceToHost));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
     checkCudaErrors(cudaStreamSynchronize(NULL));
 #if VERIFY_GPU_CORRECTNESS
     verifyMatrixMultiplyCorrectness(randValuesVerifyXmulY, randValuesX, randValuesY, matrixDim);
@@ -287,6 +291,7 @@ void runMatrixMultiplyKernel(unsigned int matrixDim,
     checkCudaErrors(cudaFree(dptrB));
     checkCudaErrors(cudaFree(dptrC));
 
+    // JP: この anchor では pinned host memory の登録/確保/解放です。async transfer や overlap の条件と lifetime を確認します。
     checkCudaErrors(cudaMallocHost(&latch, sizeof(unsigned int)));
 
     switch (allocType) {
@@ -304,6 +309,7 @@ void runMatrixMultiplyKernel(unsigned int matrixDim,
         if (!hptrC) {
             exit(EXIT_FAILURE); // exit since memory allocation error
         }
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         checkCudaErrors(cudaMalloc(&dptrA, size));
         checkCudaErrors(cudaMalloc(&dptrB, size));
         checkCudaErrors(cudaMalloc(&dptrC, size));
@@ -312,9 +318,11 @@ void runMatrixMultiplyKernel(unsigned int matrixDim,
 
     case USE_HOST_PAGELOCKED_AND_DEVICE_MEMORY:
     case USE_HOST_PAGELOCKED_AND_DEVICE_MEMORY_ASYNC:
+        // JP: この連続する anchor 群では pinned host memory の登録/確保/解放です。async transfer や overlap の条件と lifetime を確認します。
         checkCudaErrors(cudaMallocHost(&hptrA, size));
         checkCudaErrors(cudaMallocHost(&hptrB, size));
         checkCudaErrors(cudaMallocHost(&hptrC, size));
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         checkCudaErrors(cudaMalloc(&dptrA, size));
         checkCudaErrors(cudaMalloc(&dptrB, size));
         checkCudaErrors(cudaMalloc(&dptrC, size));
@@ -322,6 +330,7 @@ void runMatrixMultiplyKernel(unsigned int matrixDim,
         break;
 
     case USE_ZERO_COPY:
+        // JP: この連続する anchor 群では pinned host memory の登録/確保/解放です。async transfer や overlap の条件と lifetime を確認します。
         checkCudaErrors(cudaMallocHost(&hptrA, size));
         checkCudaErrors(cudaMallocHost(&hptrB, size));
         checkCudaErrors(cudaMallocHost(&hptrC, size));
@@ -343,6 +352,7 @@ void runMatrixMultiplyKernel(unsigned int matrixDim,
     case USE_MANAGED_MEMORY_WITH_HINTS:
     case USE_MANAGED_MEMORY_WITH_HINTS_ASYNC:
         if (deviceProp.concurrentManagedAccess) {
+            // JP: この連続する anchor 群では Unified Memory allocation/prefetch/advice です。migration、host/device visibility、同期位置 を確認します。
             checkCudaErrors(cudaMallocManaged(&dptrA, size));
             checkCudaErrors(cudaMallocManaged(&dptrB, size));
             checkCudaErrors(cudaMallocManaged(&dptrC, size));
@@ -398,6 +408,7 @@ void runMatrixMultiplyKernel(unsigned int matrixDim,
         if (isAsync && hintsRequired) {
             *latch = 0;
             // Prevent any work on stream from starting until all work is pushed
+            // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
             spinWhileLessThanOne<<<1, 1, 0, streamToRunOn>>>(latch);
         }
 
@@ -405,6 +416,7 @@ void runMatrixMultiplyKernel(unsigned int matrixDim,
             sdkStartTimer(&gpuTransferCallsTimer);
             if (copyRequired) {
                 if (isAsync) {
+                    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                     checkCudaErrors(cudaMemcpyAsync(dptrA, hptrA, size, cudaMemcpyHostToDevice, streamToRunOn));
                     checkCudaErrors(cudaMemcpyAsync(dptrB, hptrB, size, cudaMemcpyHostToDevice, streamToRunOn));
                 }
@@ -418,11 +430,13 @@ void runMatrixMultiplyKernel(unsigned int matrixDim,
                     cudaMemLocation deviceLoc;
                     deviceLoc.type = cudaMemLocationTypeDevice;
                     deviceLoc.id   = device_id;
+                    // JP: この連続する anchor 群では Unified Memory allocation/prefetch/advice です。migration、host/device visibility、同期位置 を確認します。
                     checkCudaErrors(cudaMemPrefetchAsync(dptrA, size, deviceLoc, 0, streamToRunOn));
                     checkCudaErrors(cudaMemPrefetchAsync(dptrB, size, deviceLoc, 0, streamToRunOn));
                     checkCudaErrors(cudaMemPrefetchAsync(dptrC, size, deviceLoc, 0, streamToRunOn));
                 }
                 else {
+                    // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
                     checkCudaErrors(cudaStreamAttachMemAsync(streamToRunOn, dptrA, 0, cudaMemAttachGlobal));
                     checkCudaErrors(cudaStreamAttachMemAsync(streamToRunOn, dptrB, 0, cudaMemAttachGlobal));
                     checkCudaErrors(cudaStreamAttachMemAsync(streamToRunOn, dptrC, 0, cudaMemAttachGlobal));
@@ -439,8 +453,10 @@ void runMatrixMultiplyKernel(unsigned int matrixDim,
 
         sdkStartTimer(&gpuLaunchCallsTimer);
         {
+            // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
             matrixMultiplyKernel<<<grid, threads, 0, streamToRunOn>>>(dptrC, dptrA, dptrB, matrixDim);
             if (!isAsync) {
+                // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
                 checkCudaErrors(cudaStreamSynchronize(streamToRunOn));
             }
         }
@@ -455,11 +471,13 @@ void runMatrixMultiplyKernel(unsigned int matrixDim,
                 if (deviceProp.concurrentManagedAccess) {
                     cudaMemLocation hostLoc;
                     hostLoc.type = cudaMemLocationTypeHost;
+                    // JP: この連続する anchor 群では Unified Memory allocation/prefetch/advice です。migration、host/device visibility、同期位置 を確認します。
                     checkCudaErrors(cudaMemPrefetchAsync(dptrA, size, hostLoc, 0));
                     checkCudaErrors(cudaMemPrefetchAsync(dptrB, size, hostLoc, 0));
                     checkCudaErrors(cudaMemPrefetchAsync(dptrC, size, hostLoc, 0));
                 }
                 else {
+                    // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
                     checkCudaErrors(cudaStreamAttachMemAsync(streamToRunOn, dptrA, 0, cudaMemAttachHost));
                     checkCudaErrors(cudaStreamAttachMemAsync(streamToRunOn, dptrB, 0, cudaMemAttachHost));
                     checkCudaErrors(cudaStreamAttachMemAsync(streamToRunOn, dptrC, 0, cudaMemAttachHost));
@@ -470,6 +488,7 @@ void runMatrixMultiplyKernel(unsigned int matrixDim,
             }
             if (copyRequired) {
                 if (isAsync) {
+                    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
                     checkCudaErrors(cudaMemcpyAsync(hptrC, dptrC, size, cudaMemcpyDeviceToHost, streamToRunOn));
                 }
                 else {
@@ -489,6 +508,7 @@ void runMatrixMultiplyKernel(unsigned int matrixDim,
                 if (hintsRequired) {
                     *latch = 1;
                 }
+                // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
                 checkCudaErrors(cudaStreamSynchronize(streamToRunOn));
             }
             sdkStopTimer(&gpuSyncTimer);
@@ -512,6 +532,7 @@ void runMatrixMultiplyKernel(unsigned int matrixDim,
         free(hptrA);
         free(hptrB);
         free(hptrC);
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         checkCudaErrors(cudaFree(dptrA));
         checkCudaErrors(cudaFree(dptrB));
         checkCudaErrors(cudaFree(dptrC));

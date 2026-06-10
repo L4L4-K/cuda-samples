@@ -96,6 +96,7 @@ __global__ void padDataClampToBorder_kernel(float *d_Dst,
 #endif
 )
 {
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const int y       = blockDim.y * blockIdx.y + threadIdx.y;
     const int x       = blockDim.x * blockIdx.x + threadIdx.x;
     const int borderH = dataH + kernelY;
@@ -144,6 +145,7 @@ inline __device__ void mulAndScale(fComplex &a, const fComplex &b, const float &
 
 __global__ void modulateAndNormalize_kernel(fComplex *d_Dst, fComplex *d_Src, int dataSize, float c)
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const int i = blockDim.x * blockIdx.x + threadIdx.x;
 
     if (i >= dataSize) {
@@ -252,6 +254,7 @@ __global__ void spPostprocess2D_kernel(fComplex *d_Dst,
 #endif
 )
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const uint threadId = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (threadId >= threadCount) {
@@ -320,6 +323,7 @@ __global__ void spPreprocess2D_kernel(fComplex *d_Dst,
 #endif
 )
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const uint threadId = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (threadId >= threadCount) {
@@ -394,6 +398,7 @@ __global__ void spProcess2D_kernel(fComplex *d_Dst,
 #endif
 )
 {
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
     const uint threadId = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (threadId >= threadCount) {

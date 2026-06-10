@@ -93,6 +93,7 @@ def main():
     print("=" * 60)
 
     # Initialize device
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     device = Device(0)
     device.set_current()
     print()
@@ -129,6 +130,7 @@ def main():
     h_in = h_out = d_in = d_out = None
     try:
         # Pre-allocate buffers
+        # JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         h_in = pinned_mr.allocate(n_bytes, stream=default_stream)
         h_out = pinned_mr.allocate(n_bytes, stream=default_stream)
         d_in = device_mr.allocate(n_bytes, stream=default_stream)
@@ -155,6 +157,7 @@ def main():
             np.float32(scale),
             np.uint64(N),
         )
+        # JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         d_out.copy_to(h_out, stream=default_stream)
         default_stream.sync()
 
@@ -164,6 +167,7 @@ def main():
             start_ev = device.create_event(options=event_opts)
             end_ev = device.create_event(options=event_opts)
             default_stream.record(start_ev)
+            # JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
             h_in.copy_to(d_in, stream=default_stream)  # Async H2D
             launch(
                 default_stream,
@@ -174,6 +178,7 @@ def main():
                 np.float32(scale),
                 np.uint64(N),
             )
+            # JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
             d_out.copy_to(h_out, stream=default_stream)  # Async D2H
             default_stream.record(end_ev)
             default_stream.sync()
@@ -219,6 +224,7 @@ def main():
         h_ins, h_outs, d_ins, d_outs = [], [], [], []
         try:
             for i in range(n_streams):
+                # JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
                 h_ins.append(pinned_mr.allocate(chunk_bytes, stream=streams[i]))
                 h_outs.append(pinned_mr.allocate(chunk_bytes, stream=streams[i]))
                 d_ins.append(device_mr.allocate(chunk_bytes, stream=streams[i]))
@@ -234,6 +240,7 @@ def main():
 
             # Warm up
             for i in range(n_streams):
+                # JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
                 h_ins[i].copy_to(d_ins[i], stream=streams[i])
                 launch(
                     streams[i],
@@ -244,6 +251,7 @@ def main():
                     np.float32(scale),
                     np.uint64(chunk_size),
                 )
+                # JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
                 d_outs[i].copy_to(h_outs[i], stream=streams[i])
             for stream in streams:
                 stream.sync()
@@ -258,6 +266,7 @@ def main():
 
                 # Issue all operations - they overlap across streams
                 for i in range(n_streams):
+                    # JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
                     h_ins[i].copy_to(d_ins[i], stream=streams[i])  # Async H2D
                     launch(
                         streams[i],
@@ -268,6 +277,7 @@ def main():
                         np.float32(scale),
                         np.uint64(chunk_size),
                     )
+                    # JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
                     d_outs[i].copy_to(h_outs[i], stream=streams[i])  # Async D2H
 
                 # Wait for all streams, record end on stream 0
@@ -298,6 +308,7 @@ def main():
             expected = np_in.astype(np.float32) * scale
             for _ in range(50):
                 expected = np.sqrt(expected * expected + 1.0).astype(np.float32)
+            # JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
             if not np.allclose(np_out, expected, rtol=1e-4, atol=1e-4):
                 print(f"  Verification: FAILED for {n_streams} streams")
         finally:

@@ -67,6 +67,7 @@ def demo_reduce_lambda() -> bool:
     """reduce_into driven by a lambda."""
     dtype = np.int32
     h_init = np.array([0], dtype=dtype)
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     d_in = cp.arange(1, 11, dtype=dtype)  # 1..10
     d_out = cp.empty(1, dtype=dtype)
 
@@ -91,6 +92,7 @@ def demo_reduce_lambda() -> bool:
 
 def demo_unary_transform_lambda() -> bool:
     """unary_transform driven by a lambda: y = x*x + 1."""
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     d_in = cp.arange(8, dtype=cp.int32)
     d_out = cp.empty_like(d_in)
 
@@ -119,6 +121,7 @@ def demo_scan_custom_op() -> bool:
     the Python callable is JIT-compiled for the device by cuda.compute.
     """
     dtype = np.int32
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     d_in = cp.array([1, 2, 3, 4, 5, 6], dtype=dtype)
     d_out = cp.empty_like(d_in)
     h_init = np.array([0], dtype=dtype)
@@ -158,6 +161,7 @@ def main():
     parser.add_argument("--device", type=int, default=0, help="CUDA device id")
     args = parser.parse_args()
 
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
     device = Device(args.device)
     device.set_current()
     print_gpu_info(device)

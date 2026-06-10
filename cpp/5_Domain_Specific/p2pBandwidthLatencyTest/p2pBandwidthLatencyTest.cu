@@ -192,6 +192,7 @@ void performP2PCopy(int         *dest,
                     int          num_elems,
                     int          repeat,
                     bool         p2paccess,
+                    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
                     cudaStream_t streamToRun,
                     bool         useFallback,
                     int         *hostBuffer)
@@ -250,15 +251,21 @@ void outputBandwidthMatrix(int numElems, int numGPUs, bool p2p, P2PDataTransfer 
 
     for (int d = 0; d < numGPUs; d++) {
         cudaSetDevice(d);
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         cudaStreamCreateWithFlags(&stream[d], cudaStreamNonBlocking);
+        // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         cudaMalloc(&buffers[d], numElems * sizeof(int));
         cudaCheckError();
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         cudaMemset(buffers[d], 0, numElems * sizeof(int));
         cudaCheckError();
+        // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         cudaMalloc(&buffersD2D[d], numElems * sizeof(int));
         cudaCheckError();
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         cudaMemset(buffersD2D[d], 0, numElems * sizeof(int));
         cudaCheckError();
+        // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         cudaEventCreate(&start[d]);
         cudaCheckError();
         cudaEventCreate(&stop[d]);
@@ -271,6 +278,7 @@ void outputBandwidthMatrix(int numElems, int numGPUs, bool p2p, P2PDataTransfer 
 
     if (useFallback) {
         // Allocate hostBuffer for this function's numElems
+        // JP: この anchor では pinned host memory の登録/確保/解放です。async transfer や overlap の条件と lifetime を確認します。
         cudaHostAlloc((void **)&hostBuffer, sizeof(int) * numElems, cudaHostAllocDefault);
         cudaCheckError();
     }
@@ -296,6 +304,7 @@ void outputBandwidthMatrix(int numElems, int numGPUs, bool p2p, P2PDataTransfer 
                 }
             }
 
+            // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
             cudaStreamSynchronize(stream[i]);
             cudaCheckError();
 
@@ -305,8 +314,10 @@ void outputBandwidthMatrix(int numElems, int numGPUs, bool p2p, P2PDataTransfer 
             // relatively low.  Higher repeatitions will cause the delay kernel
             // to timeout and lead to unstable results.
             *flag = 0;
+            // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
             delay<<<1, 1, 0, stream[i]>>>(flag);
             cudaCheckError();
+            // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
             cudaEventRecord(start[i], stream[i]);
             cudaCheckError();
 
@@ -327,6 +338,7 @@ void outputBandwidthMatrix(int numElems, int numGPUs, bool p2p, P2PDataTransfer 
             }
             cudaCheckError();
 
+            // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
             cudaEventRecord(stop[i], stream[i]);
             cudaCheckError();
 
@@ -374,6 +386,7 @@ void outputBandwidthMatrix(int numElems, int numGPUs, bool p2p, P2PDataTransfer 
 
     for (int d = 0; d < numGPUs; d++) {
         cudaSetDevice(d);
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         cudaFree(buffers[d]);
         cudaFree(buffersD2D[d]);
         cudaCheckError();
@@ -400,21 +413,28 @@ void outputBidirectionalBandwidthMatrix(int numElems, int numGPUs, bool p2p, boo
     volatile int        *flag   = NULL;
     vector<int *>        buffers(numGPUs);
     vector<int *>        buffersD2D(numGPUs);
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     vector<cudaEvent_t>  start(numGPUs);
     vector<cudaEvent_t>  stop(numGPUs);
     vector<cudaStream_t> stream0(numGPUs);
     vector<cudaStream_t> stream1(numGPUs);
 
+    // JP: この anchor では pinned host memory の登録/確保/解放です。async transfer や overlap の条件と lifetime を確認します。
     cudaHostAlloc((void **)&flag, sizeof(*flag), cudaHostAllocPortable);
     cudaCheckError();
 
     for (int d = 0; d < numGPUs; d++) {
         cudaSetDevice(d);
+        // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         cudaMalloc(&buffers[d], numElems * sizeof(int));
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         cudaMemset(buffers[d], 0, numElems * sizeof(int));
+        // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         cudaMalloc(&buffersD2D[d], numElems * sizeof(int));
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         cudaMemset(buffersD2D[d], 0, numElems * sizeof(int));
         cudaCheckError();
+        // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         cudaEventCreate(&start[d]);
         cudaCheckError();
         cudaEventCreate(&stop[d]);
@@ -431,6 +451,7 @@ void outputBidirectionalBandwidthMatrix(int numElems, int numGPUs, bool p2p, boo
 
     if (useFallback) {
         // Allocate hostBuffer for this function's numElems
+        // JP: この anchor では pinned host memory の登録/確保/解放です。async transfer や overlap の条件と lifetime を確認します。
         cudaHostAlloc((void **)&hostBuffer, sizeof(int) * numElems, cudaHostAllocDefault);
         cudaCheckError();
     }
@@ -455,6 +476,7 @@ void outputBidirectionalBandwidthMatrix(int numElems, int numGPUs, bool p2p, boo
             }
 
             cudaSetDevice(i);
+            // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
             cudaStreamSynchronize(stream0[i]);
             cudaStreamSynchronize(stream1[j]);
             cudaCheckError();
@@ -467,12 +489,14 @@ void outputBidirectionalBandwidthMatrix(int numElems, int numGPUs, bool p2p, boo
             *flag = 0;
             cudaSetDevice(i);
             // No need to block stream1 since it'll be blocked on stream0's event
+            // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
             delay<<<1, 1, 0, stream0[i]>>>(flag);
             cudaCheckError();
 
             // Force stream1 not to start until stream0 does, in order to ensure
             // the events on stream0 fully encompass the time needed for all
             // operations
+            // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
             cudaEventRecord(start[i], stream0[i]);
             cudaStreamWaitEvent(stream1[j], start[i], 0);
 
@@ -498,6 +522,7 @@ void outputBidirectionalBandwidthMatrix(int numElems, int numGPUs, bool p2p, boo
 
             // Notify stream0 that stream1 is complete and record the time of
             // the total transaction
+            // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
             cudaEventRecord(stop[j], stream1[j]);
             cudaStreamWaitEvent(stream0[i], stop[j], 0);
             cudaEventRecord(stop[i], stream0[i]);
@@ -546,6 +571,7 @@ void outputBidirectionalBandwidthMatrix(int numElems, int numGPUs, bool p2p, boo
 
     for (int d = 0; d < numGPUs; d++) {
         cudaSetDevice(d);
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         cudaFree(buffers[d]);
         cudaFree(buffersD2D[d]);
         cudaCheckError();
@@ -576,10 +602,12 @@ void outputLatencyMatrix(int numGPUs, bool p2p, P2PDataTransfer p2p_method, bool
     StopWatchInterface  *stopWatch = NULL;
     vector<int *>        buffers(numGPUs);
     vector<int *>        buffersD2D(numGPUs); // buffer for D2D, that is, intra-GPU copy
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
     vector<cudaStream_t> stream(numGPUs);
     vector<cudaEvent_t>  start(numGPUs);
     vector<cudaEvent_t>  stop(numGPUs);
 
+    // JP: この anchor では pinned host memory の登録/確保/解放です。async transfer や overlap の条件と lifetime を確認します。
     cudaHostAlloc((void **)&flag, sizeof(*flag), cudaHostAllocPortable);
     cudaCheckError();
 
@@ -591,12 +619,18 @@ void outputLatencyMatrix(int numGPUs, bool p2p, P2PDataTransfer p2p_method, bool
 
     for (int d = 0; d < numGPUs; d++) {
         cudaSetDevice(d);
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         cudaStreamCreateWithFlags(&stream[d], cudaStreamNonBlocking);
+        // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         cudaMalloc(&buffers[d], sizeof(int) * numElems);
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         cudaMemset(buffers[d], 0, sizeof(int) * numElems);
+        // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         cudaMalloc(&buffersD2D[d], sizeof(int) * numElems);
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
         cudaMemset(buffersD2D[d], 0, sizeof(int) * numElems);
         cudaCheckError();
+        // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
         cudaEventCreate(&start[d]);
         cudaCheckError();
         cudaEventCreate(&stop[d]);
@@ -609,6 +643,7 @@ void outputLatencyMatrix(int numGPUs, bool p2p, P2PDataTransfer p2p_method, bool
 
     if (useFallback) {
         // Allocate hostBuffer for this function's numElems
+        // JP: この anchor では pinned host memory の登録/確保/解放です。async transfer や overlap の条件と lifetime を確認します。
         cudaHostAlloc((void **)&hostBuffer, sizeof(int) * numElems, cudaHostAllocDefault);
         cudaCheckError();
     }
@@ -632,6 +667,7 @@ void outputLatencyMatrix(int numGPUs, bool p2p, P2PDataTransfer p2p_method, bool
                     cudaCheckError();
                 }
             }
+            // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
             cudaStreamSynchronize(stream[i]);
             cudaCheckError();
 
@@ -641,8 +677,10 @@ void outputLatencyMatrix(int numGPUs, bool p2p, P2PDataTransfer p2p_method, bool
             // relatively low.  Higher repeatitions will cause the delay kernel
             // to timeout and lead to unstable results.
             *flag = 0;
+            // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
             delay<<<1, 1, 0, stream[i]>>>(flag);
             cudaCheckError();
+            // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
             cudaEventRecord(start[i], stream[i]);
 
             sdkResetTimer(&stopWatch);
@@ -663,6 +701,7 @@ void outputLatencyMatrix(int numGPUs, bool p2p, P2PDataTransfer p2p_method, bool
             }
             float cpu_time_ms = sdkGetTimerValue(&stopWatch);
 
+            // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
             cudaEventRecord(stop[i], stream[i]);
             // Now that the work has been queued up, release the stream
             *flag = 1;
@@ -722,6 +761,7 @@ void outputLatencyMatrix(int numGPUs, bool p2p, P2PDataTransfer p2p_method, bool
 
     for (int d = 0; d < numGPUs; d++) {
         cudaSetDevice(d);
+        // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
         cudaFree(buffers[d]);
         cudaFree(buffersD2D[d]);
         cudaCheckError();
