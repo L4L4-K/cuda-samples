@@ -22,8 +22,8 @@ English manifest for the required individual source/build/script review.
 - non_utf8_decode_notes: 28
 - branch: `ja-study/local-annotations`
 - review_pass_base: `8ccd87823bea840e52bd75051a6163fc827cd758`
-- source_state_head_at_generation: `e1f7a01d28f1d87369eeaded8cd44a5086fdb731`
-- commit hash note: files marked `PENDING_SOURCE_REVIEW_COMMIT` are refreshed after the next remediation commit.
+- source_state_head_at_generation: `c69bb98fa5b9bc959c7f7b0b77bc70a6a7540aa7`
+- commit hash note: no `PENDING_SOURCE_REVIEW_COMMIT` values remain in `source_file_review.json`.
 
 ## Target Selection
 
