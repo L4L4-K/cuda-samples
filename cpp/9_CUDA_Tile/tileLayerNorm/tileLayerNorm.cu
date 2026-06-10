@@ -50,6 +50,7 @@
 /* SIMT initializer for X (N x D), W (D,), B (D,) with deterministic data. */
 __global__ void initializeInputs(__half* X, __half* W, __half* B,
                                  int N, int D) {
+  // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
   auto idx   = blockIdx.x * blockDim.x + threadIdx.x;
   auto total = N * D;
   if (idx < total) {
@@ -189,6 +190,7 @@ int main() {
 
   __half *d_X = nullptr, *d_Y = nullptr, *d_W = nullptr, *d_B = nullptr;
   float  *d_Mean = nullptr, *d_Rstd = nullptr;
+  // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
   checkCudaErrors(cudaMalloc(&d_X,    N * D * sizeof(__half)));
   checkCudaErrors(cudaMalloc(&d_Y,    N * D * sizeof(__half)));
   checkCudaErrors(cudaMalloc(&d_W,    D     * sizeof(__half)));
@@ -197,6 +199,7 @@ int main() {
   checkCudaErrors(cudaMalloc(&d_Rstd, N     * sizeof(float)));
 
   int init_threads = 256, init_blocks = 1 + ((N * D - 1) / init_threads);
+  // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
   initializeInputs<<<init_blocks, init_threads>>>(d_X, d_W, d_B, N, D);
   checkCudaErrors(cudaGetLastError());
 
@@ -209,6 +212,7 @@ int main() {
                                    N, D, NUM_SMS, EPS>
       <<<dim3(NUM_SMS, 1, 1)>>>(d_X, d_Y, d_W, d_B, d_Mean, d_Rstd);
   checkCudaErrors(cudaGetLastError());
+  // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
   checkCudaErrors(cudaDeviceSynchronize());
 
   __half* h_Y        = new __half[N * D];
@@ -217,6 +221,7 @@ int main() {
   float*  h_Rstd     = new float[N];
   float*  h_Mean_ref = new float[N];
   float*  h_Rstd_ref = new float[N];
+  // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
   checkCudaErrors(cudaMemcpy(h_Y,    d_Y,    N * D * sizeof(__half), cudaMemcpyDeviceToHost));
   checkCudaErrors(cudaMemcpy(h_Mean, d_Mean, N     * sizeof(float),  cudaMemcpyDeviceToHost));
   checkCudaErrors(cudaMemcpy(h_Rstd, d_Rstd, N     * sizeof(float),  cudaMemcpyDeviceToHost));
@@ -262,6 +267,7 @@ int main() {
 
   printf("Success! Persistent LayerNorm matches expected results.\n");
 
+  // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
   checkCudaErrors(cudaFree(d_X));   checkCudaErrors(cudaFree(d_Y));
   checkCudaErrors(cudaFree(d_W));   checkCudaErrors(cudaFree(d_B));
   checkCudaErrors(cudaFree(d_Mean)); checkCudaErrors(cudaFree(d_Rstd));

@@ -63,8 +63,10 @@ __global__ void JacobiIteration(const float *du0,
                                 float       *dv1)
 {
     // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     cg::thread_block cta = cg::this_thread_block();
 
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     volatile __shared__ float du[(bx + 2) * (by + 2)];
     volatile __shared__ float dv[(bx + 2) * (by + 2)];
 
@@ -142,6 +144,7 @@ __global__ void JacobiIteration(const float *du0,
         }
     }
 
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 
     if (ix >= w || iy >= h)
@@ -196,5 +199,6 @@ static void SolveForUpdate(const float *du0,
     // grid size
     dim3 blocks(iDivUp(w, threads.x), iDivUp(h, threads.y));
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     JacobiIteration<32, 6><<<blocks, threads>>>(du0, dv0, Ix, Iy, Iz, w, h, s, alpha, du1, dv1);
 }

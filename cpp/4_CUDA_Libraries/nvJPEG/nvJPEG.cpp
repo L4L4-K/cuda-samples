@@ -34,10 +34,13 @@
 
 #include "helper_nvJPEG.hxx"
 
+// JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
 int dev_malloc(void **p, size_t s) { return (int)cudaMalloc(p, s); }
 
+// JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
 int dev_free(void *p) { return (int)cudaFree(p); }
 
+// JP: `cudaHostAlloc`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
 int host_malloc(void **p, size_t s, unsigned int f) { return (int)cudaHostAlloc(p, s, f); }
 
 int host_free(void *p) { return (int)cudaFreeHost(p); }
@@ -53,8 +56,10 @@ struct decode_params_t
     int         dev;
     int         warmup;
 
+    // JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
     nvjpegJpegState_t nvjpeg_state;
     nvjpegHandle_t    nvjpeg_handle;
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t      stream;
 
     // used with decoupled API
@@ -262,6 +267,7 @@ int decode_images(const FileData             &img_data,
                   decode_params_t            &params,
                   double                     &time)
 {
+    // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaStreamSynchronize(params.stream));
     cudaEvent_t startEvent = NULL, stopEvent = NULL;
     float       loopTime = 0;

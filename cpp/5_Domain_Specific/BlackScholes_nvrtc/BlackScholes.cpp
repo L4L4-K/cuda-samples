@@ -128,12 +128,14 @@ int main(int argc, char **argv)
 
     // Compile the kernel BlackScholes_kernel.
     compileFileToCUBIN(kernel_file, argc, argv, &cubin, &cubinSize, 0);
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     CUmodule module = loadCUBIN(cubin, argc, argv);
 
     CUfunction kernel_addr;
     checkCudaErrors(cuModuleGetFunction(&kernel_addr, module, "BlackScholesGPU"));
 
     printf("...allocating GPU memory for options.\n");
+    // JP: `cuMemAlloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cuMemAlloc(&d_CallResult, OPT_SZ));
     checkCudaErrors(cuMemAlloc(&d_PutResult, OPT_SZ));
     checkCudaErrors(cuMemAlloc(&d_StockPrice, OPT_SZ));
@@ -154,6 +156,7 @@ int main(int argc, char **argv)
 
     printf("...copying input data to GPU mem.\n");
     // Copy options data to GPU memory for further processing
+    // JP: `cuMemcpyHtoD`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cuMemcpyHtoD(d_StockPrice, h_StockPrice, OPT_SZ));
     checkCudaErrors(cuMemcpyHtoD(d_OptionStrike, h_OptionStrike, OPT_SZ));
     checkCudaErrors(cuMemcpyHtoD(d_OptionYears, h_OptionYears, OPT_SZ));
@@ -181,6 +184,7 @@ int main(int argc, char **argv)
                    (void *)&optval};
 
     for (i = 0; i < NUM_ITERATIONS; i++) {
+        // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         checkCudaErrors(cuLaunchKernel(kernel_addr,
                                        cudaGridSize.x,
                                        cudaGridSize.y,
@@ -251,6 +255,7 @@ int main(int argc, char **argv)
     printf("Shutting down...\n");
     printf("...releasing GPU memory.\n");
 
+    // JP: `cuMemFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cuMemFree(d_OptionYears));
     checkCudaErrors(cuMemFree(d_OptionStrike));
     checkCudaErrors(cuMemFree(d_StockPrice));

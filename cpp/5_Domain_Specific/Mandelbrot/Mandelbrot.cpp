@@ -96,6 +96,7 @@ char  g_ExecPath[300];
 
 // OpenGL PBO and texture "names"
 GLuint                       gl_PBO, gl_Tex, gl_Shader;
+// JP: `cudaGraphicsResource`, `cuda_pbo_resource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
 struct cudaGraphicsResource *cuda_pbo_resource; // handles OpenGL-CUDA exchange
 
 // Source image on the host side
@@ -341,6 +342,7 @@ void renderImage(bool bUseOpenGL, bool fp64, int mode)
                                        g_isJuliaSet);
             }
 
+            // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
             checkCudaErrors(cudaMemcpy(d_dst, h_Src, imageW * imageH * sizeof(uchar4), cudaMemcpyHostToDevice));
 
             if (bUseOpenGL) {
@@ -496,6 +498,7 @@ void displayFunc(void)
 void cleanup()
 {
     if (h_Src) {
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         free(h_Src);
         h_Src = 0;
     }
@@ -1098,6 +1101,7 @@ int runSingleTest(int argc, char **argv)
 
     // Allocate memory for renderImage (to be able to render into a CUDA memory
     // buffer)
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_dst, (imageW * imageH * sizeof(uchar4))));
 
     // Allocate memory for cpu buffer
@@ -1129,6 +1133,7 @@ int runSingleTest(int argc, char **argv)
            (g_isJuliaSet ? "Julia" : "Mandelbrot"),
            (haveDouble ? "(fp64 double precision)" : "(fp32 single precision)"));
 
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     if (!sdkComparePPM(dump_file, sdkFindFilePath(ref_file, argv[0]), MAX_EPSILON_ERROR, 0.15f, false)) {
         printf("Images \"%s\", \"%s\" are different\n", ref_file, dump_file);
         g_TotalErrors++;
@@ -1191,6 +1196,7 @@ void runBenchmark(int argc, char **argv)
                        numSMs,
                        g_isJuliaSet,
                        version);
+        // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         cudaDeviceSynchronize();
     }
 

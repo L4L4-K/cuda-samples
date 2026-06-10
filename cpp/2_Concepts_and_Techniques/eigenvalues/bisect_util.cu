@@ -172,9 +172,11 @@ __device__ inline unsigned int computeNumSmallerEigenvals(float             *g_d
     float        delta = 1.0f;
     unsigned int count = 0;
 
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 
     // read data into shared memory
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     if (threadIdx.x < n) {
         s_d[threadIdx.x] = *(g_d + threadIdx.x);
         s_s[threadIdx.x] = *(g_s + threadIdx.x - 1);

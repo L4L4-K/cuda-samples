@@ -65,6 +65,7 @@ void initOddEvenArr(int *inputArr, unsigned int size)
  */
 __global__ void oddEvenCountAndSumCG(int *inputArr, int *numOfOdds, int *sumOfOddAndEvens, unsigned int size)
 {
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     cg::thread_block          cta    = cg::this_thread_block();
     cg::grid_group            grid   = cg::this_grid();
     cg::thread_block_tile<32> tile32 = cg::tiled_partition<32>(cta);
@@ -95,6 +96,7 @@ __global__ void oddEvenCountAndSumCG(int *inputArr, int *numOfOdds, int *sumOfOd
         }
         // reconverge warp so for next loop iteration we ensure convergence of
         // above diverged threads to perform coalesced loads of inputArr.
+        // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         cg::sync(tile32);
     }
 }
@@ -110,17 +112,21 @@ int main(int argc, const char **argv)
     int         *h_sumOfOddEvenElems, *d_sumOfOddEvenElems;
     unsigned int arrSize = 1024 * 100;
 
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
     checkCudaErrors(cudaMallocHost(&h_inputArr, sizeof(int) * arrSize));
     checkCudaErrors(cudaMallocHost(&h_numOfOdds, sizeof(int)));
     checkCudaErrors(cudaMallocHost(&h_sumOfOddEvenElems, sizeof(int) * 2));
     initOddEvenArr(h_inputArr, arrSize);
 
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t stream;
     checkCudaErrors(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc(&d_inputArr, sizeof(int) * arrSize));
     checkCudaErrors(cudaMalloc(&d_numOfOdds, sizeof(int)));
     checkCudaErrors(cudaMalloc(&d_sumOfOddEvenElems, sizeof(int) * 2));
 
+    // JP: `cudaMemcpyAsync`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpyAsync(d_inputArr, h_inputArr, sizeof(int) * arrSize, cudaMemcpyHostToDevice, stream));
     checkCudaErrors(cudaMemsetAsync(d_numOfOdds, 0, sizeof(int), stream));
     checkCudaErrors(cudaMemsetAsync(d_sumOfOddEvenElems, 0, 2 * sizeof(int), stream));
@@ -132,6 +138,7 @@ int main(int argc, const char **argv)
 
     printf("\nLaunching %d blocks with %d threads...\n\n", blocksPerGrid, threadsPerBlock);
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     oddEvenCountAndSumCG<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(
         d_inputArr, d_numOfOdds, d_sumOfOddEvenElems, arrSize);
 
@@ -147,6 +154,7 @@ int main(int argc, const char **argv)
            h_sumOfOddEvenElems[1]);
     printf("\n...Done.\n\n");
 
+    // JP: `cudaFreeHost`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFreeHost(h_inputArr));
     checkCudaErrors(cudaFreeHost(h_numOfOdds));
     checkCudaErrors(cudaFreeHost(h_sumOfOddEvenElems));

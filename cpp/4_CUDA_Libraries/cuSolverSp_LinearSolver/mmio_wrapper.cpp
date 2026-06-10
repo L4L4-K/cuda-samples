@@ -14,6 +14,7 @@
 #endif
 
 /* various __inline__ __device__  function to initialize a T_ELEM */
+// JP: `cuGet`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
 template <typename T_ELEM> __inline__ T_ELEM cuGet(int);
 template <> __inline__ float                 cuGet<float>(int x) { return float(x); }
 
@@ -302,6 +303,7 @@ int loadMMSparseMatrix(char    *filename,
         }
         (*nnz) += count;
         // free temporary storage
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         free(trow);
         free(tcol);
         free(tval);

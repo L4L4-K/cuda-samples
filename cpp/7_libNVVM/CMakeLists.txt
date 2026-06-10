@@ -46,9 +46,11 @@ endif ()
 # cmake 3.18 introduces the CUDAToolkit_LIBRARY_ROOT variable.
 # This will update CUDA_HOME to a value discovered by find_package.
 if (${CMAKE_VERSION} VERSION_LESS 3.18.0)
+  # JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
   find_package(CUDA REQUIRED)
   set(CUDA_HOME "${CUDA_TOOLKIT_ROOT_DIR}")
   get_filename_component(CUDA_LIB_ROOT "${CUDA_cudart_static_LIBRARY}" DIRECTORY)
+  # JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
   find_library(CUDA_LIB NAMES cuda cuda.lib PATHS "${CUDA_LIB_ROOT}" "${CUDA_LIB_ROOT}/stubs")
   include_directories("${CUDA_INCLUDE_DIRS}")
   find_library(CUDADEVRT_LIB cudadevrt PATHS "${CUDA_LIB_ROOT}" "${CUDA_LIB_ROOT}/stubs")
@@ -123,6 +125,7 @@ else ()
 endif ()
 
 # Samples
+# JP: shared_memory: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
 add_subdirectory(cuda-shared-memory)
 add_subdirectory(device-side-launch)
 add_subdirectory(simple)

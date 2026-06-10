@@ -34,6 +34,7 @@
 #include <nppi.h>
 #include <cuda_runtime.h>
 
+// JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
 namespace npp
 {
     template <typename D, size_t N>
@@ -42,6 +43,7 @@ namespace npp
     {
         D *pResult;
         *pPitch = nWidth * sizeof(D) * N;
+        // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
         NPP_CHECK_CUDA(cudaMalloc(&pResult, *pPitch * nHeight));
         NPP_ASSERT_NOT_NULL(pResult);
 
@@ -91,6 +93,7 @@ namespace npp
             Copy2D(Npp8u *pDst, size_t nDstPitch, const Npp8u *pSrc, size_t nSrcPitch, size_t nWidth, size_t nHeight)
             {
                 cudaError_t eResult;
+                // JP: `cudaMemcpy2D`, `cudaMemcpyDeviceToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
                 eResult = cudaMemcpy2D(pDst, nDstPitch, pSrc, nSrcPitch, nWidth * sizeof(Npp8u), nHeight, cudaMemcpyDeviceToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };

@@ -80,7 +80,9 @@ __global__ void kernel_B(clock_t *d_o, clock_t clock_count) { clock_block(d_o, c
 __global__ void sum(clock_t *d_clocks, int N)
 {
     // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     cg::thread_block   cta = cg::this_thread_block();
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ clock_t s_clocks[32];
 
     clock_t my_sum = 0;
@@ -90,6 +92,7 @@ __global__ void sum(clock_t *d_clocks, int N)
     }
 
     s_clocks[threadIdx.x] = my_sum;
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 
     for (int i = warpSize / 2; i > 0; i /= 2) {
@@ -152,13 +155,16 @@ int main(int argc, char **argv)
 
     // Allocate host memory for the output (reduced to a single value)
     clock_t *a = 0;
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
     checkCudaErrors(cudaMallocHost((void **)&a, sizeof(clock_t)));
 
     // Allocate device memory for the output (one value for each kernel)
     clock_t *d_a = 0;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_a, 2 * nstreams * sizeof(clock_t)));
 
     // Allocate and initialize an array of stream handles
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t *streams = (cudaStream_t *)malloc(nstreams * sizeof(cudaStream_t));
 
     for (int i = 0; i < nstreams; i++) {
@@ -186,6 +192,7 @@ int main(int argc, char **argv)
 
     // Queue pairs of {kernel_A, kernel_B} in separate streams
     for (int i = 0; i < nstreams; ++i) {
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         kernel_A<<<1, 1, 0, streams[i]>>>(&d_a[2 * i], time_clocks);
         total_clocks += time_clocks;
         kernel_B<<<1, 1, 0, streams[i]>>>(&d_a[2 * i + 1], time_clocks);
@@ -201,6 +208,7 @@ int main(int argc, char **argv)
 
     // Run the sum kernel and copy the result back to host
     sum<<<1, 32>>>(d_a, 2 * nstreams);
+    // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(a, d_a, sizeof(clock_t), cudaMemcpyDeviceToHost));
 
     // stop_event will have been recorded but including the synchronize here to
@@ -223,6 +231,7 @@ int main(int argc, char **argv)
 
     // Release resources
     for (int i = 0; i < nstreams; i++) {
+        // JP: `cudaStreamDestroy`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         cudaStreamDestroy(streams[i]);
     }
 

@@ -52,8 +52,10 @@
 __global__ static void timedReduction(const float *input, float *output, clock_t *timer)
 {
     // __shared__ float shared[2 * blockDim.x];
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     extern __shared__ float shared[];
 
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     const int tid = threadIdx.x;
     const int bid = blockIdx.x;
 
@@ -66,6 +68,7 @@ __global__ static void timedReduction(const float *input, float *output, clock_t
 
     // Perform reduction to find minimum.
     for (int d = blockDim.x; d > 0; d /= 2) {
+        // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         __syncthreads();
 
         if (tid < d) {
@@ -126,16 +129,20 @@ int main(int argc, char **argv)
         input[i] = (float)i;
     }
 
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&dinput, sizeof(float) * NUM_THREADS * 2));
     checkCudaErrors(cudaMalloc((void **)&doutput, sizeof(float) * NUM_BLOCKS));
     checkCudaErrors(cudaMalloc((void **)&dtimer, sizeof(clock_t) * NUM_BLOCKS * 2));
 
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(dinput, input, sizeof(float) * NUM_THREADS * 2, cudaMemcpyHostToDevice));
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     timedReduction<<<NUM_BLOCKS, NUM_THREADS, sizeof(float) * 2 * NUM_THREADS>>>(dinput, doutput, dtimer);
 
     checkCudaErrors(cudaMemcpy(timer, dtimer, sizeof(clock_t) * NUM_BLOCKS * 2, cudaMemcpyDeviceToHost));
 
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(dinput));
     checkCudaErrors(cudaFree(doutput));
     checkCudaErrors(cudaFree(dtimer));

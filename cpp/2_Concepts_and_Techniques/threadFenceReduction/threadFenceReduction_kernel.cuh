@@ -39,6 +39,7 @@
 namespace cg = cooperative_groups;
 
 /*
+    // JP: shared_memory: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     Parallel sum reduction using shared memory
     - takes log(n) steps for n input elements
     - uses n/2 threads
@@ -56,6 +57,7 @@ __device__ void reduceBlock(volatile float *sdata, float mySum, const unsigned i
 {
     cg::thread_block_tile<32> tile32 = cg::tiled_partition<32>(cta);
     sdata[tid]                       = mySum;
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(tile32);
 
     const int VEC = 32;
@@ -76,6 +78,7 @@ __device__ void reduceBlock(volatile float *sdata, float mySum, const unsigned i
 
     if (cta.thread_rank() == 0) {
         beta = 0;
+        // JP: `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
         for (int i = 0; i < blockDim.x; i += VEC) {
             beta += sdata[i];
         }
@@ -132,6 +135,7 @@ __device__ unsigned int retirementCount = 0;
 
 cudaError_t setRetirementCount(int retCnt)
 {
+    // JP: `cudaMemcpyToSymbol`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     return cudaMemcpyToSymbol(retirementCount, &retCnt, sizeof(unsigned int), 0, cudaMemcpyHostToDevice);
 }
 
@@ -221,6 +225,7 @@ extern "C" void reduce(int size, int threads, int blocks, float *d_idata, float 
     if (isPow2(size)) {
         switch (threads) {
         case 512:
+            // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
             reduceMultiPass<512, true><<<dimGrid, dimBlock, smemSize>>>(d_idata, d_odata, size);
             break;
 

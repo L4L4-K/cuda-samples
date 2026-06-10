@@ -41,8 +41,10 @@
 extern "C" __global__ void timedReduction(const float *input, float *output, clock_t *timer)
 {
     // __shared__ float shared[2 * blockDim.x];
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     extern __shared__ float shared[];
 
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     const int tid = threadIdx.x;
     const int bid = blockIdx.x;
 
@@ -55,6 +57,7 @@ extern "C" __global__ void timedReduction(const float *input, float *output, clo
 
     // Perform reduction to find minimum.
     for (int d = blockDim.x; d > 0; d /= 2) {
+        // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         __syncthreads();
 
         if (tid < d) {

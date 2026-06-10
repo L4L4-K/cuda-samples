@@ -244,6 +244,7 @@ struct
 {
     ID3D11Texture2D          *pTexture;
     ID3D11ShaderResourceView *pSRView;
+    // JP: `cudaGraphicsResource`, `cudaResource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
     cudaGraphicsResource     *cudaResource;
     void                     *cudaLinearMemory;
     size_t                    pitch;
@@ -327,6 +328,7 @@ bool findCUDADevice()
         return false;
     }
     else {
+        // JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
         printf("> Found %d CUDA Capable Device(s)\n", deviceCount);
     }
 
@@ -345,6 +347,7 @@ bool findCUDADevice()
 bool findDXDevice(char *dev_name)
 {
     HRESULT   hr = S_OK;
+    // JP: `cudaError`, `cuStatus`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     cudaError cuStatus;
 
     // Iterate through the candidate adapters
@@ -520,11 +523,13 @@ int main(int argc, char *argv[])
         // cudaArray and can only be mapped as a texture
         // Create a buffer so that cuda can write into it
         // pixel fmt is DXGI_FORMAT_R32G32B32A32_FLOAT
+        // JP: `cudaMallocPitch`, `cudaLinearMemory`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
         cudaMallocPitch(&g_texture_2d.cudaLinearMemory,
                         &g_texture_2d.pitch,
                         g_texture_2d.width * sizeof(float) * 4,
                         g_texture_2d.height);
         getLastCudaError("cudaMallocPitch (g_texture_2d) failed");
+        // JP: `cudaMemset`, `cudaLinearMemory`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         cudaMemset(g_texture_2d.cudaLinearMemory, 1, g_texture_2d.pitch * g_texture_2d.height);
 
         // CUBE
@@ -701,6 +706,7 @@ HRESULT InitD3D(HWND hWnd)
         if (FAILED(hr)) {
             const char *pStr = (const char *)effectErrors->GetBufferPointer();
             printf(pStr);
+            // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
             assert(1);
         }
 
@@ -1124,6 +1130,7 @@ void Cleanup()
     // unregister the Cuda resources
     cudaGraphicsUnregisterResource(g_texture_2d.cudaResource);
     getLastCudaError("cudaGraphicsUnregisterResource (g_texture_2d) failed");
+    // JP: `cudaFree`, `cudaLinearMemory`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     cudaFree(g_texture_2d.cudaLinearMemory);
     getLastCudaError("cudaFree (g_texture_2d) failed");
 
@@ -1209,6 +1216,7 @@ void Render()
 
     if (doit) {
         doit                                           = true;
+        // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
         cudaStream_t          stream                   = 0;
         const int             nbResources              = 3;
         cudaGraphicsResource *ppResources[nbResources] = {

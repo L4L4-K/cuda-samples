@@ -34,9 +34,12 @@
 #include "helper_nvJPEG.hxx"
 
 
+// JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
 int dev_malloc(void **p, size_t s) { return (int)cudaMalloc(p, s); }
+// JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
 int dev_free(void *p) { return (int)cudaFree(p); }
 
+// JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
 bool is_interleaved(nvjpegOutputFormat_t format)
 {
     if (format == NVJPEG_OUTPUT_RGBI || format == NVJPEG_OUTPUT_BGRI)
@@ -68,6 +71,7 @@ int decodeEncodeOneImage(std::string          sImagePath,
                          nvjpegInputFormat_t  input_format)
 {
     time                   = 0.;
+    // JP: `cudaEvent_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaEvent_t startEvent = NULL, stopEvent = NULL;
     float       loopTime = 0;
     checkCudaErrors(cudaEventCreate(&startEvent, cudaEventBlockingSync));
@@ -168,6 +172,7 @@ int decodeEncodeOneImage(std::string          sImagePath,
 
             int nReturnCode = 0;
 
+            // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
             cudaDeviceSynchronize();
 
             nReturnCode = nvjpegDecode(nvjpeg_handle, jpeg_state, dpImage, nSize, output_format, &imgdesc, NULL);

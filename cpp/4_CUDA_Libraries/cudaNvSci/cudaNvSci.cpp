@@ -57,6 +57,7 @@ private:
     cudaTextureObject_t     texObject;
     cudaExternalSemaphore_t signalSem;
 
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t streamToRun;
     int          m_cudaDeviceId;
     CUuuid       m_devUUID;
@@ -97,7 +98,9 @@ public:
     ~cudaNvSciSignal()
     {
         checkCudaErrors(cudaSetDevice(m_cudaDeviceId));
+        // JP: `cudaFreeMipmappedArray`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         checkCudaErrors(cudaFreeMipmappedArray(d_mipmapArray));
+        // JP: `cudaFree`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
         checkCudaErrors(cudaFree(d_outputBuf));
         checkCudaErrors(cudaDestroyExternalSemaphore(signalSem));
         checkCudaErrors(cudaDestroyExternalMemory(extMemRawBuf));
@@ -122,6 +125,7 @@ public:
                minor);
 
 #ifdef cuDeviceGetUuid_v2
+        // JP: `cuDeviceGetUuid_v2`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
         CUresult res = cuDeviceGetUuid_v2(&m_devUUID, m_cudaDeviceId);
 #else
         CUresult res = cuDeviceGetUuid(&m_devUUID, m_cudaDeviceId);
@@ -324,6 +328,7 @@ public:
                                                  m_imageWidth * sizeof(unsigned int),
                                                  m_imageWidth * sizeof(unsigned int),
                                                  m_imageHeight,
+                                                 // JP: `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
                                                  cudaMemcpyHostToDevice,
                                                  streamToRun));
     }

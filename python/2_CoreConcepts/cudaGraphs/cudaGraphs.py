@@ -94,6 +94,7 @@ def run_pipeline_individual(stream, kernels, config, buffers, size, n_iters):
     stream.sync()
     t0 = time.perf_counter()
     for _ in range(n_iters):
+        # JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         launch(
             stream, config, add_k, a.data.ptr, b.data.ptr, r1.data.ptr, np.uint64(size)
         )
@@ -188,6 +189,7 @@ def main() -> int:
     graph_builder = graph = None
     try:
         program_options = ProgramOptions(std="c++17", arch=f"sm_{device.arch}")
+        # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
         program = Program(PIPELINE_KERNELS, code_type="c++", options=program_options)
         module = program.compile("cubin")
         add_k = module.get_kernel("vec_add")
@@ -215,6 +217,7 @@ def main() -> int:
         t_individual = run_pipeline_individual(
             stream, kernels, config, buffers, N, n_iters=args.iters
         )
+        # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         assert cp.allclose(
             r3, expected, rtol=1e-5, atol=1e-5
         ), "Individual pipeline produced incorrect results"

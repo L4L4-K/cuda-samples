@@ -79,6 +79,7 @@ int main(int argc, char **argv)
             // Check requested precision is valid
             string prec(value);
 
+            // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
             if (prec.compare("single") == 0 || prec.compare("\"single\"") == 0) {
                 runTest<float>(argc, (const char **)argv);
             }

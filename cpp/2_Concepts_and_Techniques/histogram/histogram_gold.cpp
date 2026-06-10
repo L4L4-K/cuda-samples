@@ -35,6 +35,7 @@ extern "C" void histogram64CPU(uint *h_Histogram, void *h_Data, uint byteCount)
     for (uint i = 0; i < HISTOGRAM64_BIN_COUNT; i++)
         h_Histogram[i] = 0;
 
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(sizeof(uint) == 4 && (byteCount % 4) == 0);
 
     for (uint i = 0; i < (byteCount / 4); i++) {

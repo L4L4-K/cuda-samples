@@ -79,6 +79,7 @@ int main(int argc, char **argv)
     h_Buffer    = (float *)malloc(imageW * imageH * sizeof(float));
     h_OutputCPU = (float *)malloc(imageW * imageH * sizeof(float));
     h_OutputGPU = (float *)malloc(imageW * imageH * sizeof(float));
+    // JP: `cudaMallocArray`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMallocArray(&a_Src, &floatTex, imageW, imageH));
     checkCudaErrors(cudaMalloc((void **)&d_Output, imageW * imageH * sizeof(float)));
 
@@ -110,9 +111,11 @@ int main(int argc, char **argv)
     }
 
     setConvolutionKernel(h_Kernel);
+    // JP: `cudaMemcpyToArray`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpyToArray(a_Src, 0, 0, h_Input, imageW * imageH * sizeof(float), cudaMemcpyHostToDevice));
 
     printf("Running GPU rows convolution (%u identical iterations)...\n", iterations);
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
     sdkResetTimer(&hTimer);
     sdkStartTimer(&hTimer);
@@ -179,6 +182,7 @@ int main(int argc, char **argv)
     printf("Relative L2 norm: %E\n", L2norm);
     printf("Shutting down...\n");
 
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_Output));
     checkCudaErrors(cudaFreeArray(a_Src));
     free(h_OutputGPU);

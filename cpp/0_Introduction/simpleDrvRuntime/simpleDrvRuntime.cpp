@@ -63,6 +63,7 @@ float *d_B;
 float *d_C;
 
 // Functions
+// JP: `cuContext`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
 int  CleanupNoFailure(CUcontext &cuContext);
 void RandomInit(float *, int);
 bool findModulePath(const char *, string &, char **, ostringstream &);
@@ -119,6 +120,7 @@ int main(int argc, char **argv)
     checkCudaDrvErrors(cuModuleGetFunction(&vecAdd_kernel, cuModule, "VecAdd_kernel"));
 
     // Allocate input vectors h_A and h_B in host memory
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
     checkCudaErrors(cudaMallocHost(&h_A, size));
     checkCudaErrors(cudaMallocHost(&h_B, size));
     checkCudaErrors(cudaMallocHost(&h_C, size));
@@ -128,13 +130,16 @@ int main(int argc, char **argv)
     RandomInit(h_B, N);
 
     // Allocate vectors in device memory
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)(&d_A), size));
     checkCudaErrors(cudaMalloc((void **)(&d_B), size));
     checkCudaErrors(cudaMalloc((void **)(&d_C), size));
 
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t stream;
     checkCudaErrors(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
     // Copy vectors from host memory to device memory
+    // JP: `cudaMemcpyAsync`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpyAsync(d_A, h_A, size, cudaMemcpyHostToDevice, stream));
     checkCudaErrors(cudaMemcpyAsync(d_B, h_B, size, cudaMemcpyHostToDevice, stream));
 
@@ -145,11 +150,13 @@ int main(int argc, char **argv)
 
     // Launch the CUDA kernel
     checkCudaDrvErrors(
+        // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         cuLaunchKernel(vecAdd_kernel, blocksPerGrid, 1, 1, threadsPerBlock, 1, 1, 0, stream, args, NULL));
 
     // Copy result from device memory to host memory
     // h_C contains the result in host memory
     checkCudaErrors(cudaMemcpyAsync(h_C, d_C, size, cudaMemcpyDeviceToHost, stream));
+    // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaStreamSynchronize(stream));
     // Verify result
     int i;
@@ -164,6 +171,7 @@ int main(int argc, char **argv)
 
     checkCudaDrvErrors(cuModuleUnload(cuModule));
     CleanupNoFailure(cuContext);
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     printf("%s\n", (i == N) ? "Result = PASS" : "Result = FAIL");
 
     exit((i == N) ? EXIT_SUCCESS : EXIT_FAILURE);
@@ -172,6 +180,7 @@ int main(int argc, char **argv)
 int CleanupNoFailure(CUcontext &cuContext)
 {
     // Free device memory
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_A));
     checkCudaErrors(cudaFree(d_B));
     checkCudaErrors(cudaFree(d_C));

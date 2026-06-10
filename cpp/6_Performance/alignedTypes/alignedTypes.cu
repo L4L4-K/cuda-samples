@@ -133,6 +133,7 @@ int iAlignDown(int a, int b) { return a - a % b; }
 ////////////////////////////////////////////////////////////////////////////////
 template <class TData> __global__ void testKernel(TData *d_odata, TData *d_idata, int numElements)
 {
+    // JP: `blockDim`, `blockIdx`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     const int tid        = blockDim.x * blockIdx.x + threadIdx.x;
     const int numThreads = blockDim.x * gridDim.x;
 
@@ -183,13 +184,16 @@ template <class TData> int runTest(int packedElementSize, int memory_size)
     const int numElements         = iDivDown(memory_size, sizeof(TData));
 
     // Clean output buffer before current test
+    // JP: `cudaMemset`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemset(d_odata, 0, memory_size));
     // Run test
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
     sdkResetTimer(&hTimer);
     sdkStartTimer(&hTimer);
 
     for (int i = 0; i < NUM_ITERATIONS; i++) {
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         testKernel<TData><<<64, 256>>>((TData *)d_odata, (TData *)d_idata, numElements);
         getLastCudaError("testKernel() execution failed\n");
     }
@@ -244,6 +248,7 @@ int main(int argc, char **argv)
     printf("Allocating memory...\n");
     h_idataCPU = (unsigned char *)malloc(MemorySize);
     h_odataGPU = (unsigned char *)malloc(MemorySize);
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_idata, MemorySize));
     checkCudaErrors(cudaMalloc((void **)&d_odata, MemorySize));
 
@@ -297,6 +302,7 @@ int main(int argc, char **argv)
     printf("\n[alignedTypes] -> Test Results: %d Failures\n", nTotalFailures);
 
     printf("Shutting down...\n");
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_idata));
     checkCudaErrors(cudaFree(d_odata));
     free(h_odataGPU);

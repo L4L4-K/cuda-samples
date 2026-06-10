@@ -55,6 +55,7 @@ static __device__ __host__ inline Complex ComplexScale(Complex, float);
 static __device__ __host__ inline Complex ComplexMul(Complex, Complex);
 
 // This is the callback routine prototype
+// JP: `cufftComplex`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
 static __device__ cufftComplex ComplexPointwiseMulAndScale(void *a, size_t index, void *cb_info, void *sharedmem);
 
 typedef struct _cb_params
@@ -141,8 +142,10 @@ int runTest(int argc, char **argv)
 
     // Allocate device memory for signal
     Complex *d_signal;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_signal, mem_size));
     // Copy host memory to device
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(d_signal, h_padded_signal, mem_size, cudaMemcpyHostToDevice));
 
     // Allocate device memory for filter kernel
@@ -209,6 +212,7 @@ int runTest(int argc, char **argv)
 
     // check result
     bool bTestResult =
+        // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         sdkCompareL2fe((float *)h_convolved_signal_ref, (float *)h_convolved_signal, 2 * SIGNAL_SIZE, 1e-5f);
 
     // Destroy CUFFT context
@@ -216,6 +220,7 @@ int runTest(int argc, char **argv)
     checkCudaErrors(cufftDestroy(cb_plan));
 
     // cleanup memory
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(h_signal);
     free(h_filter_kernel);
     free(h_padded_signal);

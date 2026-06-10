@@ -43,6 +43,7 @@ import os
 import sys
 
 try:
+    # JP: `cuda.core.system` は Python から device/NVML 情報を読む境界です。実行中の kernel ではなく環境 introspection として扱います。
     from cuda.core import system
     from cuda.core.system import CUDA_BINDINGS_NVML_IS_COMPATIBLE
     from cuda.core.system.typing import GpuP2PCapsIndex

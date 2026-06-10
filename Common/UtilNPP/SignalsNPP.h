@@ -36,6 +36,7 @@
 #include "SignalAllocatorsNPP.h"
 #include <cuda_runtime.h>
 
+// JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
 namespace npp
 {
     // forward declaration

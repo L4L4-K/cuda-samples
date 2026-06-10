@@ -63,6 +63,7 @@ template <typename T> BodySystemCPU<T>::~BodySystemCPU()
 
 template <typename T> void BodySystemCPU<T>::_initialize(int numBodies)
 {
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(!m_bInitialized);
 
     m_numBodies = numBodies;

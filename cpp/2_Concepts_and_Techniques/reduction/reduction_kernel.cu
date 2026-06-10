@@ -41,6 +41,7 @@ namespace cg = cooperative_groups;
 
 // Utility class used to avoid linker errors with extern
 // unsized shared memory arrays with templated type
+// JP: shared_memory: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
 template <class T> struct SharedMemory
 {
     __device__ inline operator T *()
@@ -75,6 +76,7 @@ template <> struct SharedMemory<double>
 
 template <class T> __device__ __forceinline__ T warpReduceSum(unsigned int mask, T mySum)
 {
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     for (int offset = warpSize / 2; offset > 0; offset /= 2) {
         mySum += __shfl_down_sync(mask, mySum, offset);
     }
@@ -114,6 +116,7 @@ template <class T> __global__ void reduce0(T *g_idata, T *g_odata, unsigned int 
 
     sdata[tid] = (i < n) ? g_idata[i] : 0;
 
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 
     // do reduction in shared mem
@@ -649,6 +652,7 @@ template <class T> void reduce(int size, int threads, int blocks, int whichKerne
     // choose which of the optimized versions of reduction to launch
     switch (whichKernel) {
     case 0:
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         reduce0<T><<<dimGrid, dimBlock, smemSize>>>(d_idata, d_odata, size);
         break;
 

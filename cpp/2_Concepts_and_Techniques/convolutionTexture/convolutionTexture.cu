@@ -81,6 +81,7 @@ template <> __device__ float convolutionColumn<-1>(float x, float y, cudaTexture
 ////////////////////////////////////////////////////////////////////////////////
 __global__ void convolutionRowsKernel(float *d_Dst, int imageW, int imageH, cudaTextureObject_t texSrc)
 {
+    // JP: `blockDim`, `blockIdx`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     const int   ix = IMAD(blockDim.x, blockIdx.x, threadIdx.x);
     const int   iy = IMAD(blockDim.y, blockIdx.y, threadIdx.y);
     const float x  = (float)ix + 0.5f;
@@ -110,6 +111,7 @@ extern "C" void convolutionRowsGPU(float *d_Dst, cudaArray *a_Src, int imageW, i
     dim3 threads(16, 12);
     dim3 blocks(iDivUp(imageW, threads.x), iDivUp(imageH, threads.y));
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     convolutionRowsKernel<<<blocks, threads>>>(d_Dst, imageW, imageH, texSrc);
     getLastCudaError("convolutionRowsKernel() execution failed\n");
 }

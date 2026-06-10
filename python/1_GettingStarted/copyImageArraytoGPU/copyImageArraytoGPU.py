@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "Utilities"))
 from cuda_samples_utils import verify_array_result
 
 try:
+    # JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
     import cupy as cp
     import numpy as np
     from cuda.core import Buffer, Device, PinnedMemoryResource, Stream
@@ -101,7 +102,9 @@ def copy_image_to_gpu_cuda_core(
     pinned_mr = PinnedMemoryResource()
 
     # Step 2: Allocate memory buffers
+    # JP: streams_events: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     pinned_buffer = pinned_mr.allocate(nbytes, stream=stream)  # Fast CPU memory
+    # JP: device_memory: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     device_buffer = device_mr.allocate(nbytes, stream=stream)  # GPU memory
 
     # Step 3: Create a NumPy view of pinned memory using DLPack
@@ -160,6 +163,7 @@ def copy_image_from_gpu_cuda_core(
     host_result = pinned_view.copy()
 
     # Step 5: Clean up the temporary pinned buffer
+    # JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     pinned_buffer.close(stream)
 
     return host_result
@@ -229,6 +233,7 @@ def main():
 
     # Step 8: Clean up all allocated resources
     device_buffer.close(stream)  # Free GPU memory
+    # JP: pinned_memory: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
     pinned_buffer.close(stream)  # Free pinned CPU memory
     stream.close()  # Close CUDA stream
     cp.cuda.Stream.null.use()  # Reset CuPy's stream to default

@@ -81,7 +81,9 @@ __device__ inline double expiryCallValue(double S, double X, double vDt, int i)
 __global__ void binomialOptionsKernel()
 {
     // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     cg::thread_block cta = cg::this_thread_block();
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ real  call_exchange[THREADBLOCK_SIZE + 1];
 
     const int  tid    = threadIdx.x;
@@ -104,6 +106,7 @@ __global__ void binomialOptionsKernel()
 #pragma unroll 16
     for (int i = NUM_STEPS; i > 0; --i) {
         call_exchange[tid] = call[0];
+        // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         cg::sync(cta);
         call[ELEMS_PER_THREAD] = call_exchange[tid + 1];
         cg::sync(cta);
@@ -154,6 +157,7 @@ extern "C" void binomialOptionsGPU(real *callValue, TOptionData *optionData, int
     }
 
     checkCudaErrors(cudaMemcpyToSymbol(d_OptionData, h_OptionData, optN * sizeof(__TOptionData)));
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     binomialOptionsKernel<<<optN, THREADBLOCK_SIZE>>>();
     getLastCudaError("binomialOptionsKernel() execution failed.\n");
     checkCudaErrors(cudaMemcpyFromSymbol(callValue, d_CallValue, optN * sizeof(real)));

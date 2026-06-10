@@ -45,5 +45,6 @@ extern "C" void cuda_Copy(TColor *d_dst, int imageW, int imageH, cudaTextureObje
     dim3 threads(BLOCKDIM_X, BLOCKDIM_Y);
     dim3 grid(iDivUp(imageW, BLOCKDIM_X), iDivUp(imageH, BLOCKDIM_Y));
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     Copy<<<grid, threads>>>(d_dst, imageW, imageH, texImage);
 }

@@ -54,6 +54,7 @@ int main(int argc, char **argv)
     size_t cubinSize;
     kernel_file = sdkFindFilePath("vectorAdd_kernel.cu", argv[0]);
     compileFileToCUBIN(kernel_file, argc, argv, &cubin, &cubinSize, 0);
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     CUmodule module = loadCUBIN(cubin, argc, argv);
 
     CUfunction kernel_addr;
@@ -87,6 +88,7 @@ int main(int argc, char **argv)
 
     // Allocate the device input vector A
     CUdeviceptr d_A;
+    // JP: `cuMemAlloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cuMemAlloc(&d_A, size));
 
     // Allocate the device input vector B
@@ -100,6 +102,7 @@ int main(int argc, char **argv)
     // Copy the host input vectors A and B in host memory to the device input
     // vectors in device memory
     printf("Copy input data from the host memory to the CUDA device\n");
+    // JP: `cuMemcpyHtoD`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cuMemcpyHtoD(d_A, h_A, size));
     checkCudaErrors(cuMemcpyHtoD(d_B, h_B, size));
 
@@ -114,6 +117,7 @@ int main(int argc, char **argv)
                    reinterpret_cast<void *>(&d_B),
                    reinterpret_cast<void *>(&d_C),
                    reinterpret_cast<void *>(&numElements)};
+    // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     checkCudaErrors(cuLaunchKernel(kernel_addr,
                                    cudaGridSize.x,
                                    cudaGridSize.y,
@@ -143,6 +147,7 @@ int main(int argc, char **argv)
     printf("Test PASSED\n");
 
     // Free device global memory
+    // JP: `cuMemFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cuMemFree(d_A));
     checkCudaErrors(cuMemFree(d_B));
     checkCudaErrors(cuMemFree(d_C));

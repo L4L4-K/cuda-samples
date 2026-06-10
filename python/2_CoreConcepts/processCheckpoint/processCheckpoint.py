@@ -44,6 +44,7 @@ from dataclasses import dataclass
 from typing import List
 
 import numpy as np
+# JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
 from cuda.bindings import driver as cudrv
 from cuda.core import (
     Device,
@@ -90,13 +91,16 @@ def _cu_check(result) -> None:
 
 def compile_fill_kernel(device: Device):
     options = ProgramOptions(std="c++17", arch=f"sm_{device.arch}")
+    # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
     program = Program(KERNEL_SRC, code_type="c++", options=options)
     module = program.compile("cubin", name_expressions=("fill_pattern",))
     return module.get_kernel("fill_pattern")
 
 
+# JP: device_memory: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
 def hash_device_buffer(device_buffer, host: np.ndarray) -> str:
     _cu_check(
+        # JP: `cuMemcpyDtoH`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。 Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
         cudrv.cuMemcpyDtoH(
             host.ctypes.data,
             device_buffer.handle,
@@ -217,12 +221,14 @@ def main():
     n_elements = buffer_bytes // 4  # float32
 
     stream = device.create_stream()
+    # JP: streams_events: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     device_buffer = device.memory_resource.allocate(buffer_bytes, stream=stream)
     try:
         print("Writing deterministic pattern to GPU buffer ...")
         block = 256
         grid = (n_elements + block - 1) // block
         cfg = LaunchConfig(grid=grid, block=block)
+        # JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         launch(stream, cfg, fill_kernel, device_buffer, np.uint64(n_elements))
         stream.sync()
 
@@ -245,12 +251,14 @@ def main():
 
         if hash_before != hash_after:
             print()
+            # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
             print("FAIL: GPU buffer contents changed across checkpoint/restore.")
             return 1
 
         print()
         print("PASS: GPU buffer contents survived checkpoint/restore.")
     finally:
+        # JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         device_buffer.close(stream)
 
     print()

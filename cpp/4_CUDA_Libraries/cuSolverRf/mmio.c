@@ -363,6 +363,7 @@ int mm_write_banner(FILE *f, MM_typecode matcode)
     int   ret_code;
 
     ret_code = fprintf(f, "%s %s\n", MatrixMarketBanner, str);
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(str);
     if (ret_code != 2)
         return MM_COULD_NOT_WRITE_FILE;

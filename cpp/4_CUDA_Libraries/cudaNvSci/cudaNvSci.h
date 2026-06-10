@@ -55,6 +55,7 @@ extern void rotateKernel(cudaTextureObject_t &texObj,
                          unsigned int        *d_outputData,
                          const int            imageWidth,
                          const int            imageHeight,
+                         // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
                          cudaStream_t         stream);
 extern void launchGrayScaleKernel(unsigned int *d_rgbaImage,
                                   std::string   image_filename,

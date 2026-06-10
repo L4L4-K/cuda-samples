@@ -41,6 +41,7 @@
 // non-zero value
 __global__ void VoteAnyKernel1(unsigned int *input, unsigned int *result, int size)
 {
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int tx = threadIdx.x;
 
     int mask   = 0xffffffff;

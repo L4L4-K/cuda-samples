@@ -99,6 +99,7 @@ static void report_time(std::chrono::time_point<std::chrono::steady_clock> start
 int main()
 {
     int rc;
+    // JP: `cudaFree`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。 ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     cudaFree(0);
 
     param_t       p;
@@ -106,6 +107,7 @@ int main()
 
     // pageable host memory that holds excess constants passed via constant memory
     int *copied_params = (int *)malloc(CONST_COPIED_PARAMS * sizeof(int));
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(copied_params);
 
     // storage for computed result
@@ -129,9 +131,12 @@ int main()
 
     // warmup, verify correctness
     checkCudaErrors(
+        // JP: `cudaMemcpyToSymbol`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         cudaMemcpyToSymbol(excess_params, copied_params, CONST_COPIED_PARAMS * sizeof(int), 0, cudaMemcpyHostToDevice));
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     kernelDefault<<<1, 1>>>(p, d_result);
     checkCudaErrors(cudaMemcpy(&h_result, d_result, sizeof(int), cudaMemcpyDeviceToHost));
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
     if (h_result != expected_result) {
         std::cout << "Test failed" << std::endl;

@@ -32,6 +32,7 @@ import time
 from pathlib import Path
 
 try:
+    # JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
     import cupy as cp
     import numpy as np
     from cuda.core import Device, EventOptions

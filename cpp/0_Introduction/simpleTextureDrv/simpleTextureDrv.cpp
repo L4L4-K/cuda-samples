@@ -68,6 +68,7 @@ void runTest(int argc, char **argv);
 
 extern "C" void computeGold(float *reference, float *idata, const unsigned int len);
 
+// JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
 static CUresult initCUDA(int argc, char **argv, CUfunction *);
 
 const char *sSDKsample = "simpleTextureDrv (Driver API)";
@@ -145,6 +146,7 @@ void runTest(int argc, char **argv)
 
     // allocate device memory for result
     CUdeviceptr d_data = (CUdeviceptr)NULL;
+    // JP: `cuMemAlloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cuMemAlloc(&d_data, size));
 
     // allocate array and copy image data
@@ -164,6 +166,7 @@ void runTest(int argc, char **argv)
     copyParam.srcPitch      = width * sizeof(float);
     copyParam.WidthInBytes  = copyParam.srcPitch;
     copyParam.Height        = height;
+    // JP: `cuMemcpy2D`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cuMemcpy2D(&copyParam));
 
     // set texture parameters
@@ -194,6 +197,7 @@ void runTest(int argc, char **argv)
         // Launching (simpler method)
         void *args[5] = {&d_data, &width, &height, &angle, &TexObject};
 
+        // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         checkCudaErrors(cuLaunchKernel(
             transform, (width / block_size), (height / block_size), 1, block_size, block_size, 1, 0, NULL, args, NULL));
         checkCudaErrors(cuCtxSynchronize());
@@ -287,11 +291,13 @@ void runTest(int argc, char **argv)
         printf("Comparing files\n");
         printf("\toutput:    <%s>\n", output_filename);
         printf("\treference: <%s>\n", ref_path);
+        // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         bTestResults = compareData(h_odata, h_data_ref, width * height, MIN_EPSILON_ERROR, 0.15f);
     }
 
     // cleanup memory
     checkCudaErrors(cuTexObjectDestroy(TexObject));
+    // JP: `cuMemFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cuMemFree(d_data));
     checkCudaErrors(cuArrayDestroy(cu_array));
 

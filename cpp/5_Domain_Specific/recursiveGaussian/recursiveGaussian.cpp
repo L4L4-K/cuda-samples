@@ -103,6 +103,7 @@ unsigned int *d_temp = NULL;
 GLuint pbo   = 0; // OpenGL pixel buffer object
 GLuint texid = 0; // texture
 
+// JP: `cudaGraphicsResource_t`, `cuda_vbo_resource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
 cudaGraphicsResource_t cuda_vbo_resource;
 
 StopWatchInterface *timer = 0;
@@ -204,6 +205,7 @@ void cleanup()
 {
     sdkDeleteTimer(&timer);
 
+    // JP: `cudaFree`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。 ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_img));
     checkCudaErrors(cudaFree(d_temp));
 
@@ -300,6 +302,7 @@ void initCudaBuffers()
     checkCudaErrors(cudaMalloc((void **)&d_img, size));
     checkCudaErrors(cudaMalloc((void **)&d_temp, size));
 
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(d_img, h_img, size, cudaMemcpyHostToDevice));
 
     sdkCreateTimer(&timer);
@@ -361,6 +364,7 @@ void benchmark(int iterations)
     // warm-up
     gaussianFilterRGBA(d_img, d_result, d_temp, width, height, sigma, order, nthreads);
 
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
     sdkStartTimer(&timer);
 
@@ -407,6 +411,7 @@ bool runSingleTest(const char *ref_file, const char *exec_path)
     sprintf(dump_file, "teapot512_%02d.ppm", (int)sigma);
     sdkSavePPM4ub(dump_file, h_result, width, height);
 
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     if (!sdkComparePPM(dump_file, sdkFindFilePath(ref_file, exec_path), MAX_EPSILON_ERROR, THRESHOLD, false)) {
         nTotalErrors++;
     }

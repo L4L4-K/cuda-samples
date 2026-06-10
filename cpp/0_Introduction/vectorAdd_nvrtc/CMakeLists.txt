@@ -6,6 +6,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Module
 
 project(vectorAdd_nvrtc LANGUAGES C CXX CUDA)
 
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
 find_package(CUDAToolkit REQUIRED)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -30,6 +31,7 @@ target_compile_options(vectorAdd_nvrtc PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--exte
 target_compile_features(vectorAdd_nvrtc PRIVATE cxx_std_17 cuda_std_17)
 
 target_link_libraries(vectorAdd_nvrtc PRIVATE
+    # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
     CUDA::nvrtc
     CUDA::cuda_driver
 )

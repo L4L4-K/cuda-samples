@@ -32,6 +32,7 @@ from pathlib import Path
 
 try:
     import numpy as np
+    # JP: `cuda_rt`: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
     from cuda.bindings import runtime as cuda_rt
     from cuda.core import (
         Device,
@@ -58,6 +59,7 @@ def _mapped_host_alloc(num_floats, stream):
     nbytes = int(num_floats) * np.dtype(np.float32).itemsize
     if nbytes <= 0:
         return 0, 0
+    # JP: `cuda_rt`, `cudaHostAlloc`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
     err, h_ptr = cuda_rt.cudaHostAlloc(
         nbytes, cuda_rt.cudaHostAllocMapped | cuda_rt.cudaHostAllocPortable
     )
@@ -65,6 +67,7 @@ def _mapped_host_alloc(num_floats, stream):
         raise RuntimeError(f"cudaHostAlloc failed: {err}")
     err, d_ptr = cuda_rt.cudaHostGetDevicePointer(h_ptr, 0)
     if err != cuda_rt.cudaError_t.cudaSuccess:
+        # JP: `cuda_rt`, `cudaFreeHost`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         cuda_rt.cudaFreeHost(h_ptr)
         raise RuntimeError(f"cudaHostGetDevicePointer failed: {err}")
     # Ensure prior work on this stream is visible before host fills buffers.
@@ -136,6 +139,7 @@ def run(num_elements=1048576):
 
         print("\nCompiling CUDA kernel...")
         program_options = ProgramOptions(std="c++17", arch=f"sm_{device.arch}")
+        # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
         prog = Program(VECTOR_ADD_KERNEL, code_type="c++", options=program_options)
         mod = prog.compile("cubin")
         kernel = mod.get_kernel("vectorAddGPU")
@@ -178,6 +182,7 @@ def run(num_elements=1048576):
         config = LaunchConfig(grid=grid_size, block=block_size)
 
         # Pass device pointers from cudaHostGetDevicePointer, not raw host VAs.
+        # JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         launch(
             stream,
             config,
@@ -195,6 +200,7 @@ def run(num_elements=1048576):
         print(f"  Comparing {num_elements:,} elements...")
 
         # ``c`` is a host view of the same buffer; no cudaMemcpy D2H needed.
+        # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         if np.allclose(c, reference, rtol=1e-5, atol=1e-6):
             error_norm = np.linalg.norm(c - reference)
             ref_norm = np.linalg.norm(reference)

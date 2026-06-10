@@ -153,6 +153,7 @@ int runTest(int argc, char **argv)
     // Allocate CUDA array in device memory
     cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc(32, 0, 0, 0, cudaChannelFormatKindFloat);
     cudaArray            *heightFieldArray;
+    // JP: `cudaMallocArray`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMallocArray(&heightFieldArray, &channelDesc, dim.x, dim.y));
 
     // Initialize device memory
@@ -163,6 +164,7 @@ int runTest(int argc, char **argv)
                                         dim.x * sizeof(float),
                                         dim.x * sizeof(float),
                                         dim.y,
+                                        // JP: `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
                                         cudaMemcpyHostToDevice));
 
     cudaTextureObject_t heightFieldTex;
@@ -226,6 +228,7 @@ int runTest(int argc, char **argv)
 
     for (uint i = 0; i < numIterations; ++i) {
         // Compute view angle for each point along the ray
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         computeAngles_kernel<<<grid, block>>>(ray, thrust::raw_pointer_cast(&d_angles[0]), heightFieldTex);
         getLastCudaError("Kernel execution failed");
 
@@ -242,6 +245,7 @@ int runTest(int argc, char **argv)
         getLastCudaError("Kernel execution failed");
     }
 
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cudaDeviceSynchronize();
     sdkStopTimer(&timer);
     getLastCudaError("Kernel execution failed");
@@ -250,6 +254,7 @@ int runTest(int argc, char **argv)
     thrust::copy(d_visibilities.begin(), d_visibilities.end(), h_visibilities.begin());
 
     // Compare device visibility results against reference results
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     bool res = compareData(thrust::raw_pointer_cast(&h_visibilitiesRef[0]),
                            thrust::raw_pointer_cast(&h_visibilities[0]),
                            ray.length,
@@ -259,6 +264,7 @@ int runTest(int argc, char **argv)
     sdkResetTimer(&timer);
 
     // Cleanup memory
+    // JP: `cudaFreeArray`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFreeArray(heightFieldArray));
     return res;
 }
@@ -270,6 +276,7 @@ int runTest(int argc, char **argv)
 ////////////////////////////////////////////////////////////////////////////////
 __global__ void computeAngles_kernel(const Ray ray, float *angles, cudaTextureObject_t HeightFieldTex)
 {
+    // JP: `blockDim`, `blockIdx`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     uint i = blockDim.x * blockIdx.x + threadIdx.x;
 
     if (i < ray.length) {

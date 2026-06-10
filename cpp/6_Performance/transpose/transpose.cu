@@ -81,6 +81,7 @@ int MAX_TILES = (FLOOR(MATRIX_SIZE_X, 512) * FLOOR(MATRIX_SIZE_Y, 512)) / (TILE_
 
 __global__ void copy(float *odata, float *idata, int width, int height)
 {
+    // JP: `blockIdx`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int xIndex = blockIdx.x * TILE_DIM + threadIdx.x;
     int yIndex = blockIdx.y * TILE_DIM + threadIdx.y;
 
@@ -95,6 +96,7 @@ __global__ void copySharedMem(float *odata, float *idata, int width, int height)
 {
     // Handle to thread block group
     cg::thread_block cta = cg::this_thread_block();
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ float tile[TILE_DIM][TILE_DIM];
 
     int xIndex = blockIdx.x * TILE_DIM + threadIdx.x;
@@ -109,6 +111,7 @@ __global__ void copySharedMem(float *odata, float *idata, int width, int height)
         }
     }
 
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 
     for (int i = 0; i < TILE_DIM; i += BLOCK_ROWS) {
@@ -441,6 +444,7 @@ int main(int argc, char **argv)
     }
 
     // CUDA events
+    // JP: `cudaEvent_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaEvent_t start, stop;
 
     // size of memory required to store the matrix
@@ -460,6 +464,7 @@ int main(int argc, char **argv)
 
     // allocate device memory
     float *d_idata, *d_odata;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_idata, mem_size));
     checkCudaErrors(cudaMalloc((void **)&d_odata, mem_size));
 
@@ -469,6 +474,7 @@ int main(int argc, char **argv)
     }
 
     // copy host data to device
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(d_idata, h_idata, mem_size, cudaMemcpyHostToDevice));
 
     // Compute reference transpose solution
@@ -556,6 +562,7 @@ int main(int argc, char **argv)
         checkCudaErrors(cudaGetLastError());
 
         // warmup to avoid timing startup
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         kernel<<<grid, threads>>>(d_odata, d_idata, size_x, size_y);
 
         // take measurements for loop over kernel launches
@@ -573,6 +580,7 @@ int main(int argc, char **argv)
         checkCudaErrors(cudaEventElapsedTime(&kernelTime, start, stop));
 
         checkCudaErrors(cudaMemcpy(h_odata, d_odata, mem_size, cudaMemcpyDeviceToHost));
+        // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         bool res = compareData(gold, h_odata, size_x * size_y, 0.01f, 0.0f);
 
         if (res == false) {
@@ -624,6 +632,7 @@ int main(int argc, char **argv)
     }
 
     // cleanup
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(h_idata);
     free(h_odata);
     free(transposeGold);

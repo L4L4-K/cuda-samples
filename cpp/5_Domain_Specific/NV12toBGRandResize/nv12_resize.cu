@@ -43,6 +43,7 @@ __global__ static void resizeNV12BatchKernel(cudaTextureObject_t texSrcLuma,
                                              int                 nDstHeight,
                                              int                 nBatchSize)
 {
+    // JP: `threadIdx`, `blockIdx`, `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int x = threadIdx.x + blockIdx.x * blockDim.x;
     int y = threadIdx.y + blockIdx.y * blockDim.y;
 
@@ -83,6 +84,7 @@ void resizeNV12Batch(uint8_t     *dpSrc,
                      int          nDstWidth,
                      int          nDstHeight,
                      int          nBatchSize,
+                     // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
                      cudaStream_t stream)
 {
     int              hhSrc           = ceilf(nSrcHeight * 3.0f / 2.0f);
@@ -115,9 +117,11 @@ void resizeNV12Batch(uint8_t     *dpSrc,
     blockDimZ = (blockDimZ > 32) ? 32 : blockDimZ;
 
     dim3 grid((nDstWidth / 2 + block.x) / block.x, (nDstHeight / 2 + block.y) / block.y, blockDimZ);
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     resizeNV12BatchKernel<<<grid, block, 0, stream>>>(
         texLuma, texChroma, dpDst, nSrcWidth, nSrcHeight, nDstPitch, nDstWidth, nDstHeight, nBatchSize);
 
+    // JP: `cudaDestroyTextureObject`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaDestroyTextureObject(texLuma));
     checkCudaErrors(cudaDestroyTextureObject(texChroma));
 }

@@ -136,12 +136,14 @@ void findMultipleBestGPUs(int &num_of_devices, int *device_ids)
             device_ids[i] = gpu_stats[i].device_id;
         }
     }
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(gpu_stats);
 }
 
 /* Main */
 int main(int argc, char **argv)
 {
+    // JP: `cublasStatus_t`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
     cublasStatus_t   status;
     float           *h_A;
     float           *h_B;
@@ -275,6 +277,7 @@ int main(int argc, char **argv)
     free(h_C);
     free(h_C_ref);
 
+    // JP: `cudaFree`, `cudaSuccess`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     if (cudaFree(d_A) != cudaSuccess) {
         fprintf(stderr, "!!!! memory free error (A)\n");
         return EXIT_FAILURE;

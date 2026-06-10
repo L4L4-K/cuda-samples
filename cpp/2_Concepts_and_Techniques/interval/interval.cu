@@ -85,9 +85,11 @@ int main(int argc, char *argv[])
     interval_gpu<T> *d_result;
     int             *d_nresults;
     int             *h_nresults = new int[THREADS];
+    // JP: `cudaEvent_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaEvent_t      start, stop;
 
     CHECKED_CALL(cudaSetDevice(devID));
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     CHECKED_CALL(cudaMalloc((void **)&d_result, THREADS * DEPTH_RESULT * sizeof(*d_result)));
     CHECKED_CALL(cudaMalloc((void **)&d_nresults, THREADS * sizeof(*d_nresults)));
     CHECKED_CALL(cudaEventCreate(&start));
@@ -106,14 +108,17 @@ int main(int argc, char *argv[])
     CHECKED_CALL(cudaEventRecord(start, 0));
 
     for (int it = 0; it < NUM_RUNS; ++it) {
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         test_interval_newton<T><<<GRID_SIZE, BLOCK_SIZE>>>(d_result, d_nresults, i, implementation_choice);
         CHECKED_CALL(cudaGetLastError());
     }
 
     CHECKED_CALL(cudaEventRecord(stop, 0));
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     CHECKED_CALL(cudaDeviceSynchronize());
 
     I_CPU *h_result = new I_CPU[THREADS * DEPTH_RESULT];
+    // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     CHECKED_CALL(cudaMemcpy(h_result, d_result, THREADS * DEPTH_RESULT * sizeof(*d_result), cudaMemcpyDeviceToHost));
     CHECKED_CALL(cudaMemcpy(h_nresults, d_nresults, THREADS * sizeof(*d_nresults), cudaMemcpyDeviceToHost));
 
@@ -130,6 +135,7 @@ int main(int argc, char *argv[])
     std::cout << "Number of equations solved: " << THREADS << "\n";
     std::cout << "Time per equation: " << 1000000.0f * (time / (float)(THREADS)) / NUM_RUNS << " us\n";
 
+    // JP: `cudaEventDestroy`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     CHECKED_CALL(cudaEventDestroy(start));
     CHECKED_CALL(cudaEventDestroy(stop));
     CHECKED_CALL(cudaFree(d_result));

@@ -36,6 +36,7 @@ typedef unsigned int uint;
 ////////////////////////////////////////////////////////////////////////////////
 // Sorted keys array validation (check for integrity and proper order)
 extern "C" uint
+// JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
 validateSortedKeys(uint *resKey, uint *srcKey, uint batchSize, uint arrayLength, uint numValues, uint dir);
 
 extern "C" int validateValues(uint *resKey, uint *resVal, uint *srcKey, uint batchSize, uint arrayLength);

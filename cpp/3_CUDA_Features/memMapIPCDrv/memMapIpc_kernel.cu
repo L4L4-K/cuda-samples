@@ -31,6 +31,7 @@
 extern "C" __global__ void memMapIpc_kernel(char *ptr, int sz, char val)
 {
     // Dummy kernel
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     for (; idx < sz; idx += (gridDim.x * blockDim.x)) {
         ptr[idx] = val;

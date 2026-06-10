@@ -214,6 +214,7 @@ struct SellMatrix {
   float* d_sell_values = nullptr;
 
   void uploadToDevice() {
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc(&d_row_perm, row_perm.size() * sizeof(int)));
     checkCudaErrors(cudaMalloc(&d_slice_offsets,
                                slice_offsets.size() * sizeof(int)));
@@ -223,6 +224,7 @@ struct SellMatrix {
                                sell_col_indices.size() * sizeof(int)));
     checkCudaErrors(cudaMalloc(&d_sell_values,
                                sell_values.size() * sizeof(float)));
+    // JP: `cudaMemcpy`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(d_row_perm, row_perm.data(),
                                row_perm.size() * sizeof(int),
                                cudaMemcpyHostToDevice));
@@ -241,6 +243,7 @@ struct SellMatrix {
   }
 
   void freeDevice() {
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     if (d_row_perm) checkCudaErrors(cudaFree(d_row_perm));
     if (d_slice_offsets) checkCudaErrors(cudaFree(d_slice_offsets));
     if (d_slice_widths) checkCudaErrors(cudaFree(d_slice_widths));
@@ -471,10 +474,12 @@ int main() {
                              cudaMemcpyHostToDevice));
 
   /* Launch the SELL Tile kernel: one CTA per slice. */
+  // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
   spmvSell<SLICE_ROWS, TILE_COLS><<<S.num_slices>>>(
       S.num_rows, S.d_sell_col_indices, S.d_sell_values,
       S.d_slice_offsets, S.d_slice_widths, S.d_row_perm, d_x, d_y);
   checkCudaErrors(cudaGetLastError());
+  // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
   checkCudaErrors(cudaDeviceSynchronize());
 
   /* copy result back and verify */

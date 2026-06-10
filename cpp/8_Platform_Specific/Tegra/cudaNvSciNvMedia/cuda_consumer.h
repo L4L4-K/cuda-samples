@@ -41,6 +41,7 @@ struct cudaExternalResInterop
     cudaMipmappedArray_t   *d_mipmapArray;
     cudaArray_t            *d_mipLevelArray;
     cudaSurfaceObject_t    *cudaSurfaceNvmediaBuf;
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t            stream;
     cudaExternalMemory_t    extMemImageBuf;
     cudaExternalSemaphore_t waitSem;

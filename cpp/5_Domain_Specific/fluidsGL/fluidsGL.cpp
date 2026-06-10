@@ -74,6 +74,7 @@ void cleanup(void);
 void reshape(int x, int y);
 
 // CUFFT plan handle
+// JP: `cufftHandle`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
 cufftHandle   planr2c;
 cufftHandle   planc2r;
 static cData *vxfield = NULL;
@@ -91,6 +92,7 @@ StopWatchInterface *timer    = NULL;
 
 // Particle data
 GLuint                       vbo = 0;           // OpenGL vertex buffer object
+// JP: `cudaGraphicsResource`, `cuda_vbo_resource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
 struct cudaGraphicsResource *cuda_vbo_resource; // handles OpenGL-CUDA exchange
 static cData                *particles = NULL;  // particle positions in host memory
 static int                   lastx = 0, lasty = 0;
@@ -273,6 +275,7 @@ void keyboard(unsigned char key, int x, int y)
 
     case 'r':
         memset(hvfield, 0, sizeof(cData) * DS);
+        // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         cudaMemcpy(dvfield, hvfield, sizeof(cData) * DS, cudaMemcpyHostToDevice);
 
         initParticles(particles, DIM, DIM);
@@ -345,8 +348,10 @@ void cleanup(void)
     deleteTexture();
 
     // Free all host and device resources
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(hvfield);
     free(particles);
+    // JP: `cudaFree`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     cudaFree(dvfield);
     cudaFree(vxfield);
     cudaFree(vyfield);

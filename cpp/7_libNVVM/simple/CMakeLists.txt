@@ -29,6 +29,7 @@
 set(CMAKE_INSTALL_RPATH ${LIBNVVM_HOME})
 set(CMAKE_INCLUDE_CURRENT_DIR YES)
 
+# JP: `add_executable`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
 add_executable(simple simple.c)
 
 add_test(NAME simple COMMAND simple WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")

@@ -103,9 +103,11 @@ int parseCmdLine(int argc, char *argv[], TestArgs *args)
     if (isCrossDevice) {
         int deviceCount = 0;
 
+        // JP: `cuInit`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
         CUresult error_id = cuInit(0);
         if (error_id != CUDA_SUCCESS) {
             printf("cuInit(0) returned %d\n", error_id);
+            // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
             printf("Result = FAIL\n");
             exit(EXIT_FAILURE);
         }

@@ -39,6 +39,7 @@
 ///////////////////////////////////////////////////////////////////////////////
 __global__ void AddKernel(const float *op1, const float *op2, int count, float *sum)
 {
+    // JP: `threadIdx`, `blockIdx`, `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     const int pos = threadIdx.x + blockIdx.x * blockDim.x;
 
     if (pos >= count)
@@ -59,5 +60,6 @@ static void Add(const float *op1, const float *op2, int count, float *sum)
     dim3 threads(256);
     dim3 blocks(iDivUp(count, threads.x));
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     AddKernel<<<blocks, threads>>>(op1, op2, count, sum);
 }

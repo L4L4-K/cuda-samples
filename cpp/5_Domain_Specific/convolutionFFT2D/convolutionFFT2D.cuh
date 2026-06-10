@@ -56,6 +56,7 @@ __global__ void padKernel_kernel(float *d_Dst,
 #endif
 )
 {
+    // JP: `blockDim`, `blockIdx`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     const int y = blockDim.y * blockIdx.y + threadIdx.y;
     const int x = blockDim.x * blockIdx.x + threadIdx.x;
 

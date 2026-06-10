@@ -44,6 +44,7 @@
 
 __global__ void atomicKernel(int *atom_arr)
 {
+    // JP: `blockDim`, `blockIdx`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     unsigned int tid = blockDim.x * blockIdx.x + threadIdx.x;
 
     for (int i = 0; i < LOOP_NUM; i++) {
@@ -284,6 +285,7 @@ int main(int argc, char **argv)
 
     if (!device_prop.managedMemory) {
         // This samples requires being run on a device that supports Unified Memory
+        // JP: managed_memory: Unified Memory は CPU/GPU で同じ pointer を使います。prefetch や同期で移動タイミングを意識します。
         fprintf(stderr, "Unified Memory not supported on this device\n");
         exit(EXIT_WAIVED);
     }
@@ -329,10 +331,12 @@ int main(int argc, char **argv)
     // To make the AND and XOR tests generate something other than 0...
     atom_arr[7] = atom_arr[9] = 0xff;
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     atomicKernel<<<numBlocks, numThreads>>>(atom_arr);
 
     // Do device synchronize for devices that don't support concurrent managed access such as WSL.
     if (!concurrentManagedAccess) {
+        // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         checkCudaErrors(cudaDeviceSynchronize());
     }
 
@@ -344,9 +348,11 @@ int main(int argc, char **argv)
     int testResult = verify(atom_arr, 2 * numThreads * numBlocks);
 
     if (device_prop.pageableMemoryAccess) {
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         free(atom_arr);
     }
     else {
+        // JP: `cudaFree`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
         cudaFree(atom_arr);
     }
 

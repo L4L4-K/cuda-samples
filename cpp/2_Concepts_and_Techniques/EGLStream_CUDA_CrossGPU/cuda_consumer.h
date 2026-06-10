@@ -44,6 +44,7 @@
 
 typedef struct _test_cuda_consumer_s
 {
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     CUcontext             context;
     CUeglStreamConnection cudaConn;
     int                   cudaDevId;
@@ -53,6 +54,7 @@ typedef struct _test_cuda_consumer_s
     char                 *cudaBuf;
     bool                  profileAPI;
     unsigned char        *pCudaCopyMem;
+    // JP: streams_events: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     CUstream              consCudaStream;
 } test_cuda_consumer_s;
 

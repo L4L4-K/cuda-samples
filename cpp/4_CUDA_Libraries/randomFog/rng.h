@@ -46,6 +46,7 @@ public:
 
 private:
     // Generators
+    // JP: `curandGenerator_t`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
     curandGenerator_t *m_pCurrent;
     curandGenerator_t  m_prng;
     curandGenerator_t  m_qrng;

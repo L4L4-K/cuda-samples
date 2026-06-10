@@ -53,6 +53,7 @@ int main(int argc, char *argv[])
     try {
         std::string      sFilename;
         char            *filePath;
+        // JP: `nppStreamCtx`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
         NppStreamContext nppStreamCtx;
         nppStreamCtx.hStream =
             0; // The NULL stream by default, set this to whatever your stream ID is if not the NULL stream.
@@ -86,6 +87,7 @@ int main(int argc, char *argv[])
         if (cudaError != cudaSuccess)
             return NPP_NOT_SUFFICIENT_COMPUTE_CAPABILITY;
 
+        // JP: `cudaError`, `cudaStreamGetFlags`, `nppStreamCtx`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
         cudaError = cudaStreamGetFlags(nppStreamCtx.hStream, &nppStreamCtx.nStreamFlags);
 
         cudaDeviceProp oDeviceProperties;

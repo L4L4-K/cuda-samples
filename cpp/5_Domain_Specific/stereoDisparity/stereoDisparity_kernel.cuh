@@ -99,6 +99,7 @@ __global__ void stereoDisparityKernel(unsigned int       *g_img0,
                                       cudaTextureObject_t tex2Dright)
 {
     // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     cg::thread_block cta = cg::this_thread_block();
     // access thread id
     const int          tidx = blockDim.x * blockIdx.x + threadIdx.x;
@@ -111,6 +112,7 @@ __global__ void stereoDisparityKernel(unsigned int       *g_img0,
     unsigned int            cost;
     unsigned int            bestCost      = 9999999;
     unsigned int            bestDisparity = 0;
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ unsigned int diff[blockSize_y + 2 * RAD][blockSize_x + 2 * RAD];
 
     // store needed values for left image into registers (constant indexed local
@@ -152,6 +154,7 @@ __global__ void stereoDisparityKernel(unsigned int       *g_img0,
             }
         }
 
+        // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         cg::sync(cta);
 
 // sum cost horizontally

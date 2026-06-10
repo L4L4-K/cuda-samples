@@ -83,6 +83,7 @@ int main(int argc, char *argv[])
 
         cudaDeviceInit(argc, (const char **)argv);
 
+        // JP: `nppStreamCtx`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
         NppStreamContext nppStreamCtx;
         nppStreamCtx.hStream =
             0; // The NULL stream by default, set this to whatever your stream ID is if not the NULL stream.
@@ -116,6 +117,7 @@ int main(int argc, char *argv[])
         if (cudaError != cudaSuccess)
             return NPP_NOT_SUFFICIENT_COMPUTE_CAPABILITY;
 
+        // JP: `cudaError`, `cudaStreamGetFlags`, `nppStreamCtx`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
         cudaError = cudaStreamGetFlags(nppStreamCtx.hStream, &nppStreamCtx.nStreamFlags);
 
         cudaDeviceProp oDeviceProperties;
@@ -191,6 +193,7 @@ int main(int argc, char *argv[])
         Npp32s *histDevice   = 0;
         Npp32s *levelsDevice = 0;
 
+        // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
         NPP_CHECK_CUDA(cudaMalloc((void **)&histDevice, binCount * sizeof(Npp32s)));
         NPP_CHECK_CUDA(cudaMalloc((void **)&levelsDevice, levelCount * sizeof(Npp32s)));
 
@@ -220,6 +223,7 @@ int main(int argc, char *argv[])
                                                    nppStreamCtx));
         // copy histogram and levels to host memory
         Npp32s histHost[binCount];
+        // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         NPP_CHECK_CUDA(cudaMemcpy(histHost, histDevice, binCount * sizeof(Npp32s), cudaMemcpyDeviceToHost));
 
         Npp32s lutHost[levelCount];
@@ -281,6 +285,7 @@ int main(int argc, char *argv[])
                                                 levelCount,
                                                 nppStreamCtx));
 
+        // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         NPP_CHECK_CUDA(cudaFree(lutDevice));
         NPP_CHECK_CUDA(cudaFree(lvlsDevice));
 #else

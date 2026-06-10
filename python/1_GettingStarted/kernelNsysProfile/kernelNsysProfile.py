@@ -112,6 +112,7 @@ def get_cuda_core_kernels(device):
 
     # Compile all kernels at once
     program_options = ProgramOptions(std="c++17", arch=f"sm_{device.arch}")
+    # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
     prog = Program(KERNELS_CODE, code_type="c++", options=program_options)
     mod = prog.compile(
         "cubin",
@@ -207,6 +208,7 @@ def run(size):
             # Execute cuda.core vector_add kernel
             with nvtx.annotate("Vector Add (cuda.core)", color="cyan"):
                 c_cuda = cp.empty_like(a_gpu)
+                # JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
                 launch(
                     stream,
                     config,

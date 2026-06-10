@@ -68,7 +68,9 @@ namespace cg = cooperative_groups;
 __global__ void sobolGPU_kernel(unsigned n_vectors, unsigned n_dimensions, unsigned *d_directions, float *d_output)
 {
     // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     cg::thread_block        cta = cg::this_thread_block();
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ unsigned int v[n_directions];
 
     // Offset into the correct dimension as specified by the
@@ -83,6 +85,7 @@ __global__ void sobolGPU_kernel(unsigned n_vectors, unsigned n_dimensions, unsig
         v[threadIdx.x] = d_directions[threadIdx.x];
     }
 
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 
     // Set initial index (i.e. which vector this thread is
@@ -205,5 +208,6 @@ extern "C" void sobolGPU(int n_vectors, int n_dimensions, unsigned int *d_direct
     dimBlock.x = threadsperblock;
 
     // Execute GPU kernel
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     sobolGPU_kernel<<<dimGrid, dimBlock>>>(n_vectors, n_dimensions, d_directions, d_output);
 }

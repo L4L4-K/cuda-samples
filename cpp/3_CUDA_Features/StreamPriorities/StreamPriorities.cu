@@ -61,6 +61,7 @@
 // copy from source -> destination arrays
 __global__ void memcpy_kernel(int *dst, int *src, size_t n)
 {
+    // JP: `gridDim`, `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int num = gridDim.x * blockDim.x;
     int id  = blockDim.x * blockIdx.x + threadIdx.x;
 
@@ -105,6 +106,7 @@ int main(int argc, char **argv)
     printf("CUDA stream priority range: LOW: %d to HIGH: %d\n", priority_low, priority_hi);
 
     // create streams with highest and lowest available priorities
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t st_low;
     cudaStream_t st_hi;
     checkCudaErrors(cudaStreamCreateWithPriority(&st_low, cudaStreamNonBlocking, priority_low));
@@ -132,8 +134,10 @@ int main(int argc, char **argv)
     // copy source data -> device
     int *d_src_low;
     int *d_src_hi;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc(&d_src_low, size));
     checkCudaErrors(cudaMalloc(&d_src_hi, size));
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(d_src_low, h_src_low, size, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_src_hi, h_src_hi, size, cudaMemcpyHostToDevice));
 
@@ -161,6 +165,7 @@ int main(int argc, char **argv)
 
     for (int i = 0; i < TOTAL_SIZE; i += EACH_SIZE) {
         int j = i / sizeof(int);
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         memcpy_kernel<<<TBLOCKS, THREADS, 0, st_low>>>(d_dst_low + j, d_src_low + j, EACH_SIZE);
         memcpy_kernel<<<TBLOCKS, THREADS, 0, st_hi>>>(d_dst_hi + j, d_src_hi + j, EACH_SIZE);
     }
@@ -168,6 +173,7 @@ int main(int argc, char **argv)
     checkCudaErrors(cudaEventRecord(ev_end_low, st_low));
     checkCudaErrors(cudaEventRecord(ev_end_hi, st_hi));
 
+    // JP: `cudaEventSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaEventSynchronize(ev_end_low));
     checkCudaErrors(cudaEventSynchronize(ev_end_hi));
 

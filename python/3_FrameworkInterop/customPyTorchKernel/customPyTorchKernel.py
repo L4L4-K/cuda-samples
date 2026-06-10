@@ -110,6 +110,7 @@ def get_square_kernel(device):
     if key not in _kernel_cache:
         # Compile the kernel with appropriate architecture
         opts = ProgramOptions(std="c++17", arch=f"sm_{device.arch}")
+        # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
         prog = Program(SQUARE_KERNEL, code_type="c++", options=opts)
         mod = prog.compile("cubin")
         _kernel_cache[key] = mod.get_kernel("square_kernel")
@@ -178,6 +179,7 @@ class SquareOp(torch.autograd.Function):
             config = LaunchConfig(grid=blocks_per_grid, block=threads_per_block)
 
             # Launch the kernel
+            # JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
             launch(stream, config, kernel, x.data_ptr(), y.data_ptr(), n)
         finally:
             # Ensure stream is properly closed
@@ -300,6 +302,7 @@ def main():
     print(f"Max absolute error: {max_error:.2e}")
 
     if torch.allclose(y_custom, y_reference, rtol=1e-5, atol=1e-6):
+        # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         print("[PASS] Forward pass PASSED")
     else:
         print("[FAIL] Forward pass FAILED")

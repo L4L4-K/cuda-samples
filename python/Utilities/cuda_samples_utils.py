@@ -53,6 +53,7 @@ def check_cuda_requirements() -> bool:
         True if requirements are met, False otherwise
     """
     try:
+        # JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
         import cupy as cp  # noqa: F401
         from cuda.core import Device  # noqa: F401
 
@@ -102,6 +103,7 @@ def verify_array_result(
     is_np = isinstance(result, np.ndarray) and isinstance(expected, np.ndarray)
 
     if is_np:
+        # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         allclose = np.allclose
         abs_ = np.abs
         max_ = np.max

@@ -38,6 +38,7 @@
 
 template <typename T>
 void integrateNbodySystem(DeviceData<T>         *deviceData,
+                          // JP: `cudaGraphicsResource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
                           cudaGraphicsResource **pgres,
                           unsigned int           currentRead,
                           float                  deltaTime,
@@ -87,6 +88,7 @@ template <typename T> BodySystemCUDA<T>::~BodySystemCUDA()
 
 template <typename T> void BodySystemCUDA<T>::_initialize(int numBodies)
 {
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(!m_bInitialized);
 
     m_numBodies = numBodies;
@@ -144,6 +146,7 @@ template <typename T> void BodySystemCUDA<T>::_initialize(int numBodies)
     delete[] numSms;
 
     if (m_bUseSysMem) {
+        // JP: `cudaHostAlloc`, `cudaHostAllocMapped`, `cudaHostAllocPortable`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
         checkCudaErrors(cudaHostAlloc((void **)&m_hPos[0], memSize, cudaHostAllocMapped | cudaHostAllocPortable));
         checkCudaErrors(cudaHostAlloc((void **)&m_hPos[1], memSize, cudaHostAllocMapped | cudaHostAllocPortable));
         checkCudaErrors(cudaHostAlloc((void **)&m_hVel, memSize, cudaHostAllocMapped | cudaHostAllocPortable));
@@ -157,6 +160,7 @@ template <typename T> void BodySystemCUDA<T>::_initialize(int numBodies)
                 checkCudaErrors(cudaSetDevice(i));
             }
 
+            // JP: `cudaEventCreate`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
             checkCudaErrors(cudaEventCreate(&m_deviceData[i].event));
             checkCudaErrors(cudaHostGetDevicePointer((void **)&m_deviceData[i].dPos[0], (void *)m_hPos[0], 0));
             checkCudaErrors(cudaHostGetDevicePointer((void **)&m_deviceData[i].dPos[1], (void *)m_hPos[1], 0));
@@ -194,6 +198,7 @@ template <typename T> void BodySystemCUDA<T>::_initialize(int numBodies)
             }
         }
         else {
+            // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
             checkCudaErrors(cudaMalloc((void **)&m_deviceData[0].dPos[0], memSize));
             checkCudaErrors(cudaMalloc((void **)&m_deviceData[0].dPos[1], memSize));
         }
@@ -235,6 +240,7 @@ template <typename T> void BodySystemCUDA<T>::_finalize()
     assert(m_bInitialized);
 
     if (m_bUseSysMem) {
+        // JP: `cudaFreeHost`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         checkCudaErrors(cudaFreeHost(m_hPos[0]));
         checkCudaErrors(cudaFreeHost(m_hPos[1]));
         checkCudaErrors(cudaFreeHost(m_hVel));
@@ -363,6 +369,7 @@ template <typename T> T *BodySystemCUDA<T>::getArray(BodyArray array)
             checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&ddata, &bytes, pgres));
         }
 
+        // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         checkCudaErrors(cudaMemcpy(hdata, ddata, m_numBodies * 4 * sizeof(T), cudaMemcpyDeviceToHost));
 
         if (pgres) {

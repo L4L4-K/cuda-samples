@@ -74,6 +74,7 @@ void randomInit(float *, int);
 
 extern "C" void computeGold(float *, const float *, const float *, unsigned int, unsigned int, unsigned int);
 
+// JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
 static int initCUDA(int argc, char **argv, CUfunction *pMatrixMul, int *blk_size);
 
 #ifndef FATBIN_FILE
@@ -136,11 +137,13 @@ void runTest(int argc, char **argv)
 
     // allocate device memory
     CUdeviceptr d_A;
+    // JP: `cuMemAlloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cuMemAlloc(&d_A, mem_size_A));
     CUdeviceptr d_B;
     checkCudaErrors(cuMemAlloc(&d_B, mem_size_B));
 
     // copy host memory to device
+    // JP: `cuMemcpyHtoD`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cuMemcpyHtoD(d_A, h_A, mem_size_A));
     checkCudaErrors(cuMemcpyHtoD(d_B, h_B, mem_size_B));
 
@@ -174,6 +177,7 @@ void runTest(int argc, char **argv)
         size_t Matrix_Width_B = (size_t)WB;
         void  *args[5]        = {&d_C, &d_A, &d_B, &Matrix_Width_A, &Matrix_Width_B};
         // new CUDA 4.0 Driver API Kernel launch call
+        // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         checkCudaErrors(cuLaunchKernel(matrixMul,
                                        grid.x,
                                        grid.y,
@@ -244,12 +248,14 @@ void runTest(int argc, char **argv)
         }
     }
 
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     printf("%s\n", correct ? "Result = PASS" : "Result = FAIL");
 
     printf("\nNOTE: The CUDA Samples are not meant for performance measurements. "
            "Results may vary when GPU Boost is enabled.\n");
 
     // clean up memory
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(h_A);
     free(h_B);
     free(h_C);

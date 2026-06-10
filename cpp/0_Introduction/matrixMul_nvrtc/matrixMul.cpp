@@ -88,6 +88,7 @@ int matrixMultiply(int argc, char **argv, int block_size, dim3 &dimsA, dim3 &dim
     kernel_file = sdkFindFilePath("matrixMul_kernel.cu", argv[0]);
     compileFileToCUBIN(kernel_file, argc, argv, &cubin, &cubinSize, 1);
 
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     CUmodule module = loadCUBIN(cubin, argc, argv);
 
     // Allocate host matrix C
@@ -100,11 +101,13 @@ int matrixMultiply(int argc, char **argv, int block_size, dim3 &dimsA, dim3 &dim
         exit(EXIT_FAILURE);
     }
 
+    // JP: `cuMemAlloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cuMemAlloc(&d_A, mem_size_A));
     checkCudaErrors(cuMemAlloc(&d_B, mem_size_B));
     checkCudaErrors(cuMemAlloc(&d_C, mem_size_C));
 
     // copy host memory to device
+    // JP: `cuMemcpyHtoD`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cuMemcpyHtoD(d_A, h_A, mem_size_A));
     checkCudaErrors(cuMemcpyHtoD(d_B, h_B, mem_size_B));
 
@@ -129,6 +132,7 @@ int matrixMultiply(int argc, char **argv, int block_size, dim3 &dimsA, dim3 &dim
     int nIter = 300;
 
     for (int j = 0; j < nIter; j++) {
+        // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         checkCudaErrors(cuLaunchKernel(kernel_addr,
                                        grid.x,
                                        grid.y,
@@ -168,12 +172,14 @@ int matrixMultiply(int argc, char **argv, int block_size, dim3 &dimsA, dim3 &dim
         }
     }
 
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     printf("%s\n", correct ? "Result = PASS" : "Result = FAIL");
 
     printf("\nNOTE: The CUDA Samples are not meant for performance measurements. "
            "Results may vary when GPU Boost is enabled.\n");
 
     // Clean up memory
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(h_A);
     free(h_B);
     free(h_C);

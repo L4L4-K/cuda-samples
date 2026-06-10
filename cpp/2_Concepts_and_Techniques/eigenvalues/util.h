@@ -37,6 +37,7 @@
 template <class T> inline void freePtr(T *&ptr)
 {
     if (NULL != ptr) {
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         free(ptr);
         ptr = NULL;
     }

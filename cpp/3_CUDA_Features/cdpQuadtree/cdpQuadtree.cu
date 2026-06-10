@@ -266,11 +266,13 @@ template <int NUM_THREADS_PER_BLOCK>
 __global__ void build_quadtree_kernel(Quadtree_node *nodes, Points *points, Parameters params)
 {
     // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     cg::thread_block cta = cg::this_thread_block();
     // The number of warps in a block.
     const int NUM_WARPS_PER_BLOCK = NUM_THREADS_PER_BLOCK / warpSize;
 
     // Shared memory to store the number of points.
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     extern __shared__ int smem[];
 
     // s_num_pts[4][NUM_WARPS_PER_BLOCK];
@@ -368,6 +370,7 @@ __global__ void build_quadtree_kernel(Quadtree_node *nodes, Points *points, Para
     }
 
     // Make sure warps have finished counting.
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 
     //
@@ -542,6 +545,7 @@ __global__ void build_quadtree_kernel(Quadtree_node *nodes, Points *points, Para
 
             // Launch 4 children.
             build_quadtree_kernel<NUM_THREADS_PER_BLOCK>
+                // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
                 <<<4, NUM_THREADS_PER_BLOCK, 4 * NUM_WARPS_PER_BLOCK * sizeof(int)>>>(
                     &children[child_offset], points, Parameters(params, true));
         }
@@ -658,7 +662,9 @@ bool cdpQuadtree(int warp_size)
 
     // Allocate memory to store points.
     Points *points;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&points, 2 * sizeof(Points)));
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(points, points_init, 2 * sizeof(Points), cudaMemcpyHostToDevice));
 
     // We could use a close form...
@@ -701,6 +707,7 @@ bool cdpQuadtree(int warp_size)
     delete[] host_nodes;
 
     // Free memory.
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(nodes));
     checkCudaErrors(cudaFree(points));
 

@@ -47,6 +47,7 @@ import sys
 import traceback
 
 try:
+    # JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
     from cuda.core import Device, LaunchConfig, Program, ProgramOptions, launch
 except ImportError as e:
     print(f"Error: Required package not found: {e}")
@@ -102,6 +103,7 @@ if NUMBA_AVAILABLE:
         x, y, z = numba_cuda.grid(3)
 
         # Classic CUDA-style indices, same formulas as the C++ sample
+        # JP: `blockIdx`, `gridDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
         block_id = numba_cuda.blockIdx.y * numba_cuda.gridDim.x + numba_cuda.blockIdx.x
 
         thread_id = (
@@ -144,6 +146,7 @@ def run_cuda_cpp_kernel(device, test_value=10):
     # Compile the kernel
     print("Compiling CUDA C++ kernel...")
     program_options = ProgramOptions(std="c++17", arch=f"sm_{device.arch}")
+    # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
     prog = Program(PRINTF_KERNEL, code_type="c++", options=program_options)
     mod = prog.compile("cubin", name_expressions=("printKernel",))
     kernel = mod.get_kernel("printKernel")
@@ -169,6 +172,7 @@ def run_cuda_cpp_kernel(device, test_value=10):
     print(f"Launching kernel with value={test_value}. Output:\n")
     try:
         # Launch kernel
+        # JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         launch(stream, config, kernel, test_value)
 
         # Synchronize to ensure printf output is flushed

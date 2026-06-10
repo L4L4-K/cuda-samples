@@ -91,6 +91,7 @@ int main(int argc, char **argv)
     kernel_file = sdkFindFilePath("clock_kernel.cu", argv[0]);
     compileFileToCUBIN(kernel_file, argc, argv, &cubin, &cubinSize, 0);
 
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     CUmodule   module = loadCUBIN(cubin, argc, argv);
     CUfunction kernel_addr;
 
@@ -100,13 +101,16 @@ int main(int argc, char **argv)
     dim3 cudaGridSize(NUM_BLOCKS, 1, 1);
 
     CUdeviceptr dinput, doutput, dtimer;
+    // JP: `cuMemAlloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cuMemAlloc(&dinput, sizeof(float) * NUM_THREADS * 2));
     checkCudaErrors(cuMemAlloc(&doutput, sizeof(float) * NUM_BLOCKS));
     checkCudaErrors(cuMemAlloc(&dtimer, sizeof(clock_t) * NUM_BLOCKS * 2));
+    // JP: `cuMemcpyHtoD`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cuMemcpyHtoD(dinput, input, sizeof(float) * NUM_THREADS * 2));
 
     void *arr[] = {(void *)&dinput, (void *)&doutput, (void *)&dtimer};
 
+    // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     checkCudaErrors(cuLaunchKernel(kernel_addr,
                                    cudaGridSize.x,
                                    cudaGridSize.y,
@@ -121,6 +125,7 @@ int main(int argc, char **argv)
 
     checkCudaErrors(cuCtxSynchronize());
     checkCudaErrors(cuMemcpyDtoH(timer, dtimer, sizeof(clock_t) * NUM_BLOCKS * 2));
+    // JP: `cuMemFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cuMemFree(dinput));
     checkCudaErrors(cuMemFree(doutput));
     checkCudaErrors(cuMemFree(dtimer));

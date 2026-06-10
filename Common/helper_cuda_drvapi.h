@@ -67,6 +67,7 @@ inline int ftoi(float value) {
 #define checkCudaErrors(err) __checkCudaErrors(err, __FILE__, __LINE__)
 
 // These are the inline versions for all of the SDK helper functions
+// JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
 inline void __checkCudaErrors(CUresult err, const char *file, const int line) {
   if (CUDA_SUCCESS != err) {
     const char *errorStr = NULL;

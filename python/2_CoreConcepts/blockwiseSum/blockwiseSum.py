@@ -42,6 +42,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "Utilities"))
 from cuda_samples_utils import verify_array_result
 
 try:
+    # JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
     import cupy as cp
     import numpy as np
     from cuda.core import (
@@ -146,6 +147,7 @@ def run_sample(num_elements: int = 1024 * 1024, device_id: int = 0) -> bool:
         program = Program(
             KERNELS_CODE, code_type="c++", options=ProgramOptions(arch=arch)
         )
+        # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
         module = program.compile(target_type="cubin")
         kernel_simple = module.get_kernel("simple_indexing")
         kernel_strided = module.get_kernel("strided_loop")
@@ -160,6 +162,7 @@ def run_sample(num_elements: int = 1024 * 1024, device_id: int = 0) -> bool:
         # Demo 1: Simple indexing (1 thread = 1 element)
         full_blocks = (num_elements + threads_per_block - 1) // threads_per_block
         config = LaunchConfig(grid=full_blocks, block=threads_per_block)
+        # JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         launch(
             stream,
             config,
@@ -207,6 +210,7 @@ def run_sample(num_elements: int = 1024 * 1024, device_id: int = 0) -> bool:
 
         # Each block sums num_elements/num_blocks elements (strided access).
         # Requires num_elements % num_blocks == 0 for correct expected values.
+        # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         assert (
             num_elements % num_blocks == 0
         ), "num_elements must be divisible by num_blocks for block_partial_sum"

@@ -11,6 +11,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "QNX")
     set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_LIBRARIES OFF)
 endif()
 
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
 find_package(CUDAToolkit REQUIRED)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -37,6 +38,7 @@ target_compile_features(simpleCUFFT PRIVATE cxx_std_17 cuda_std_17)
 set_target_properties(simpleCUFFT PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 
 target_link_libraries(simpleCUFFT PRIVATE
+    # JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
     CUDA::cufft
 )
 

@@ -50,6 +50,7 @@ void Volume_init(Volume *vol, cudaExtent dataSize, void *h_data, int allowStore)
             make_cudaPitchedPtr(h_data, dataSize.width * sizeof(VolumeType), dataSize.width, dataSize.height);
         copyParams.dstArray = vol->content;
         copyParams.extent   = dataSize;
+        // JP: `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         copyParams.kind     = cudaMemcpyHostToDevice;
         checkCudaErrors(cudaMemcpy3D(&copyParams));
     }
@@ -84,8 +85,10 @@ void Volume_init(Volume *vol, cudaExtent dataSize, void *h_data, int allowStore)
 
 void Volume_deinit(Volume *vol)
 {
+    // JP: `cudaDestroyTextureObject`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaDestroyTextureObject(vol->volumeTex));
     checkCudaErrors(cudaDestroySurfaceObject(vol->volumeSurf));
+    // JP: `cudaFreeArray`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaFreeArray(vol->content));
     vol->content = 0;
 }

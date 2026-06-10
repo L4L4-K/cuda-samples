@@ -75,6 +75,7 @@ double mat_norminf(int m, int n, const double *A, int lda) {
 /*
  * |A| = max { |A|*ones(m,1) }
  */
+// JP: `cusparseMatDescr_t`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
 double csr_mat_norminf(int m, int n, int nnzA, const cusparseMatDescr_t descrA,
                        const double *csrValA, const int *csrRowPtrA,
                        const int *csrColIndA) {

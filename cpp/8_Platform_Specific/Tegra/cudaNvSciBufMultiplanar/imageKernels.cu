@@ -32,6 +32,7 @@
 static __global__ void flipSurfaceBits(cudaSurfaceObject_t surfObj, int width, int height)
 {
     char         data;
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
     if (x < width && y < height) {
@@ -61,6 +62,7 @@ void launchFlipSurfaceBitsKernel(cudaArray_t *levelArray,
         dim3 threadsperBlock(16, 16);
         dim3 numBlocks((multiPlanarWidth[i] + threadsperBlock.x - 1) / threadsperBlock.x,
                        (multiPlanarHeight[i] + threadsperBlock.y - 1) / threadsperBlock.y);
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         flipSurfaceBits<<<numBlocks, threadsperBlock>>>(surfObject[i], multiPlanarWidth[i], multiPlanarHeight[i]);
     }
 }

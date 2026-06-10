@@ -30,6 +30,7 @@
 
 static size_t round_up(size_t x, size_t y) { return ((x + y - 1) / y) * y; }
 
+// JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
 CUresult simpleMallocMultiDeviceMmap(CUdeviceptr                 *dptr,
                                      size_t                      *allocationSize,
                                      size_t                       size,

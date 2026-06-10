@@ -177,6 +177,7 @@ int main(int argc, char *argv[])
 
     try {
         cudaError_t cudaResult;
+        // JP: `cudaResult`, `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
         cudaResult = cudaMalloc((void **)&d_directions, n_dimensions * n_directions * sizeof(unsigned int));
 
         if (cudaResult != cudaSuccess) {
@@ -203,8 +204,10 @@ int main(int argc, char *argv[])
 
     // Copy the direction numbers to the device
     std::cout << "Copying direction numbers to device..." << std::endl;
+    // JP: `cudaMemcpy`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(
         d_directions, h_directions, n_dimensions * n_directions * sizeof(unsigned int), cudaMemcpyHostToDevice));
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
 
     // Execute the QRNG on the device
@@ -296,6 +299,7 @@ int main(int argc, char *argv[])
     // Cleanup and terminate
     std::cout << "Shutting down..." << std::endl;
     sdkDeleteTimer(&hTimer);
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     delete h_directions;
     delete h_outputCPU;
     delete h_outputGPU;

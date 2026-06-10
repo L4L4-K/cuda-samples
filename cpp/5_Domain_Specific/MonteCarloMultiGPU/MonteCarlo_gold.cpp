@@ -102,6 +102,7 @@ extern "C" void MonteCarloCPU(TOptionValue &callValue, TOptionData optionData, f
     const double VBySqrtT = V * sqrt(T);
 
     float            *samples;
+    // JP: `curandGenerator_t`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
     curandGenerator_t gen;
 
     checkCudaErrors(curandCreateGeneratorHost(&gen, CURAND_RNG_PSEUDO_DEFAULT));
@@ -128,6 +129,7 @@ extern "C" void MonteCarloCPU(TOptionValue &callValue, TOptionData optionData, f
     }
 
     if (h_Samples == NULL)
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         free(samples);
 
     checkCudaErrors(curandDestroyGenerator(gen));

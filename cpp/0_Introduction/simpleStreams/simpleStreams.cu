@@ -49,6 +49,7 @@
 
 const char *sSDKsample = "simpleStreams";
 
+// JP: `cudaEventDefault`, `cudaEventBlockingSync`, `cudaEventDisableTiming`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
 const char *sEventSyncMethod[] = {"cudaEventDefault", "cudaEventBlockingSync", "cudaEventDisableTiming", NULL};
 
 const char *sDeviceSyncMethod[] = {"cudaDeviceScheduleAuto",
@@ -79,6 +80,7 @@ const char *sDeviceSyncMethod[] = {"cudaDeviceScheduleAuto",
 
 __global__ void init_array(int *g_data, int *factor, int num_iterations)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
     for (int i = 0; i < num_iterations; i++) {
@@ -118,6 +120,7 @@ inline void AllocateHostMemory(bool bPinGenericMemory, int **pp_a, int **ppAlign
 
         *ppAligned_a = (int *)ALIGN_UP(*pp_a, MEMORY_ALIGNMENT);
 
+        // JP: `cudaHostRegister`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
         printf("> cudaHostRegister() registering %4.2f Mbytes of generic allocated "
                "system memory\n",
                (float)nbytes / 1048576.0f);
@@ -153,6 +156,7 @@ inline void FreeHostMemory(bool bPinGenericMemory, int **pp_a, int **ppAligned_a
 #endif
 #endif
     {
+        // JP: `cudaFreeHost`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         cudaFreeHost(*pp_a);
     }
 }
@@ -308,7 +312,9 @@ int main(int argc, char **argv)
     // allocate device memory
     int *d_a = 0,
         *d_c = 0; // pointers to data and init value in the device memory
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_a, nbytes));
+    // JP: `cudaMemset`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemset(d_a, 0x0, nbytes));
     checkCudaErrors(cudaMalloc((void **)&d_c, sizeof(int)));
     checkCudaErrors(cudaMemcpy(d_c, &c, sizeof(int), cudaMemcpyHostToDevice));
@@ -337,6 +343,7 @@ int main(int argc, char **argv)
                                                       // completed
     checkCudaErrors(cudaMemcpyAsync(hAligned_a, d_a, nbytes, cudaMemcpyDeviceToHost, streams[0]));
     checkCudaErrors(cudaEventRecord(stop_event, 0));
+    // JP: `cudaEventSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaEventSynchronize(stop_event)); // block until the event is actually recorded
     checkCudaErrors(cudaEventElapsedTime(&time_memcpy, start_event, stop_event));
     printf("memcopy:\t%.2f\n", time_memcpy);
@@ -345,6 +352,7 @@ int main(int argc, char **argv)
     threads = dim3(512, 1);
     blocks  = dim3(n / threads.x, 1);
     checkCudaErrors(cudaEventRecord(start_event, 0));
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     init_array<<<blocks, threads, 0, streams[0]>>>(d_a, d_c, niterations);
     checkCudaErrors(cudaEventRecord(stop_event, 0));
     checkCudaErrors(cudaEventSynchronize(stop_event));

@@ -220,20 +220,24 @@ int main(int argc, char **argv)
     h_input  = (unsigned int *)malloc(VOTE_DATA_GROUP * warp_size * sizeof(unsigned int));
     h_result = (unsigned int *)malloc(VOTE_DATA_GROUP * warp_size * sizeof(unsigned int));
     checkCudaErrors(
+        // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
         cudaMalloc(reinterpret_cast<void **>(&d_input), VOTE_DATA_GROUP * warp_size * sizeof(unsigned int)));
     checkCudaErrors(
         cudaMalloc(reinterpret_cast<void **>(&d_result), VOTE_DATA_GROUP * warp_size * sizeof(unsigned int)));
     genVoteTestPattern(h_input, VOTE_DATA_GROUP * warp_size);
     checkCudaErrors(
+        // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         cudaMemcpy(d_input, h_input, VOTE_DATA_GROUP * warp_size * sizeof(unsigned int), cudaMemcpyHostToDevice));
 
     // Start of Vote Any Test Kernel #1
     printf("[VOTE Kernel Test 1/3]\n");
     printf("\tRunning <<Vote.Any>> kernel1 ...\n");
     {
+        // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         checkCudaErrors(cudaDeviceSynchronize());
         dim3 gridBlock(1, 1);
         dim3 threadBlock(VOTE_DATA_GROUP * warp_size, 1);
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         VoteAnyKernel1<<<gridBlock, threadBlock>>>(d_input, d_result, VOTE_DATA_GROUP * warp_size);
         getLastCudaError("VoteAnyKernel() execution failed\n");
         checkCudaErrors(cudaDeviceSynchronize());
@@ -275,6 +279,7 @@ int main(int argc, char **argv)
     error_count[2] = checkResultsVoteAnyKernel3(hinfo, warp_size * 3);
 
     // Now free these resources for Test #1,2
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_input));
     checkCudaErrors(cudaFree(d_result));
     free(h_input);

@@ -90,6 +90,7 @@ const unsigned int mesh_height = 256;
 
 // vbo variables
 GLuint                       vbo;
+// JP: `cudaGraphicsResource`, `cuda_vbo_resource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
 struct cudaGraphicsResource *cuda_vbo_resource;
 void                        *d_vbo_buffer = NULL;
 
@@ -147,6 +148,7 @@ const char *sSDKsample = "simpleGL (VBO)";
 ///////////////////////////////////////////////////////////////////////////////
 __global__ void simple_vbo_kernel(float4 *pos, unsigned int width, unsigned int height, float time)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -170,6 +172,7 @@ void launch_kernel(float4 *pos, unsigned int mesh_width, unsigned int mesh_heigh
     // execute the kernel
     dim3 block(8, 8, 1);
     dim3 grid(mesh_width / block.x, mesh_height / block.y, 1);
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     simple_vbo_kernel<<<grid, block>>>(pos, mesh_width, mesh_height, time);
 }
 
@@ -276,6 +279,7 @@ bool runTest(int argc, char **argv, char *ref_file)
     // command line mode only
     if (ref_file != NULL) {
         // create VBO
+        // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
         checkCudaErrors(cudaMalloc((void **)&d_vbo_buffer, mesh_width * mesh_height * 4 * sizeof(float)));
 
         // run the cuda part
@@ -284,6 +288,7 @@ bool runTest(int argc, char **argv, char *ref_file)
         // check result of Cuda step
         checkResultCuda(argc, argv, vbo);
 
+        // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         cudaFree(d_vbo_buffer);
         d_vbo_buffer = NULL;
     }
@@ -372,16 +377,19 @@ void runAutoTest(int devID, char **argv, char *ref_file)
     // execute the kernel
     launch_kernel((float4 *)d_vbo_buffer, mesh_width, mesh_height, g_fAnim);
 
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cudaDeviceSynchronize();
     getLastCudaError("launch_kernel failed");
 
     checkCudaErrors(
+        // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         cudaMemcpy(imageData, d_vbo_buffer, mesh_width * mesh_height * sizeof(float), cudaMemcpyDeviceToHost));
 
     sdkDumpBin2(imageData, mesh_width * mesh_height * sizeof(float), "simpleGL.bin");
     reference_file = sdkFindFilePath(ref_file, argv[0]);
 
     if (reference_file
+        // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         && !sdkCompareBin2BinFloat("simpleGL.bin",
                                    reference_file,
                                    mesh_width * mesh_height * sizeof(float),

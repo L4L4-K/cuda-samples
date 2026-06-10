@@ -50,6 +50,7 @@ __global__ static void nv12ToBGRplanarBatchKernel(const uint8_t *pNv12,
                                                   int            nHeight,
                                                   int            nBatchSize)
 {
+    // JP: `threadIdx`, `blockIdx`, `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int x = threadIdx.x + blockIdx.x * blockDim.x;
     int y = threadIdx.y + blockIdx.y * blockDim.y;
 
@@ -145,6 +146,7 @@ void nv12ToBGRplanarBatch(uint8_t     *pNv12,
                           int          nWidth,
                           int          nHeight,
                           int          nBatchSize,
+                          // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
                           cudaStream_t stream)
 {
     dim3 threads(CONV_THREADS_X, CONV_THREADS_Y);
@@ -155,6 +157,7 @@ void nv12ToBGRplanarBatch(uint8_t     *pNv12,
     blockDimZ = (blockDimZ > 32) ? 32 : blockDimZ;
 
     dim3 blocks((nWidth / 4 - 1) / threads.x + 1, (nHeight / 2 - 1) / threads.y + 1, blockDimZ);
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     nv12ToBGRplanarBatchKernel<<<blocks, threads, 0, stream>>>(
         pNv12, nNv12Pitch, pBgr, nRgbPitch, nWidth, nHeight, nBatchSize);
 }

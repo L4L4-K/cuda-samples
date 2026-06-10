@@ -45,6 +45,7 @@ extern EGLDisplay   g_display;
 
 typedef struct _test_cuda_consumer_s
 {
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     CUcontext             context;
     CUeglStreamConnection cudaConn;
     bool                  pitchLinearOutput;

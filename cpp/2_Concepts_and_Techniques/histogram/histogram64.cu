@@ -68,6 +68,7 @@ inline __device__ void addWord(uchar *s_ThreadBase, uint data)
 __global__ void histogram64Kernel(uint *d_PartialHistograms, data_t *d_Data, uint dataCount)
 {
     // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     cg::thread_block cta = cg::this_thread_block();
     // Encode thread index in order to avoid bank conflicts in s_Hist[] access:
     // each group of SHARED_MEMORY_BANKS threads accesses consecutive shared
@@ -80,6 +81,7 @@ __global__ void histogram64Kernel(uint *d_PartialHistograms, data_t *d_Data, uin
                          | ((threadIdx.x & (SHARED_MEMORY_BANKS * 3)) >> 4);
 
     // Per-thread histogram storage
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ uchar s_Hist[HISTOGRAM64_THREADBLOCK_SIZE * HISTOGRAM64_BIN_COUNT];
     uchar           *s_ThreadBase = s_Hist + threadPos;
 
@@ -93,6 +95,7 @@ __global__ void histogram64Kernel(uint *d_PartialHistograms, data_t *d_Data, uin
     // Read data from global memory and submit to the shared-memory histogram
     // Since histogram counters are byte-sized, every single thread can't do more
     // than 255 submission
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 
     for (uint pos = UMAD(blockIdx.x, blockDim.x, threadIdx.x); pos < dataCount; pos += UMUL(blockDim.x, gridDim.x)) {
@@ -170,12 +173,15 @@ static uint      *d_PartialHistograms;
 // Internal memory allocation
 extern "C" void initHistogram64(void)
 {
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(HISTOGRAM64_THREADBLOCK_SIZE % (4 * SHARED_MEMORY_BANKS) == 0);
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_PartialHistograms,
                                MAX_PARTIAL_HISTOGRAM64_COUNT * HISTOGRAM64_BIN_COUNT * sizeof(uint)));
 }
 
 // Internal memory deallocation
+// JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
 extern "C" void closeHistogram64(void) { checkCudaErrors(cudaFree(d_PartialHistograms)); }
 
 // Round a / b to nearest higher integer value
@@ -191,6 +197,7 @@ extern "C" void histogram64(uint *d_Histogram, void *d_Data, uint byteCount)
     assert(byteCount % sizeof(data_t) == 0);
     assert(histogramCount <= MAX_PARTIAL_HISTOGRAM64_COUNT);
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     histogram64Kernel<<<histogramCount, HISTOGRAM64_THREADBLOCK_SIZE>>>(
         d_PartialHistograms, (data_t *)d_Data, byteCount / sizeof(data_t));
     getLastCudaError("histogram64Kernel() execution failed\n");

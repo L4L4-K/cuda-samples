@@ -52,6 +52,7 @@ typedef struct _test_cuda_producer_s
     bool                  pitchLinearOutput;
     unsigned int          width;
     unsigned int          height;
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     CUcontext             context;
     CUeglStreamConnection cudaConn;
     CUdeviceptr           cudaPtrARGB[1];

@@ -93,6 +93,7 @@ Volume volumeFilter1;
 
 GLuint                       pbo       = 0;     // OpenGL pixel buffer object
 GLuint                       volumeTex = 0;     // OpenGL texture object
+// JP: `cudaGraphicsResource`, `cuda_pbo_resource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
 struct cudaGraphicsResource *cuda_pbo_resource; // CUDA Graphics Resource (to transfer PBO)
 
 StopWatchInterface *timer = 0;
@@ -231,6 +232,7 @@ void render()
     // printf("CUDA mapped PBO: May access %ld bytes\n", num_bytes);
 
     // clear image
+    // JP: `cudaMemset`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemset(d_output, 0, width * height * 4));
 
     // call CUDA kernel, writing results to PBO
@@ -595,6 +597,7 @@ void initData(int argc, char **argv)
 
     FilterKernel_init();
     Volume_init(&volumeOriginal, volumeSize, h_volume, 0);
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(h_volume);
     Volume_init(&volumeFilter0, volumeSize, NULL, 1);
     Volume_init(&volumeFilter1, volumeSize, NULL, 1);
@@ -614,6 +617,7 @@ void initData(int argc, char **argv)
 void runSingleTest(const char *ref_file, const char *exec_path)
 {
     uint *d_output;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_output, width * height * sizeof(uint)));
     checkCudaErrors(cudaMemset(d_output, 0, width * height * sizeof(uint)));
 
@@ -643,6 +647,7 @@ void runSingleTest(const char *ref_file, const char *exec_path)
 
     for (int i = -1; i < nIter; i++) {
         if (i == 0) {
+            // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
             cudaDeviceSynchronize();
             sdkStartTimer(&timer);
         }
@@ -683,6 +688,7 @@ void runSingleTest(const char *ref_file, const char *exec_path)
 
     sdkSavePPM4ub("volumefilter.ppm", h_output, width, height);
     bool bTestResult =
+        // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         sdkComparePPM("volumefilter.ppm", sdkFindFilePath(ref_file, exec_path), MAX_EPSILON_ERROR, THRESHOLD, true);
 
     checkCudaErrors(cudaFree(d_output));

@@ -242,8 +242,10 @@ int matrixMultiply(int argc, char **argv, int devID, sMatrixSize &matrix_size)
     float *h_C      = (float *)malloc(mem_size_C);
     float *h_CUBLAS = (float *)malloc(mem_size_C);
 
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_A, mem_size_A));
     checkCudaErrors(cudaMalloc((void **)&d_B, mem_size_B));
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(d_A, h_A, mem_size_A, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_B, h_B, mem_size_B, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMalloc((void **)&d_C, mem_size_C));
@@ -253,6 +255,7 @@ int matrixMultiply(int argc, char **argv, int devID, sMatrixSize &matrix_size)
     dim3 grid(matrix_size.uiWC / threads.x, matrix_size.uiHC / threads.y);
 
     // create and start timer
+    // JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
     printf("Computing result using CUBLAS...");
 
     // execute the kernel
@@ -263,6 +266,7 @@ int matrixMultiply(int argc, char **argv, int devID, sMatrixSize &matrix_size)
         const float    alpha = 1.0f;
         const float    beta  = 0.0f;
         cublasHandle_t handle;
+        // JP: `cudaEvent_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
         cudaEvent_t    start, stop;
 
         checkCudaErrors(cublasCreate(&handle));
@@ -315,6 +319,7 @@ int matrixMultiply(int argc, char **argv, int devID, sMatrixSize &matrix_size)
         checkCudaErrors(cudaEventRecord(stop, NULL));
 
         // Wait for the stop event to complete
+        // JP: `cudaEventSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         checkCudaErrors(cudaEventSynchronize(stop));
 
         float msecTotal = 0.0f;
@@ -343,6 +348,7 @@ int matrixMultiply(int argc, char **argv, int devID, sMatrixSize &matrix_size)
     printf("done.\n");
 
     // check result (CUBLAS)
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     bool resCUBLAS = sdkCompareL2fe(reference, h_CUBLAS, size_C, 1.0e-6f);
 
     if (resCUBLAS != true) {
@@ -355,6 +361,7 @@ int matrixMultiply(int argc, char **argv, int devID, sMatrixSize &matrix_size)
            "Results may vary when GPU Boost is enabled.\n");
 
     // clean up memory
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(h_A);
     free(h_B);
     free(h_C);

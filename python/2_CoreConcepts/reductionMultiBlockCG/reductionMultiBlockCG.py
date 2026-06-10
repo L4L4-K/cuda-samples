@@ -54,6 +54,7 @@ import sys
 import time
 
 try:
+    # JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
     import cupy as cp
     import numpy as np
     from cuda.core import (
@@ -246,6 +247,7 @@ def run(
     program_options = ProgramOptions(
         std="c++17", arch=f"sm_{device.arch}", include_path=include_paths
     )
+    # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
     prog = Program(REDUCTION_KERNEL, code_type="c++", options=program_options)
     mod = prog.compile("cubin")
     kernel = mod.get_kernel("reduceSinglePassMultiBlockCG")
@@ -306,6 +308,7 @@ def run(
         ptr_out = d_odata.data.ptr
 
         try:
+            # JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
             launch(stream, launch_config, kernel, ptr_in, ptr_out, n_u32)
         except Exception as e:
             print(f"  Cooperative launch failed: {e}")

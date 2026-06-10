@@ -69,6 +69,7 @@ const char *sSDKname = "conjugateGradientPrecond";
  */
 void genLaplace(int *row_ptr, int *col_ind, float *val, int M, int N, int nz, float *rhs)
 {
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(M == N);
     int n = (int)sqrt((double)N);
     assert(n * n == N);
@@ -201,6 +202,7 @@ int main(int argc, char **argv)
     genLaplace(I, J, val, M, N, nz, rhs);
 
     /* Create CUBLAS context */
+    // JP: `cublasHandle_t`, `cublasHandle`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
     cublasHandle_t cublasHandle = NULL;
     checkCudaErrors(cublasCreate(&cublasHandle));
 
@@ -215,6 +217,7 @@ int main(int argc, char **argv)
     checkCudaErrors(cusparseSetMatIndexBase(descr, CUSPARSE_INDEX_BASE_ZERO));
 
     /* Allocate required memory */
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_col, nz * sizeof(int)));
     checkCudaErrors(cudaMalloc((void **)&d_row, (N + 1) * sizeof(int)));
     checkCudaErrors(cudaMalloc((void **)&d_val, nz * sizeof(float)));
@@ -239,6 +242,7 @@ int main(int argc, char **argv)
     checkCudaErrors(cusparseCreateDnVec(&vecomega, N, d_omega, CUDA_R_32F));
 
     /* Initialize problem data */
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(d_col, J, nz * sizeof(int), cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_row, I, (N + 1) * sizeof(int), cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_val, val, nz * sizeof(float), cudaMemcpyHostToDevice));
@@ -590,6 +594,7 @@ int main(int argc, char **argv)
     checkCudaErrors(cublasDestroy(cublasHandle));
 
     /* Free device memory */
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(I);
     free(J);
     free(val);

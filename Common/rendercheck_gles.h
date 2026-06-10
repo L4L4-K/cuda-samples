@@ -76,6 +76,7 @@ class CheckRender {
       m_pboReadback = 0;
     }
 
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(m_pImageData);
   }
 
@@ -253,6 +254,7 @@ class CheckRender {
           "threshold(%4.2f%%)\n",
           m_Height, m_Width, epsilon, threshold * 100);
 
+      // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
       if (compareDataAsFloatThreshold<unsigned char, float>(
               ref_data, src_data, m_Height * m_Width, epsilon, threshold) ==
           false) {

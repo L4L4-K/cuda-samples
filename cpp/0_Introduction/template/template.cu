@@ -59,15 +59,18 @@ __global__ void testKernel(float *g_idata, float *g_odata)
 {
     // shared memory
     // the size is determined by the host application
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     extern __shared__ float sdata[];
 
     // access thread id
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     const unsigned int tid = threadIdx.x;
     // access number of threads in this block
     const unsigned int num_threads = blockDim.x;
 
     // read in input data from global memory
     sdata[tid] = g_idata[tid];
+    // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     __syncthreads();
 
     // perform some computations
@@ -113,8 +116,10 @@ void runTest(int argc, char **argv)
 
     // allocate device memory
     float *d_idata;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_idata, mem_size));
     // copy host memory to device
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(d_idata, h_idata, mem_size, cudaMemcpyHostToDevice));
 
     // allocate device memory for result
@@ -126,6 +131,7 @@ void runTest(int argc, char **argv)
     dim3 threads(num_threads, 1, 1);
 
     // execute the kernel
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     testKernel<<<grid, threads, mem_size>>>(d_idata, d_odata);
 
     // check if kernel execution generated and error
@@ -152,10 +158,12 @@ void runTest(int argc, char **argv)
     else {
         // custom output handling when no regression test running
         // in this case check if the result is equivalent to the expected solution
+        // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         bTestResult = compareData(reference, h_odata, num_threads, 0.0f, 0.0f);
     }
 
     // cleanup memory
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(h_idata);
     free(h_odata);
     free(reference);

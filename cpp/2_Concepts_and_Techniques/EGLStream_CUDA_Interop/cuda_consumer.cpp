@@ -42,6 +42,7 @@ EXTENSION_LIST(EXTLST_EXTERN)
 
 int checkbuf(FILE *fp1, FILE *fp2);
 
+// JP: `cudaConsumerTest`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
 CUresult cudaConsumerTest(test_cuda_consumer_s *data, const char *fileName)
 {
     CUresult           cuStatus = CUDA_SUCCESS;
@@ -153,6 +154,7 @@ CUresult cudaConsumerTest(test_cuda_consumer_s *data, const char *fileName)
                 }
                 memset(pCudaCopyMem, 0, bufferSize);
                 if (data->pitchLinearOutput) {
+                    // JP: `cuStatus`, `cuMemcpyDtoH`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
                     cuStatus = cuMemcpyDtoH(pCudaCopyMem, pDevPtr, bufferSize);
                     if (cuStatus != CUDA_SUCCESS) {
                         printf("cuda_consumer: pitch linear Memcpy failed, bufferSize =%d\n", bufferSize);
@@ -223,6 +225,7 @@ CUresult cudaConsumerTest(test_cuda_consumer_s *data, const char *fileName)
                 printf("Frame check Passed\n");
             }
             if (pCudaCopyMem) {
+                // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
                 free(pCudaCopyMem);
                 pCudaCopyMem = NULL;
             }

@@ -85,10 +85,12 @@ __global__ void monte_carlo_kernel(vec2        *xyVector,
                                    unsigned int numPoints,
                                    float        time)
 {
+    // JP: `gridDim`, `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     const size_t stride = gridDim.x * blockDim.x;
     size_t       tid    = blockIdx.x * blockDim.x + threadIdx.x;
     float        count  = 0.0f;
 
+    // JP: `curandState`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
     curandState rgnState;
     curand_init((unsigned long long)time, tid, 0, &rgnState);
 
@@ -123,10 +125,12 @@ MonteCarloPiSimulation::MonteCarloPiSimulation(size_t num_points)
 MonteCarloPiSimulation::~MonteCarloPiSimulation()
 {
     if (m_numPointsInCircle) {
+        // JP: `cudaFree`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。 ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         checkCudaErrors(cudaFree(m_numPointsInCircle));
         m_numPointsInCircle = nullptr;
     }
     if (m_hostNumPointsInCircle) {
+        // JP: `cudaFreeHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
         checkCudaErrors(cudaFreeHost(m_hostNumPointsInCircle));
         m_hostNumPointsInCircle = nullptr;
     }
@@ -134,6 +138,7 @@ MonteCarloPiSimulation::~MonteCarloPiSimulation()
     cleanupSimulationAllocations();
 }
 
+// JP: `cudaDevice`, `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
 void MonteCarloPiSimulation::initSimulation(int cudaDevice, cudaStream_t stream)
 {
     m_cudaDevice = cudaDevice;
@@ -151,8 +156,10 @@ void MonteCarloPiSimulation::initSimulation(int cudaDevice, cudaStream_t stream)
 
 void MonteCarloPiSimulation::stepSimulation(float time, cudaStream_t stream)
 {
+    // JP: `cudaMemsetAsync`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemsetAsync(m_numPointsInCircle, 0, sizeof(*m_numPointsInCircle), stream));
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     monte_carlo_kernel<<<m_blocks, m_threads, 0, stream>>>(
         m_xyVector, m_pointsInsideCircle, m_numPointsInCircle, m_numPoints, time);
     getLastCudaError("Failed to launch CUDA simulation");
@@ -216,6 +223,7 @@ void MonteCarloPiSimulation::setupSimulationAllocations()
     getDefaultSecurityDescriptor(&allocProp);
 
     // Get the recommended granularity for m_cudaDevice.
+    // JP: `cuMemGetAllocationGranularity`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     checkCudaErrors(cuMemGetAllocationGranularity(&granularity, &allocProp, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED));
 
     size_t xyPositionVecSize = m_numPoints * sizeof(*m_xyVector);

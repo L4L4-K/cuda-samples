@@ -72,6 +72,7 @@ static void computePermutations(uint permutations[1024])
         }
     }
 
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(num == 151);
 
     for (int i = 0; i < 9; i++) {

@@ -100,6 +100,7 @@ int main(int argc, char *argv[])
     h_ResultCPU = (float *)malloc(DATA_SIZE);
     h_ResultGPU = (float *)malloc(DATA_SIZE);
     printf("...allocating GPU memory\n");
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_Kernel, DATA_SIZE));
     checkCudaErrors(cudaMalloc((void **)&d_Data, DATA_SIZE));
 
@@ -115,11 +116,13 @@ int main(int argc, char *argv[])
         h_Data[i] = (float)rand() / (float)RAND_MAX;
     }
 
+    // JP: `cudaMemset`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemset(d_Kernel, 0, DATA_SIZE));
     checkCudaErrors(cudaMemcpy(d_Kernel, h_Kernel, KERNEL_SIZE, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_Data, h_Data, DATA_SIZE, cudaMemcpyHostToDevice));
 
     printf("Running GPU dyadic convolution using Fast Walsh Transform...\n");
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
     sdkResetTimer(&hTimer);
     sdkStartTimer(&hTimer);
@@ -153,6 +156,7 @@ int main(int argc, char *argv[])
 
     printf("Shutting down...\n");
     sdkDeleteTimer(&hTimer);
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_Data));
     checkCudaErrors(cudaFree(d_Kernel));
     free(h_ResultGPU);

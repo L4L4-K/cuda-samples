@@ -43,6 +43,7 @@
 
 __global__ void sequence_gpu(int *d_ptr, int length)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int elemID = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (elemID < length) {
@@ -74,21 +75,26 @@ int main(int argc, char **argv)
     }
 
     int *d_ptr;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc(&d_ptr, N * sizeof(int)));
 
     int *h_ptr;
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
     checkCudaErrors(cudaMallocHost(&h_ptr, N * sizeof(int)));
 
     dim3 cudaBlockSize(256, 1, 1);
     dim3 cudaGridSize((N + cudaBlockSize.x - 1) / cudaBlockSize.x, 1, 1);
+    // JP: `cudaGridSize`, `cudaBlockSize`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     sequence_gpu<<<cudaGridSize, cudaBlockSize>>>(d_ptr, N);
     checkCudaErrors(cudaGetLastError());
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
 
     sequence_cpu(h_ptr, N);
 
     int *h_d_ptr;
     checkCudaErrors(cudaMallocHost(&h_d_ptr, N * sizeof(int)));
+    // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(h_d_ptr, d_ptr, N * sizeof(int), cudaMemcpyDeviceToHost));
 
     bool bValid = true;
@@ -101,6 +107,7 @@ int main(int argc, char **argv)
 
     printf("Test %s.\n", bValid ? "Successful" : "Failed");
 
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_ptr));
     checkCudaErrors(cudaFreeHost(h_ptr));
     checkCudaErrors(cudaFreeHost(h_d_ptr));

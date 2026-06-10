@@ -94,6 +94,7 @@ __global__ void cgkernel()
     int          threadBlockGroupSize = threadBlockGroup.size();
 
     // workspace array in shared memory required for reduction
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。 CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
     extern __shared__ int workspace[];
 
     int input, output, expectedOutput;
@@ -164,7 +165,9 @@ int main()
 
     // we use the optional third argument to specify the size
     // of shared memory required in the kernel
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     cgkernel<<<blocksPerGrid, threadsPerBlock, threadsPerBlock * sizeof(int)>>>();
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     err = cudaDeviceSynchronize();
 
     if (err != cudaSuccess) {

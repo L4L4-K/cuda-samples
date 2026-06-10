@@ -92,6 +92,7 @@ static __inline__ unsigned long long doubleAsULL(double x)
     return xx.i;
 }
 
+// JP: `cuRand`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。 CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
 static __inline__ unsigned cuRand(void)
 {
     /* George Marsaglia's fast inline random number generator */

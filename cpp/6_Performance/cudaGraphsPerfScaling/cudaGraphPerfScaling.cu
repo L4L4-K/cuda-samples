@@ -49,6 +49,7 @@ template <typename T> float getMicroSecondDuration(T start, T end)
     return std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count() * .001f;
 }
 
+// JP: `cudaEvent_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
 float getAsyncMicroSecondDuration(cudaEvent_t start, cudaEvent_t end)
 {
     float ms;
@@ -126,6 +127,7 @@ __global__ void preUploadAnnotation() {}
 
 __global__ void postUploadAnnotation() {}
 
+// JP: `cudaGraph_t`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
 cudaGraph_t createParallelChain(int length, int width, bool singleEntry = false)
 {
     RANGE_PUSH(__func__);
@@ -134,6 +136,7 @@ cudaGraph_t createParallelChain(int length, int width, bool singleEntry = false)
     cudaStreamBeginCapture(stream[0], cudaStreamCaptureModeGlobal);
     int streamIdx = 0;
     if (singleEntry) {
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         empty<<<1, 1, 0, stream[streamIdx]>>>();
     }
 
@@ -177,6 +180,7 @@ void runDemo(cudaGraph_t graph, int length, int width)
         auto start = getCpuTime();
         cudaGraphLaunch(graphExec, stream[0]);
         auto apiReturn = getCpuTime();
+        // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         cudaStreamSynchronize(stream[0]);
         auto streamSync = getCpuTime();
         metricName.push_back("first_launch_api");
@@ -350,7 +354,9 @@ int main(int argc, char **argv)
 
     cudaGraph_t graph;
 
+    // JP: `cudaFree`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。 ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     cudaFree(0);
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
     cudaMallocHost(&hostData, sizeof(*hostData));
     int numStreams = width;
     if (numStreams == 1)

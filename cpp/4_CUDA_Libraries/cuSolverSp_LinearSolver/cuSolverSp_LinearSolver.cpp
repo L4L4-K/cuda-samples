@@ -56,6 +56,7 @@
  different solvers.
  *
  *  How to use
+        // JP: `cuSolverSp_LinearSolver`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。 CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
         /cuSolverSp_LinearSolver            // Default: Cholesky, symrcm &
  file=lap2D_5pt_n100.mtx
  *     ./cuSolverSp_LinearSolver -R=chol  -file=<file>   // cholesky
@@ -173,6 +174,7 @@ int main(int argc, char *argv[])
     struct testOpts    opts;
     cusolverSpHandle_t handle         = NULL;
     cusparseHandle_t   cusparseHandle = NULL; /* used in residual evaluation */
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t       stream         = NULL;
     cusparseMatDescr_t descrA         = NULL;
 
@@ -317,6 +319,7 @@ int main(int argc, char *argv[])
     h_csrValB    = (double *)malloc(sizeof(double) * nnzA);
     h_mapBfromA  = (int *)malloc(sizeof(int) * nnzA);
 
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(NULL != h_z);
     assert(NULL != h_x);
     assert(NULL != h_b);
@@ -328,6 +331,7 @@ int main(int argc, char *argv[])
     assert(NULL != h_csrValB);
     assert(NULL != h_mapBfromA);
 
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_csrRowPtrA, sizeof(int) * (rowsA + 1)));
     checkCudaErrors(cudaMalloc((void **)&d_csrColIndA, sizeof(int) * nnzA));
     checkCudaErrors(cudaMalloc((void **)&d_csrValA, sizeof(double) * nnzA));
@@ -397,6 +401,7 @@ int main(int argc, char *argv[])
         handle, rowsA, colsA, nnzA, descrA, h_csrRowPtrB, h_csrColIndB, h_Q, h_Q, &size_perm));
 
     if (buffer_cpu) {
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         free(buffer_cpu);
     }
     buffer_cpu = (void *)malloc(sizeof(char) * size_perm);
@@ -426,6 +431,7 @@ int main(int argc, char *argv[])
 
     printf("step 4: prepare data on device\n");
     checkCudaErrors(
+        // JP: `cudaMemcpyAsync`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         cudaMemcpyAsync(d_csrRowPtrA, h_csrRowPtrA, sizeof(int) * (rowsA + 1), cudaMemcpyHostToDevice, stream));
     checkCudaErrors(cudaMemcpyAsync(d_csrColIndA, h_csrColIndA, sizeof(int) * nnzA, cudaMemcpyHostToDevice, stream));
     checkCudaErrors(cudaMemcpyAsync(d_csrValA, h_csrValA, sizeof(double) * nnzA, cudaMemcpyHostToDevice, stream));
@@ -536,6 +542,7 @@ int main(int argc, char *argv[])
 
     checkCudaErrors(cudaMemcpyAsync(h_r, d_r, sizeof(double) * rowsA, cudaMemcpyDeviceToHost, stream));
     /* wait until h_r is ready */
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
 
     b_inf = vec_norminf(rowsA, h_b);

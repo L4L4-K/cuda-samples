@@ -70,7 +70,9 @@ void initResultDataLargeMatrix(ResultDataLarge &result, const unsigned int mat_s
     }
 
     // number of intervals containing only one eigenvalue after the first step
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&result.g_num_one, sizeof(unsigned int)));
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(result.g_num_one, &zero, sizeof(unsigned int), cudaMemcpyHostToDevice));
 
     // number of (thread) blocks of intervals with multiple eigenvalues after
@@ -113,6 +115,7 @@ void initResultDataLargeMatrix(ResultDataLarge &result, const unsigned int mat_s
 ////////////////////////////////////////////////////////////////////////////////
 void cleanupResultDataLargeMatrix(ResultDataLarge &result)
 {
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(result.g_num_one));
     checkCudaErrors(cudaFree(result.g_num_blocks_mult));
     checkCudaErrors(cudaFree(result.g_left_one));
@@ -163,6 +166,7 @@ void computeEigenvaluesLargeMatrix(const InputData       &input,
     // do for multiple iterations to improve timing accuracy
     for (unsigned int iter = 0; iter < iterations; ++iter) {
         sdkStartTimer(&timer_step1);
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         bisectKernelLarge<<<blocks, threads>>>(input.g_a,
                                                input.g_b,
                                                mat_size,
@@ -184,6 +188,7 @@ void computeEigenvaluesLargeMatrix(const InputData       &input,
                                                result.g_blocks_mult_sum);
 
         getLastCudaError("Kernel launch failed.");
+        // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         checkCudaErrors(cudaDeviceSynchronize());
         sdkStopTimer(&timer_step1);
 
@@ -338,6 +343,7 @@ bool processResultDataLargeMatrix(const InputData       &input,
         unsigned int input_data_size = 0;
 
         char *ref_path = sdkFindFilePath("reference.dat", exec_path);
+        // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         assert(NULL != ref_path);
         sdkReadFile(ref_path, &reference, &input_data_size, false);
         assert(input_data_size == mat_size);

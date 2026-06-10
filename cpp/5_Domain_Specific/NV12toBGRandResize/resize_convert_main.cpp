@@ -220,12 +220,14 @@ static int loadNV12Frame(unsigned char *d_inputNV12)
 
 #if USE_UVM_MEM
     // Prefetch to GPU for following GPU operation
+    // JP: `cudaStreamAttachMemAsync`, `cudaMemAttachGlobal`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStreamAttachMemAsync(NULL, pNV12FrameData, 0, cudaMemAttachGlobal);
 #endif
 
     // expand one frame to multi frames for batch processing
     d_nv12 = d_inputNV12;
     for (int i = 0; i < g_ctx.batch; i++) {
+        // JP: `cudaMemcpy2D`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         checkCudaErrors(cudaMemcpy2D((void *)d_nv12,
                                      g_ctx.ctx_pitch,
                                      pNV12FrameData,
@@ -238,6 +240,7 @@ static int loadNV12Frame(unsigned char *d_inputNV12)
     }
 
 #if (USE_UVM_MEM == 0)
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(pNV12FrameData);
 #endif
     nv12File.close();
@@ -258,6 +261,7 @@ void nv12ResizeAndNV12ToBGR(unsigned char *d_inputNV12)
 
     /* allocate device memory for resized nv12 output */
     size = g_ctx.dst_width * ceil(g_ctx.dst_height * 3.0f / 2.0f) * g_ctx.batch * sizeof(unsigned char);
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_resizedNV12, size));
 
     /* allocate device memory for bgr output */
@@ -287,6 +291,7 @@ void nv12ResizeAndNV12ToBGR(unsigned char *d_inputNV12)
                         g_ctx.batch);
     }
     cudaEventRecord(stop, 0);
+    // JP: `cudaEventSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cudaEventSynchronize(stop);
 
     cudaEventElapsedTime(&elapsedTime, start, stop);
@@ -450,6 +455,7 @@ int main(int argc, char *argv[])
 
     /* load nv12 yuv data into d_inputNV12 with batch of copies */
 #if USE_UVM_MEM
+    // JP: `cudaMallocManaged`: Unified Memory は CPU/GPU で同じ pointer を使います。prefetch や同期で移動タイミングを意識します。
     checkCudaErrors(cudaMallocManaged(
         (void **)&d_inputNV12, (g_ctx.ctx_pitch * g_ctx.ctx_heights * g_ctx.batch), cudaMemAttachHost));
     printf("\nUSE_UVM_MEM\n");

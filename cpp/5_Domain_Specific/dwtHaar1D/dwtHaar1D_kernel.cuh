@@ -95,6 +95,7 @@ namespace cg = cooperative_groups;
 __global__ void initValue(float *od, float value)
 {
     // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     cg::thread_block cta = cg::this_thread_block();
     // position of write into global memory
     unsigned int index = (blockIdx.x * blockDim.x) + threadIdx.x;
@@ -102,6 +103,7 @@ __global__ void initValue(float *od, float value)
     od[index] = value;
 
     // sync after each decomposition step
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 }
 
@@ -131,6 +133,7 @@ __global__ void dwtHaar1D(float             *id,
     cg::thread_block cta = cg::this_thread_block();
 
     // shared memory for part of the signal
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     extern __shared__ float shared[];
 
     // thread runtime environment, 1D parametrization

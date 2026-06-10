@@ -35,6 +35,7 @@ if (LLVM_PACKAGE_VERSION VERSION_GREATER_EQUAL "15" OR
   return()
 endif ()
 
+# JP: `add_executable`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
 add_executable(cuda-c-linking cuda-c-linking.cpp)
 
 add_test(NAME cuda-c-linking

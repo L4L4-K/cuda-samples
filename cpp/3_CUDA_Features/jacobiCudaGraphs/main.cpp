@@ -55,6 +55,7 @@ extern double JacobiMethodGpuCudaGraphExecKernelSetParams(const float  *A,
                                                           const int     max_iter,
                                                           double       *x,
                                                           double       *x_new,
+                                                          // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
                                                           cudaStream_t  stream);
 
 // Run the Jacobi method for A*x = b on GPU with Instantiated CUDA Graph Update
@@ -112,6 +113,7 @@ int main(int argc, char **argv)
 
     double *b = NULL;
     float  *A = NULL;
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
     checkCudaErrors(cudaMallocHost(&b, N_ROWS * sizeof(double)));
     memset(b, 0, N_ROWS * sizeof(double));
     checkCudaErrors(cudaMallocHost(&A, N_ROWS * N_ROWS * sizeof(float)));
@@ -148,11 +150,13 @@ int main(int argc, char **argv)
     double      *d_b, *d_x, *d_x_new;
     cudaStream_t stream1;
     checkCudaErrors(cudaStreamCreateWithFlags(&stream1, cudaStreamNonBlocking));
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc(&d_b, sizeof(double) * N_ROWS));
     checkCudaErrors(cudaMalloc(&d_A, sizeof(float) * N_ROWS * N_ROWS));
     checkCudaErrors(cudaMalloc(&d_x, sizeof(double) * N_ROWS));
     checkCudaErrors(cudaMalloc(&d_x_new, sizeof(double) * N_ROWS));
 
+    // JP: `cudaMemsetAsync`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemsetAsync(d_x, 0, sizeof(double) * N_ROWS, stream1));
     checkCudaErrors(cudaMemsetAsync(d_x_new, 0, sizeof(double) * N_ROWS, stream1));
     checkCudaErrors(cudaMemcpyAsync(d_A, A, sizeof(float) * N_ROWS * N_ROWS, cudaMemcpyHostToDevice, stream1));
@@ -175,6 +179,7 @@ int main(int argc, char **argv)
     sdkStopTimer(&timerGpu);
     printf("GPU Processing time: %f (ms)\n", sdkGetTimerValue(&timerGpu));
 
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_b));
     checkCudaErrors(cudaFree(d_A));
     checkCudaErrors(cudaFree(d_x));

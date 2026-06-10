@@ -44,8 +44,10 @@
 
 // If 'err' is non-zero, emit an error message and exit.
 #define checkCudaErrors(err) __checkCudaErrors(err, __FILE__, __LINE__)
+// JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
 static void __checkCudaErrors(CUresult err, const char *filename, int line)
 {
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(filename);
     if (CUDA_SUCCESS != err) {
         const char    *ename = NULL;
@@ -96,6 +98,7 @@ static char *generatePTX(const char *ll, size_t size, const char *filename, int 
         Msg = (char *)malloc(LogSize);
         nvvmGetProgramLog(program, Msg);
         fprintf(stderr, "%s\n", Msg);
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         free(Msg);
         exit(EXIT_FAILURE);
     }
@@ -183,6 +186,7 @@ static CUdevice cudaDeviceInit(int *major, int *minor)
     int supportsUvm = 0;
     checkCudaErrors(cuDeviceGetAttribute(&supportsUvm, CU_DEVICE_ATTRIBUTE_MANAGED_MEMORY, cuDevice));
     if (!supportsUvm) {
+        // JP: managed_memory: Unified Memory は CPU/GPU で同じ pointer を使います。prefetch や同期で移動タイミングを意識します。
         printf("This device does not support managed memory.");
         exit(EXIT_SUCCESS);
     }
@@ -302,6 +306,7 @@ int main(void)
     // Launch the kernel with the following parameters.
     {
         void *params[] = {(void *)&devp_xxx};
+        // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         checkCudaErrors(cuLaunchKernel(hKernel, nBlocks, 1, 1, nThreads, 1, 1, 0, NULL, params, NULL));
     }
     checkCudaErrors(cuCtxSynchronize());

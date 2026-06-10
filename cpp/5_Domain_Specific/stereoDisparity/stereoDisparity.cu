@@ -128,11 +128,13 @@ void runTest(int argc, char **argv)
     // allocate device memory for result
     unsigned int *d_odata, *d_img0, *d_img1;
 
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_odata, memSize));
     checkCudaErrors(cudaMalloc((void **)&d_img0, memSize));
     checkCudaErrors(cudaMalloc((void **)&d_img1, memSize));
 
     // copy host memory to device to initialize to zeros
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(d_img0, h_img0, memSize, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_img1, h_img1, memSize, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_odata, h_odata, memSize, cudaMemcpyHostToDevice));
@@ -183,11 +185,14 @@ void runTest(int argc, char **argv)
 
     // First run the warmup kernel (which we'll use to get the GPU in the correct
     // max power state
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     stereoDisparityKernel<<<numBlocks, numThreads>>>(
         d_img0, d_img1, d_odata, w, h, minDisp, maxDisp, tex2Dleft, tex2Dright);
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cudaDeviceSynchronize();
 
     // Allocate CUDA events that we'll use for timing
+    // JP: `cudaEvent_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaEvent_t start, stop;
     checkCudaErrors(cudaEventCreate(&start));
     checkCudaErrors(cudaEventCreate(&stop));
@@ -264,6 +269,7 @@ void runTest(int argc, char **argv)
     sdkSavePGM(cpuFnameOut, dispOut, w, h);
 
     // cleanup memory
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_odata));
     checkCudaErrors(cudaFree(d_img0));
     checkCudaErrors(cudaFree(d_img1));

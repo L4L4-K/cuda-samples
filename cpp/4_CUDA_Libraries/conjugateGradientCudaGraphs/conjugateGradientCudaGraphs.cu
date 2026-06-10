@@ -89,6 +89,7 @@ void genTridiag(int *I, int *J, float *val, int N, int nz)
 
 __global__ void initVectors(float *rhs, float *x, int N)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     size_t gid = blockIdx.x * blockDim.x + threadIdx.x;
 
     for (size_t i = gid; i < N; i += gridDim.x * blockDim.x) {
@@ -129,6 +130,7 @@ int main(int argc, char **argv)
     int    k;
     float  alpha, beta, alpham1;
 
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t stream1, streamForGraph;
 
     // This will pick the best possible CUDA capable device
@@ -151,6 +153,7 @@ int main(int argc, char **argv)
     /* Generate a random tridiagonal symmetric matrix in CSR format */
     N  = 1048576;
     nz = (N - 2) * 3 + 4;
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
     checkCudaErrors(cudaMallocHost(&I, sizeof(int) * (N + 1)));
     checkCudaErrors(cudaMallocHost(&J, sizeof(int) * nz));
     checkCudaErrors(cudaMallocHost(&val, sizeof(float) * nz));
@@ -165,6 +168,7 @@ int main(int argc, char **argv)
     }
 
     /* Get handle to the CUBLAS context */
+    // JP: `cublasHandle_t`, `cublasHandle`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
     cublasHandle_t cublasHandle = 0;
     cublasStatus_t cublasStatus;
     cublasStatus = cublasCreate(&cublasHandle);
@@ -180,6 +184,7 @@ int main(int argc, char **argv)
 
     checkCudaErrors(cudaStreamCreate(&stream1));
 
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_col, nz * sizeof(int)));
     checkCudaErrors(cudaMalloc((void **)&d_row, (N + 1) * sizeof(int)));
     checkCudaErrors(cudaMalloc((void **)&d_val, nz * sizeof(float)));
@@ -240,10 +245,12 @@ int main(int argc, char **argv)
     int numBlocks = 0, blockSize = 0;
     checkCudaErrors(cudaOccupancyMaxPotentialBlockSize(&numBlocks, &blockSize, initVectors));
 
+    // JP: `cudaMemcpyAsync`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpyAsync(d_col, J, nz * sizeof(int), cudaMemcpyHostToDevice, stream1));
     checkCudaErrors(cudaMemcpyAsync(d_row, I, (N + 1) * sizeof(int), cudaMemcpyHostToDevice, stream1));
     checkCudaErrors(cudaMemcpyAsync(d_val, val, nz * sizeof(float), cudaMemcpyHostToDevice, stream1));
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     initVectors<<<numBlocks, blockSize, 0, stream1>>>(d_r, d_x, N);
 
     alpha   = 1.0;
@@ -297,12 +304,14 @@ int main(int argc, char **argv)
     checkCudaErrors(cublasSdot(cublasHandle, N, d_r, 1, d_r, 1, d_r1));
 
     checkCudaErrors(cudaMemcpyAsync(&r1, d_r1, sizeof(float), cudaMemcpyDeviceToHost, stream1));
+    // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaStreamSynchronize(stream1));
     printf("iteration = %3d, residual = %e\n", k, sqrt(r1));
     // First Iteration when k=1 ends
     k++;
 
 #if WITH_GRAPH
+    // JP: `cudaGraph_t`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
     cudaGraph_t initGraph;
     checkCudaErrors(cudaStreamCreate(&streamForGraph));
     checkCudaErrors(cublasSetStream(cublasHandle, stream1));
@@ -424,6 +433,7 @@ int main(int argc, char **argv)
 #if WITH_GRAPH
     checkCudaErrors(cudaGraphExecDestroy(graphExec));
     checkCudaErrors(cudaGraphDestroy(initGraph));
+    // JP: `cudaStreamDestroy`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaStreamDestroy(streamForGraph));
 #endif
     checkCudaErrors(cudaStreamDestroy(stream1));

@@ -54,6 +54,7 @@ using std::endl;
 // Very simple GPU Kernel that computes square roots of input numbers
 __global__ void simpleMPIKernel(float *input, float *output)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int tid     = blockIdx.x * blockDim.x + threadIdx.x;
     output[tid] = sqrt(input[tid]);
 }
@@ -74,21 +75,25 @@ void computeGPU(float *hostData, int blockSize, int gridSize)
 
     // Allocate data on GPU memory
     float *deviceInputData = NULL;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     CUDA_CHECK(cudaMalloc((void **)&deviceInputData, dataSize * sizeof(float)));
 
     float *deviceOutputData = NULL;
     CUDA_CHECK(cudaMalloc((void **)&deviceOutputData, dataSize * sizeof(float)));
 
     // Copy to GPU memory
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     CUDA_CHECK(cudaMemcpy(deviceInputData, hostData, dataSize * sizeof(float), cudaMemcpyHostToDevice));
 
     // Run kernel
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     simpleMPIKernel<<<gridSize, blockSize>>>(deviceInputData, deviceOutputData);
 
     // Copy data back to CPU memory
     CUDA_CHECK(cudaMemcpy(hostData, deviceOutputData, dataSize * sizeof(float), cudaMemcpyDeviceToHost));
 
     // Free GPU memory
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     CUDA_CHECK(cudaFree(deviceInputData));
     CUDA_CHECK(cudaFree(deviceOutputData));
 }

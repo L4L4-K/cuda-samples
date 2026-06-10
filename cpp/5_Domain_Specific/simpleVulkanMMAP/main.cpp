@@ -67,6 +67,7 @@ class VulkanCudaPi : public VulkanBaseApp
     VkSemaphore             m_vkWaitSemaphore, m_vkSignalSemaphore;
     MonteCarloPiSimulation  m_sim;
     UniformBufferObject     m_ubo;
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t            m_stream;
     cudaExternalSemaphore_t m_cudaWaitSemaphore, m_cudaSignalSemaphore;
     using chrono_tp = std::chrono::time_point<std::chrono::high_resolution_clock>;
@@ -100,7 +101,9 @@ public:
     {
         if (m_stream) {
             // Make sure there's no pending work before we start tearing down
+            // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
             checkCudaErrors(cudaStreamSynchronize(m_stream));
+            // JP: `cudaStreamDestroy`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
             checkCudaErrors(cudaStreamDestroy(m_stream));
         }
 

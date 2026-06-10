@@ -148,11 +148,13 @@ bool fdtdReference(float       *output,
     printf("\n");
 
     if (intermediate)
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         free(intermediate);
 
     return true;
 }
 
+// JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
 bool compareData(const float *output,
                  const float *reference,
                  const int    dimx,

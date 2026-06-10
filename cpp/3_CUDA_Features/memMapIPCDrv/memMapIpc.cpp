@@ -96,6 +96,7 @@ CUmemAllocationHandleType ipcHandleTypeFlag = CU_MEM_HANDLE_TYPE_WIN32;
 #error Unsupported system
 #endif
 
+// JP: `cuModule`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
 CUmodule   cuModule;
 CUfunction _memMapIpc_kernel;
 
@@ -329,6 +330,7 @@ static void childProcess(int devId, int id, char **argv)
     checkIpcErrors(ipcOpenSocket(ipcChildHandle));
 
     if (sharedMemoryOpen(lshmName, sizeof(shmStruct), &info) != 0) {
+        // JP: shared_memory: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
         printf("Failed to create shared memory slab\n");
         exit(EXIT_FAILURE);
     }
@@ -343,6 +345,7 @@ static void childProcess(int devId, int id, char **argv)
 
     CUcontext         ctx;
     CUdevice          device;
+    // JP: streams_events: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     CUstream          stream;
     int               multiProcessorCount;
     CUctxCreateParams ctx_params = {};
@@ -385,6 +388,7 @@ static void childProcess(int devId, int id, char **argv)
         void *args[] = {&ptr, &size, &val};
 
         // Push a simple kernel on th buffer.
+        // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         checkCudaErrors(cuLaunchKernel(_memMapIpc_kernel, blocks, 1, 1, threads, 1, 1, 0, stream, args, 0));
         checkCudaErrors(cuStreamSynchronize(stream));
 
@@ -402,10 +406,12 @@ static void childProcess(int devId, int id, char **argv)
     // Copy the data onto host and verify value if it matches expected value or
     // not.
     std::vector<char> verification_buffer(DATA_BUF_SIZE);
+    // JP: `cuMemcpyDtoHAsync`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cuMemcpyDtoHAsync(&verification_buffer[0], d_ptr + (id * DATA_BUF_SIZE), DATA_BUF_SIZE, stream));
     checkCudaErrors(cuStreamSynchronize(stream));
 
     // The contents should have the id of the sibling just after me
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     char compareId = (char)((id + 1) % procCount);
     for (unsigned long long j = 0; j < DATA_BUF_SIZE; j++) {
         if (verification_buffer[j] != compareId) {

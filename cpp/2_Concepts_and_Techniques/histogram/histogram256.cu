@@ -55,8 +55,10 @@ inline __device__ void addWord(uint *s_WarpHist, uint data, uint tag)
 __global__ void histogram256Kernel(uint *d_PartialHistograms, uint *d_Data, uint dataCount)
 {
     // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     cg::thread_block cta = cg::this_thread_block();
     // Per-warp subhistogram storage
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ uint s_Hist[HISTOGRAM256_THREADBLOCK_MEMORY];
     uint           *s_WarpHist = s_Hist + (threadIdx.x >> LOG2_WARP_SIZE) * HISTOGRAM256_BIN_COUNT;
 
@@ -70,6 +72,7 @@ __global__ void histogram256Kernel(uint *d_PartialHistograms, uint *d_Data, uint
     // Cycle through the entire data set, update subhistograms for each warp
     const uint tag = threadIdx.x << (UINT_BITS - LOG2_WARP_SIZE);
 
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 
     for (uint pos = UMAD(blockIdx.x, blockDim.x, threadIdx.x); pos < dataCount; pos += UMUL(blockDim.x, gridDim.x)) {
@@ -137,15 +140,19 @@ static uint      *d_PartialHistograms;
 extern "C" void initHistogram256(void)
 {
     checkCudaErrors(
+        // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
         cudaMalloc((void **)&d_PartialHistograms, PARTIAL_HISTOGRAM256_COUNT * HISTOGRAM256_BIN_COUNT * sizeof(uint)));
 }
 
 // Internal memory deallocation
+// JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
 extern "C" void closeHistogram256(void) { checkCudaErrors(cudaFree(d_PartialHistograms)); }
 
 extern "C" void histogram256(uint *d_Histogram, void *d_Data, uint byteCount)
 {
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(byteCount % sizeof(uint) == 0);
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     histogram256Kernel<<<PARTIAL_HISTOGRAM256_COUNT, HISTOGRAM256_THREADBLOCK_SIZE>>>(
         d_PartialHistograms, (uint *)d_Data, byteCount / sizeof(uint));
     getLastCudaError("histogram256Kernel() execution failed\n");

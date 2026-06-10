@@ -58,6 +58,7 @@ static const char *sSDKname = "simpleLayeredTexture";
 __global__ void transformKernel(float *g_odata, int width, int height, int layer, cudaTextureObject_t tex)
 {
     // calculate this thread's data point
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -111,6 +112,7 @@ int main(int argc, char **argv)
 
     // allocate device memory for result
     float *d_data = NULL;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_data, size));
 
     // allocate array and copy image data
@@ -124,6 +126,7 @@ int main(int argc, char **argv)
     myparms.srcPtr            = make_cudaPitchedPtr(h_data, width * sizeof(float), width, height);
     myparms.dstArray          = cu_3darray;
     myparms.extent            = make_cudaExtent(width, height, num_layers);
+    // JP: `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     myparms.kind              = cudaMemcpyHostToDevice;
     checkCudaErrors(cudaMemcpy3D(&myparms));
 
@@ -155,12 +158,14 @@ int main(int argc, char **argv)
            dimGrid.x,
            dimGrid.y);
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     transformKernel<<<dimGrid, dimBlock>>>(d_data, width, height, 0,
                                            tex); // warmup (for better timing)
 
     // check if kernel execution generated an error
     getLastCudaError("warmup Kernel execution failed");
 
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
 
     StopWatchInterface *timer = NULL;
@@ -194,10 +199,12 @@ int main(int argc, char **argv)
         printf("Comparing kernel output to expected data\n");
 
 #define MIN_EPSILON_ERROR 5e-3f
+        // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         bResult = compareData(h_odata, h_data_ref, width * height * num_layers, MIN_EPSILON_ERROR, 0.0f);
     }
 
     // cleanup memory
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(h_data);
     free(h_data_ref);
     free(h_odata);

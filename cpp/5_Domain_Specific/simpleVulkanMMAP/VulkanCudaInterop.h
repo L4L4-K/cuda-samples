@@ -58,6 +58,7 @@ bool isDeviceCompatible(void *Uuid, size_t size)
     int attributeVal         = 0;
     int deviceComputeMode    = 0;
 
+    // JP: `cuDeviceGetAttribute`, `cudaDevice`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     checkCudaErrors(cuDeviceGetAttribute(&deviceComputeMode, CU_DEVICE_ATTRIBUTE_COMPUTE_MODE, cudaDevice));
     checkCudaErrors(
         cuDeviceGetAttribute(&attributeVal, CU_DEVICE_ATTRIBUTE_VIRTUAL_ADDRESS_MANAGEMENT_SUPPORTED, cudaDevice));

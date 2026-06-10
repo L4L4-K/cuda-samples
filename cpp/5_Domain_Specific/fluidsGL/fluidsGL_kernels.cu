@@ -45,10 +45,12 @@ static cudaArray   *array = NULL;
 
 // Particle data
 extern GLuint                       vbo;               // OpenGL vertex buffer object
+// JP: `cudaGraphicsResource`, `cuda_vbo_resource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
 extern struct cudaGraphicsResource *cuda_vbo_resource; // handles OpenGL-CUDA exchange
 
 // Texture pitch
 extern size_t      tPitch;
+// JP: `cufftHandle`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
 extern cufftHandle planr2c;
 extern cufftHandle planc2r;
 cData             *vxfield = NULL;
@@ -58,6 +60,7 @@ void setupTexture(int x, int y)
 {
     cudaChannelFormatDesc desc = cudaCreateChannelDesc<float2>();
 
+    // JP: `cudaMallocArray`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     cudaMallocArray(&array, &desc, y, x);
     getLastCudaError("cudaMalloc failed");
 
@@ -85,6 +88,7 @@ void updateTexture(cData *data, size_t wib, size_t h, size_t pitch)
 
 void deleteTexture(void)
 {
+    // JP: `cudaDestroyTextureObject`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaDestroyTextureObject(texObj));
     checkCudaErrors(cudaFreeArray(array));
 }
@@ -102,6 +106,7 @@ void deleteTexture(void)
 // stored in 'v' according to v(x,t+1) = v(x,t) + dt * f.
 __global__ void addForces_k(cData *v, int dx, int dy, int spx, int spy, float fx, float fy, int r, size_t pitch)
 {
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int    tx = threadIdx.x;
     int    ty = threadIdx.y;
     cData *fj = (cData *)((char *)v + (ty + spy) * pitch) + tx + spx;
@@ -298,6 +303,7 @@ extern "C" void addForces(cData *v, int dx, int dy, int spx, int spy, float fx, 
 {
     dim3 tids(2 * r + 1, 2 * r + 1);
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     addForces_k<<<1, tids>>>(v, dx, dy, spx, spy, fx, fy, r, tPitch);
     getLastCudaError("addForces_k failed.");
 }

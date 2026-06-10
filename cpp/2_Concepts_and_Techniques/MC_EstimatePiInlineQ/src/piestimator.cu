@@ -70,6 +70,7 @@ __global__ void
 initRNG(rngState_t *const rngStates, rngDirectionVectors_t *const rngDirections, unsigned int numDrawsPerDirection)
 {
     // Determine thread ID
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     unsigned int tid  = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int step = gridDim.x * blockDim.x;
 
@@ -77,12 +78,14 @@ initRNG(rngState_t *const rngStates, rngDirectionVectors_t *const rngDirections,
     unsigned int offset = tid * ((numDrawsPerDirection + step - 1) / step);
 
     // Initialise the RNG
+    // JP: `curand_init`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
     curand_init(rngDirections[0], offset, &rngStates[tid]);
     curand_init(rngDirections[1], offset, &rngStates[tid + step]);
 }
 
 __device__ unsigned int reduce_sum(unsigned int in, cg::thread_block cta)
 {
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     extern __shared__ unsigned int sdata[];
 
     // Perform first level of reduction:
@@ -90,6 +93,7 @@ __device__ unsigned int reduce_sum(unsigned int in, cg::thread_block cta)
     unsigned int ltid = threadIdx.x;
 
     sdata[ltid] = in;
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 
     // Do reduction in shared mem
@@ -250,6 +254,7 @@ template <typename Real> Real PiEstimator<Real>::operator()()
     // Allocate memory for RNG states and direction vectors
     curandStateSobol_sz       *d_rngStates     = 0;
     curandDirectionVectors_sz *d_rngDirections = 0;
+    // JP: `cudaResult`, `cudaMalloc`, `curandStateSobol_sz`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     cudaResult = cudaMalloc((void **)&d_rngStates, 2 * grid.x * block.x * sizeof(curandStateSobol_sz));
 
     if (cudaResult != cudaSuccess) {
@@ -290,6 +295,7 @@ template <typename Real> Real PiEstimator<Real>::operator()()
         }
 
         cudaResult =
+            // JP: `cudaMemcpy`, `curandDirectionVectors32_t`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
             cudaMemcpy(d_rngDirections, rngDirections, 2 * sizeof(curandDirectionVectors32_t), cudaMemcpyHostToDevice);
 
         if (cudaResult != cudaSuccess) {
@@ -325,6 +331,7 @@ template <typename Real> Real PiEstimator<Real>::operator()()
     }
 
     // Initialise RNG
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     initRNG<<<grid, block>>>(d_rngStates, d_rngDirections, m_numSims);
 
     // Count the points inside unit quarter-circle
@@ -355,6 +362,7 @@ template <typename Real> Real PiEstimator<Real>::operator()()
 
     // Cleanup
     if (d_rngStates) {
+        // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         cudaFree(d_rngStates);
         d_rngStates = 0;
     }

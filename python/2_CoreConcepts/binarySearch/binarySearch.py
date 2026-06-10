@@ -50,6 +50,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "Utilities"))
 
 try:
+    # JP: `cuda.compute` と CuPy 配列を組み合わせ、Python から device-side algorithm に入力/output buffer を渡します。
     import cuda.compute
     import cupy as cp
     import numpy as np
@@ -96,6 +97,7 @@ def run_binary_search(h_data: np.ndarray, h_values: np.ndarray) -> bool:
     print(f"  values  = {h_values.tolist()}")
     print(
         f"  lower_bound: got {got_lb.tolist()}  "
+        # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         f"expected {expected_lb.tolist()}  {'OK' if ok_lb else 'FAIL'}"
     )
     print(

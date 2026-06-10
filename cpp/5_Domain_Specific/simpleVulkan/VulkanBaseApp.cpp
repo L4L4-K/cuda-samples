@@ -282,6 +282,7 @@ WindowsSecurityAttributes::WindowsSecurityAttributes()
 {
     m_winPSecurityDescriptor = (PSECURITY_DESCRIPTOR)calloc(1, SECURITY_DESCRIPTOR_MIN_LENGTH + 2 * sizeof(void **));
     if (!m_winPSecurityDescriptor) {
+        // JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
         throw std::runtime_error("Failed to allocate memory for security descriptor");
     }
 
@@ -324,6 +325,7 @@ WindowsSecurityAttributes::~WindowsSecurityAttributes()
     if (*ppACL) {
         LocalFree(*ppACL);
     }
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(m_winPSecurityDescriptor);
 }
 #endif /* _WIN64 */

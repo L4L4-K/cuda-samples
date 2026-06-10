@@ -67,6 +67,7 @@ struct BezierLine
 
 __global__ void computeBezierLinePositions(int lidx, BezierLine *bLines, int nTessPoints)
 {
+    // JP: `threadIdx`, `blockDim`, `blockIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int idx = threadIdx.x + blockDim.x * blockIdx.x;
 
     if (idx < nTessPoints) {
@@ -100,9 +101,11 @@ __global__ void computeBezierLinesCDP(BezierLine *bLines, int nLines)
 
         if (bLines[lidx].vertexPos == NULL) {
             bLines[lidx].nVertices = nTessPoints;
+            // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
             cudaMalloc((void **)&bLines[lidx].vertexPos, nTessPoints * sizeof(float2));
         }
 
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         computeBezierLinePositions<<<ceilf((float)bLines[lidx].nVertices / 32.0f), 32>>>(
             lidx, bLines, bLines[lidx].nVertices);
     }
@@ -113,6 +116,7 @@ __global__ void freeVertexMem(BezierLine *bLines, int nLines)
     int lidx = threadIdx.x + blockDim.x * blockIdx.x;
 
     if (lidx < nLines)
+        // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         cudaFree(bLines[lidx].vertexPos);
 }
 
@@ -191,6 +195,7 @@ int main(int argc, char **argv)
 
     BezierLine *bLines_d;
     checkCudaErrors(cudaMalloc((void **)&bLines_d, N_LINES * sizeof(BezierLine)));
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(bLines_d, bLines_h, N_LINES * sizeof(BezierLine), cudaMemcpyHostToDevice));
     printf("Computing Bezier Lines (CUDA Dynamic Parallelism Version) ... ");
     computeBezierLinesCDP<<<(unsigned int)ceil((float)N_LINES / (float)BLOCK_DIM), BLOCK_DIM>>>(bLines_d, N_LINES);

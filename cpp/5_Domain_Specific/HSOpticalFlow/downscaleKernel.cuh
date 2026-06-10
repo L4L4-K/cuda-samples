@@ -39,6 +39,7 @@
 ///////////////////////////////////////////////////////////////////////////////
 __global__ void DownscaleKernel(int width, int height, int stride, float *out, cudaTextureObject_t texFine)
 {
+    // JP: `threadIdx`, `blockIdx`, `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     const int ix = threadIdx.x + blockIdx.x * blockDim.x;
     const int iy = threadIdx.y + blockIdx.y * blockDim.y;
 
@@ -94,5 +95,6 @@ Downscale(const float *src, int width, int height, int stride, int newWidth, int
 
     checkCudaErrors(cudaCreateTextureObject(&texFine, &texRes, &texDescr, NULL));
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     DownscaleKernel<<<blocks, threads>>>(newWidth, newHeight, newStride, out, texFine);
 }

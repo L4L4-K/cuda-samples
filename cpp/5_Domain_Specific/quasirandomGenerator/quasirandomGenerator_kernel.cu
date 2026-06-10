@@ -45,6 +45,7 @@ static __constant__ unsigned int c_Table[QRNG_DIMENSIONS][QRNG_RESOLUTION];
 
 static __global__ void quasirandomGeneratorKernel(float *d_Output, unsigned int seed, unsigned int N)
 {
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     unsigned int *dimBase = &c_Table[threadIdx.y][0];
     unsigned int  tid     = MUL(blockDim.x, blockIdx.x) + threadIdx.x;
     unsigned int  threadN = MUL(blockDim.x, gridDim.x);
@@ -72,6 +73,7 @@ extern "C" void initTableGPU(unsigned int tableCPU[QRNG_DIMENSIONS][QRNG_RESOLUT
 extern "C" void quasirandomGeneratorGPU(float *d_Output, unsigned int seed, unsigned int N)
 {
     dim3 threads(128, QRNG_DIMENSIONS);
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     quasirandomGeneratorKernel<<<128, threads>>>(d_Output, seed, N);
     getLastCudaError("quasirandomGeneratorKernel() execution failed.\n");
 }

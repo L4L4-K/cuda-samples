@@ -57,9 +57,11 @@ inline __device__ __host__ float3 firstEigenVector(float matrix[6])
 
 inline __device__ void colorSums(const float3 *colors, float3 *sums, cg::thread_group tile)
 {
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     const int idx = threadIdx.x;
 
     sums[idx] = colors[idx];
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(tile);
     sums[idx] += sums[idx ^ 8];
     cg::sync(tile);
@@ -79,6 +81,7 @@ inline __device__ float3 bestFitLine(const float3 *colors, float3 color_sum, cg:
 
     // @@ Eliminate two-way bank conflicts here.
     // @@ It seems that doing that and unrolling the reduction doesn't help...
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ float covariance[16 * 6];
 
     covariance[6 * idx + 0] = diff.x * diff.x; // 0, 6, 12, 2, 8, 14, 4, 10, 0

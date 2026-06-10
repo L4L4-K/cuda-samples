@@ -174,6 +174,7 @@ struct Graph
 {
     Graph() {}
 
+    // JP: graphs: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
     Graph(uint verticesCount, uint edgesCount)
         : vertices(verticesCount)
         , edges(edgesCount)
@@ -241,6 +242,7 @@ private:
 
         void buildFromDeviceData(thrust::device_ptr<uint> superVerticesOffsets, thrust::device_ptr<uint> verticesIDs)
         {
+            // JP: `cudaMemcpy`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
             checkCudaErrors(cudaMemcpy(&(superNodesOffsets_[0]),
                                        superVerticesOffsets.get(),
                                        sizeof(uint) * superNodesOffsets_.size(),
@@ -368,6 +370,7 @@ public:
     // Returns time (in ms) spent on building the tree.
     float run(const Graph &graph, Pyramid &segmentations)
     {
+        // JP: `cudaEvent_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
         cudaEvent_t start, stop;
 
         cudaEventCreate(&start);
@@ -405,6 +408,7 @@ public:
         }
 
         cudaEventRecord(stop, 0);
+        // JP: `cudaEventSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         cudaEventSynchronize(stop);
 
         float elapsedTime;
@@ -498,6 +502,7 @@ private:
         thrust::fill(dEdgesFlags, dEdgesFlags + edgesCount_, 0);
 
         // Mark the first edge for each vertex in "dEdgesFlags"
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         markSegments<<<gridDimsForVertices, blockDimsForVertices, 0>>>(
             dVertices_.get(), dEdgesFlags.get(), verticesCount_);
         getLastCudaError("markSegments launch failed.");
@@ -771,6 +776,7 @@ int loadImage(const char *filename, const char *executablePath, vector<uchar3> &
 
     data.assign(reinterpret_cast<uchar3 *>(dataHandle), reinterpret_cast<uchar3 *>(dataHandle) + width * height);
 
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(reinterpret_cast<void *>(dataHandle));
 
     return 0;
@@ -890,6 +896,7 @@ int main(int argc, char **argv)
 
     bool bResults[2];
 
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     bResults[0] = sdkComparePPM("level_00.ppm", sdkFindFilePath("ref_00.ppm", argv[0]), 5.0f, 0.15f, false);
     bResults[1] = sdkComparePPM("level_09.ppm", sdkFindFilePath("ref_09.ppm", argv[0]), 5.0f, 0.15f, false);
 

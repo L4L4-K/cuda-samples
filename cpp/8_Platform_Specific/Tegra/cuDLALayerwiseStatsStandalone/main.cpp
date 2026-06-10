@@ -113,6 +113,7 @@ void cleanUp(ResourceList *resourceList)
     uint32_t ii = 0;
 
     if (resourceList->inputTensorDesc != NULL) {
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         free(resourceList->inputTensorDesc);
         resourceList->inputTensorDesc = NULL;
     }
@@ -519,6 +520,7 @@ int main(int argc, char **argv)
 
     err = cudlaCreateDevice(0, &devHandle, CUDLA_STANDALONE);
     if (err != cudlaSuccess) {
+        // JP: `cuDLA`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
         DPRINTF("Error in cuDLA create device = %d\n", err);
         cleanUp(&resourceList);
         return 1;
@@ -623,6 +625,7 @@ int main(int argc, char **argv)
     attribute.inputTensorDesc = inputTensorDesc;
     err                       = cudlaModuleGetAttributes(moduleHandle, CUDLA_INPUT_TENSOR_DESCRIPTORS, &attribute);
     if (err != cudlaSuccess) {
+        // JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
         DPRINTF("Error in getting input tensor descriptor = %d\n", err);
         cleanUp(&resourceList);
         return 1;

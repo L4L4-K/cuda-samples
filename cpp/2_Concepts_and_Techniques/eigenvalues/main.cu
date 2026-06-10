@@ -102,6 +102,7 @@ void initInputData(InputData &input, char *exec_path, const unsigned int mat_siz
         // read default matrix
         unsigned int input_data_size = mat_size;
         char        *diag_path       = sdkFindFilePath("diagonal.dat", exec_path);
+        // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         assert(NULL != diag_path);
         sdkReadFile(diag_path, &(input.a), &input_data_size, false);
 
@@ -109,15 +110,18 @@ void initInputData(InputData &input, char *exec_path, const unsigned int mat_siz
         assert(NULL != sdiag_path);
         sdkReadFile(sdiag_path, &(input.b), &input_data_size, false);
 
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         free(diag_path);
         free(sdiag_path);
     }
 
     // allocate device memory for input
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&(input.g_a), sizeof(float) * mat_size));
     checkCudaErrors(cudaMalloc((void **)&(input.g_b_raw), sizeof(float) * mat_size));
 
     // copy data to device
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(input.g_a, input.a, sizeof(float) * mat_size, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(input.g_b_raw, input.b, sizeof(float) * mat_size, cudaMemcpyHostToDevice));
 

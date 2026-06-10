@@ -68,6 +68,7 @@ typedef struct shmStruct_st
 
 __global__ void simpleKernel(char *ptr, int sz, char val)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     for (; idx < sz; idx += (gridDim.x * blockDim.x)) {
         ptr[idx] = val;
@@ -96,6 +97,7 @@ static void barrierWait(volatile int *barrier, volatile int *sense, unsigned int
 static void childProcess(int id)
 {
     volatile shmStruct *shm = NULL;
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t        stream;
     sharedMemoryInfo    info;
     size_t              procCount, i;
@@ -120,6 +122,7 @@ static void childProcess(int id)
     checkIpcErrors(ipcOpenSocket(ipcChildHandle));
 
     if (sharedMemoryOpen(lshmName, sizeof(shmStruct), &info) != 0) {
+        // JP: shared_memory: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
         printf("Failed to create shared memory slab\n");
         exit(EXIT_FAILURE);
     }
@@ -201,8 +204,10 @@ static void childProcess(int id)
         size_t bufferId = (i + id) % procCount;
 
         // Push a simple kernel on it
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         simpleKernel<<<blocks, threads, 0, stream>>>((char *)ptrs[bufferId], DATA_SIZE, id);
         checkCudaErrors(cudaGetLastError());
+        // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         checkCudaErrors(cudaStreamSynchronize(stream));
 
         // Wait for all my sibling processes to push this stage of their work
@@ -216,6 +221,7 @@ static void childProcess(int id)
     }
 
     // Now wait for my buffer to be ready so I can copy it locally and verify it
+    // JP: `cudaMemcpyAsync`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpyAsync(&verification_buffer[0], ptrs[id], DATA_SIZE, cudaMemcpyDeviceToHost, stream));
 
     // And wait for all the queued up work to complete
@@ -224,6 +230,7 @@ static void childProcess(int id)
     printf("Process %d: verifying...\n", id);
 
     // The contents should have the id of the sibling just after me
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     char compareId = (char)((id + 1) % procCount);
     for (unsigned long long j = 0; j < DATA_SIZE; j++) {
         if (verification_buffer[j] != compareId) {
@@ -238,6 +245,7 @@ static void childProcess(int id)
     // Clean up!
     for (i = 0; i < procCount; i++) {
         // Free the memory before the exporter process frees it
+        // JP: `cudaFreeAsync`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         checkCudaErrors(cudaFreeAsync(ptrs[i], stream));
     }
 
@@ -268,6 +276,7 @@ static void parentProcess(char *app)
     printf("PP: lshmName = %s\n", lshmName);
 
     checkCudaErrors(cudaGetDeviceCount(&devCount));
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     std::vector<CUdevice> devices(devCount);
     for (i = 0; i < devCount; i++) {
         cuDeviceGet(&devices[i], i);

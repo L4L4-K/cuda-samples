@@ -132,6 +132,7 @@ int main(int argc, char **argv)
     }
 
     /* Get handle to the CUBLAS context */
+    // JP: `cublasHandle_t`, `cublasHandle`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
     cublasHandle_t cublasHandle = 0;
     cublasStatus_t cublasStatus;
     cublasStatus = cublasCreate(&cublasHandle);
@@ -142,6 +143,7 @@ int main(int argc, char **argv)
     cusparseHandle_t cusparseHandle = 0;
     checkCudaErrors(cusparseCreate(&cusparseHandle));
 
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_col, nz * sizeof(int)));
     checkCudaErrors(cudaMalloc((void **)&d_row, (N + 1) * sizeof(int)));
     checkCudaErrors(cudaMalloc((void **)&d_val, nz * sizeof(float)));
@@ -171,6 +173,7 @@ int main(int argc, char **argv)
     checkCudaErrors(cusparseCreateDnVec(&vecAx, N, d_Ax, CUDA_R_32F));
 
     /* Initialize problem data */
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     cudaMemcpy(d_col, J, nz * sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(d_row, I, (N + 1) * sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(d_val, val, nz * sizeof(float), cudaMemcpyHostToDevice);
@@ -243,6 +246,7 @@ int main(int argc, char **argv)
 
         r0           = r1;
         cublasStatus = cublasSdot(cublasHandle, N, d_r, 1, d_r, 1, &r1);
+        // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         cudaDeviceSynchronize();
         printf("iteration = %3d, residual = %e\n", k, sqrt(r1));
         k++;
@@ -267,6 +271,7 @@ int main(int argc, char **argv)
     }
 
     if (buffer) {
+        // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         checkCudaErrors(cudaFree(buffer));
     }
 

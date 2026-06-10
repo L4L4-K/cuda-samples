@@ -36,6 +36,7 @@ import sys
 
 try:
     import numpy as np
+    # JP: `ManagedMemoryResource`/`Device`/`Program`/`launch` は Python から CUDA resource を作る境界です。Unified Memory の所有、compile、launch の流れをここから追います。
     from cuda.core import (
         Device,
         LaunchConfig,
@@ -143,6 +144,7 @@ def blur_image_unified_memory(
     mr = ManagedMemoryResource(options)
 
     # Allocate unified memory buffers for source and destination images
+    # JP: streams_events: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     src_buf = mr.allocate(n_bytes, stream=stream)
     dst_buf = mr.allocate(n_bytes, stream=stream)
     try:
@@ -167,6 +169,7 @@ def blur_image_unified_memory(
         config = LaunchConfig(grid=grid_size, block=block_size)
 
         # Launch kernel - buffers can be passed directly as kernel arguments
+        # JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         launch(
             stream,
             config,
@@ -224,6 +227,7 @@ def main():
         print("\nCompiling CUDA kernel with cuda.core.Program...")
         arch = f"sm_{device.arch}"
         options = ProgramOptions(arch=arch)
+        # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
         program = Program(BOX_BLUR_KERNEL_CODE, code_type="c++", options=options)
         compiled = program.compile(target_type="cubin")
         kernel = compiled.get_kernel("box_blur_3x3")

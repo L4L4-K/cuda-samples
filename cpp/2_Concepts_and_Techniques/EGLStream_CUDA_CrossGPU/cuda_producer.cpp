@@ -63,6 +63,7 @@ void cudaProducerPrepareFrame(CUeglFrame *cudaEgl, CUdeviceptr cudaPtr, int buff
     cudaEgl->planeCount      = 1;
     cudaEgl->numChannels     = 4;
     cudaEgl->eglColorFormat  = CU_EGL_COLOR_FORMAT_ARGB;
+    // JP: `cudaEgl`, `cuFormat`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     cudaEgl->cuFormat        = CU_AD_FORMAT_UNSIGNED_INT8;
 }
 
@@ -242,11 +243,13 @@ CUresult cudaProducerInit(test_cuda_producer_s *cudaProducer, TestArgs *args)
     memset((void *)cudaProducer->tempBuff, INIT_DATA, cudaProducer->charCnt);
 
     // Fill this init data
+    // JP: `cuMemAlloc`, `cudaProducer`, `cudaPtr`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     status = cuMemAlloc(&cudaProducer->cudaPtr, bufferSize);
     if (status != CUDA_SUCCESS) {
         printf("Cuda Producer: cuda Malloc failed, status:%d\n", status);
         goto done;
     }
+    // JP: `cuMemcpyHtoD`, `cudaProducer`, `cudaPtr`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     status = cuMemcpyHtoD(cudaProducer->cudaPtr, (void *)(cudaProducer->tempBuff), bufferSize);
     if (status != CUDA_SUCCESS) {
         printf("Cuda Producer: cuMemCpy failed, status:%d\n", status);
@@ -286,6 +289,7 @@ done:
 CUresult cudaProducerDeinit(test_cuda_producer_s *cudaProducer)
 {
     if (cudaProducer->tempBuff) {
+        // JP: `cudaProducer`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         free(cudaProducer->tempBuff);
     }
     if (cudaProducer->cudaPtr) {

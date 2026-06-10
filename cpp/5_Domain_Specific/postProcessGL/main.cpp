@@ -48,6 +48,7 @@
       needed GLSL code)
   How about RGBA8?  The CUDA driver does not have consistent interoperability
   with this format.
+  // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
   Older GPUs may not store data the same way compared with newer GPUs,
   resulting in a swap of R and B components
   On older HW, this will need workarounds.
@@ -112,6 +113,7 @@ int          iGLUTWindowHandle = 0; // handle to the GLUT window
 // pbo and fbo variables
 #ifdef USE_TEXSUBIMAGE2D
 GLuint                       pbo_dest;
+// JP: `cudaGraphicsResource`, `cuda_pbo_dest_resource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
 struct cudaGraphicsResource *cuda_pbo_dest_resource;
 #else
 unsigned int                *cuda_dest_resource;
@@ -241,6 +243,7 @@ void process(int width, int height, int radius)
 #ifdef USE_TEXSUBIMAGE2D
     checkCudaErrors(cudaGraphicsUnmapResources(1, &cuda_pbo_dest_resource, 0));
 #endif
+    // JP: `cudaDestroyTextureObject`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaDestroyTextureObject(inTexObject));
 }
 
@@ -462,6 +465,7 @@ void display()
 
     // NOTE: I needed to add this call so the timing is consistent.
     // Need to investigate why
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cudaDeviceSynchronize();
     sdkStopTimer(&timer);
 
@@ -797,6 +801,7 @@ void FreeResource()
     checkCudaErrors(cudaGraphicsUnregisterResource(cuda_pbo_dest_resource));
     deletePBO(&pbo_dest);
 #else
+    // JP: `cudaFree`, `cuda_dest_resource`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     cudaFree(cuda_dest_resource);
 #endif
     deleteTexture(&tex_screen);

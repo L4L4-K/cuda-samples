@@ -49,6 +49,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "Utilities"))
 try:
     import cupy as cp
     import numpy as np
+    # JP: `cuda.compute.reduce_into` と `cuda.core.launch` を併用し、Python から library-style reduction と custom kernel の resource 境界を比較します。
     from cuda.compute import OpKind, reduce_into
     from cuda.core import (
         Device,
@@ -116,6 +117,7 @@ def compile_kernel(device: Device) -> Kernel:
     """Compile the reduction kernel for the given device."""
     arch = f"sm_{device.arch}"
     options = ProgramOptions(arch=arch)
+    # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
     program = Program(REDUCTION_KERNEL, code_type="c++", options=options)
     return program.compile(target_type="cubin").get_kernel("reduce_sum")
 
@@ -183,6 +185,7 @@ def reduce_custom(
             shmem_size=block_size * 4,  # float = 4 bytes
         )
 
+        # JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         launch(
             stream,
             config,
@@ -260,6 +263,7 @@ def benchmark_cuda_compute(
         op=OpKind.PLUS,
         num_items=len(d_input),
         h_init=h_init,
+        # JP: streams_events: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
         stream=stream,
     )
     stream.sync()

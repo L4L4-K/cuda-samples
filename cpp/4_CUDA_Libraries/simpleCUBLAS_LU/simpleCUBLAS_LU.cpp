@@ -71,6 +71,7 @@
 // helper functions
 
 // wrapper around cublas<t>getrfBatched()
+// JP: `cublasStatus_t`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
 cublasStatus_t
 cublasXgetrfBatched(cublasHandle_t handle, int n, DATA_TYPE *const A[], int lda, int *P, int *info, int batchSize)
 {
@@ -273,6 +274,7 @@ int main(int argc, char **argv)
     // initialize cuBLAS
     status = cublasCreate(&handle);
     if (status != CUBLAS_STATUS_SUCCESS) {
+        // JP: `cuBLAS`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
         printf("> ERROR: cuBLAS initialization failed..\n");
         return (EXIT_FAILURE);
     }
@@ -297,6 +299,7 @@ int main(int argc, char **argv)
     h_infoArray  = (int *)xmalloc(BATCH_SIZE * sizeof(int));
 
     // allocate memory for device variables
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_Aarray, BATCH_SIZE * matSize));
     checkCudaErrors(cudaMalloc((void **)&d_pivotArray, N * BATCH_SIZE * sizeof(int)));
     checkCudaErrors(cudaMalloc((void **)&d_infoArray, BATCH_SIZE * sizeof(int)));
@@ -310,6 +313,7 @@ int main(int argc, char **argv)
 
     // copy data to device from host
     printf("> copying data from host memory to GPU memory..\n");
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(d_Aarray, h_AarrayInput, BATCH_SIZE * matSize, cudaMemcpyHostToDevice));
 
     // create pointer array for matrices
@@ -387,6 +391,7 @@ int main(int argc, char **argv)
     }
 
     // free device variables
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_ptr_array));
     checkCudaErrors(cudaFree(d_infoArray));
     checkCudaErrors(cudaFree(d_pivotArray));

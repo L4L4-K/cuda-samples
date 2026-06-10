@@ -107,6 +107,7 @@ static bool run_exclusive_segmented_sum()
                                                                     begin_offsets,
                                                                     end_offsets,
                                                                     num_segments));
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
 
     std::vector<int>    h_in(d_in.begin(), d_in.end());
@@ -123,6 +124,7 @@ static bool run_exclusive_segmented_sum()
     print_vec("got:", got);
     print_vec("expected:", expected);
     const bool ok = got == expected;
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     printf("  %s\n", ok ? "OK" : "FAIL");
     return ok;
 }

@@ -217,6 +217,7 @@ void cleanUp(ResourceList *resourceList)
     }
 
     if (resourceList->waitEvents != NULL) {
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         free(resourceList->waitEvents);
         resourceList->waitEvents = NULL;
     }
@@ -373,6 +374,7 @@ int main(int argc, char **argv)
     memset(&resourceList, 0x00, sizeof(ResourceList));
 
     if (argc != 3) {
+        // JP: `cuDLAStandaloneMode`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
         DPRINTF("Usage : ./cuDLAStandaloneMode <loadable> <imageFile>\n");
         return 1;
     }
@@ -478,6 +480,7 @@ int main(int argc, char **argv)
     attribute.inputTensorDesc = inputTensorDesc;
     err                       = cudlaModuleGetAttributes(moduleHandle, CUDLA_INPUT_TENSOR_DESCRIPTORS, &attribute);
     if (err != cudlaSuccess) {
+        // JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
         DPRINTF("Error in getting input tensor descriptor = %d\n", err);
         cleanUp(&resourceList);
         return 1;

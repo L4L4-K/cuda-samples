@@ -6,6 +6,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Module
 
 project(histEqualizationNPP LANGUAGES CXX)
 
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
 find_package(CUDAToolkit REQUIRED)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -43,6 +44,7 @@ if(${FreeImage_FOUND})
     )
 
     target_link_libraries(histEqualizationNPP PRIVATE
+        # JP: `nppc`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
         CUDA::nppc
         CUDA::nppisu
         CUDA::nppist

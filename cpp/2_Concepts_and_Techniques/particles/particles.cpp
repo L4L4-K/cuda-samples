@@ -162,6 +162,7 @@ void cleanup()
     sdkDeleteTimer(&timer);
 
     if (psystem) {
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         delete psystem;
     }
     return;
@@ -198,6 +199,7 @@ void initGL(int *argc, char **argv)
 void runBenchmark(int iterations, char *exec_path)
 {
     printf("Run %u particles simulation for %d iterations...\n\n", numParticles, iterations);
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cudaDeviceSynchronize();
     sdkStartTimer(&timer);
 
@@ -224,6 +226,7 @@ void runBenchmark(int iterations, char *exec_path)
 
         sdkDumpBin((void *)hPos, sizeof(float) * 4 * psystem->getNumParticles(), "particles.bin");
 
+        // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         if (!sdkCompareBin2BinFloat(
                 "particles.bin", g_refFile, 4 * psystem->getNumParticles(), MAX_EPSILON_ERROR, THRESHOLD, exec_path)) {
             g_TotalErrors++;
@@ -672,6 +675,7 @@ int main(int argc, char **argv)
            "Results may vary when GPU Boost is enabled.\n\n");
 
     numParticles  = NUM_PARTICLES;
+    // JP: `gridDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     uint gridDim  = GRID_SIZE;
     numIterations = 0;
 

@@ -47,12 +47,14 @@ namespace cg = cooperative_groups;
 // and saving instructions
 inline __device__ uint scan1Inclusive(uint idata, volatile uint *s_Data, uint size, cg::thread_block cta)
 {
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     uint pos    = 2 * threadIdx.x - (threadIdx.x & (size - 1));
     s_Data[pos] = 0;
     pos += size;
     s_Data[pos] = idata;
 
     for (uint offset = 1; offset < size; offset <<= 1) {
+        // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         cg::sync(cta);
         uint t = s_Data[pos] + s_Data[pos - offset];
         cg::sync(cta);
@@ -104,6 +106,7 @@ __global__ void scanExclusiveShared(uint4 *d_Dst, uint4 *d_Src, uint size)
 {
     // Handle to thread block group
     cg::thread_block cta = cg::this_thread_block();
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ uint  s_Data[2 * THREADBLOCK_SIZE];
 
     uint pos = blockIdx.x * blockDim.x + threadIdx.x;
@@ -184,9 +187,11 @@ static uint *d_Buf;
 
 extern "C" void initScan(void)
 {
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_Buf, (MAX_BATCH_ELEMENTS / (4 * THREADBLOCK_SIZE)) * sizeof(uint)));
 }
 
+// JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
 extern "C" void closeScan(void) { checkCudaErrors(cudaFree(d_Buf)); }
 
 static uint factorRadix2(uint &log2L, uint L)
@@ -213,6 +218,7 @@ extern "C" size_t scanExclusiveShort(uint *d_Dst, uint *d_Src, uint batchSize, u
     // Check power-of-two factorization
     uint log2L;
     uint factorizationRemainder = factorRadix2(log2L, arrayLength);
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(factorizationRemainder == 1);
 
     // Check supported size range
@@ -224,6 +230,7 @@ extern "C" size_t scanExclusiveShort(uint *d_Dst, uint *d_Src, uint batchSize, u
     // Check all threadblocks to be fully packed with data
     assert((batchSize * arrayLength) % (4 * THREADBLOCK_SIZE) == 0);
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     scanExclusiveShared<<<(batchSize * arrayLength) / (4 * THREADBLOCK_SIZE), THREADBLOCK_SIZE>>>(
         (uint4 *)d_Dst, (uint4 *)d_Src, arrayLength);
     getLastCudaError("scanExclusiveShared() execution FAILED\n");

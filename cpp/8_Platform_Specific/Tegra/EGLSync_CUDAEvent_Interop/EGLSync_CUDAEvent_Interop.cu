@@ -147,6 +147,7 @@ int useGpu = 1;
 CUgraphicsResource writeResource = NULL;
 CUgraphicsResource readResource  = NULL;
 CUarray            writeArray, readArray;
+// JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
 CUdevice           device;
 CUcontext          context;
 
@@ -418,6 +419,7 @@ void checkSync(int argc, char **argv)
         checkSyncOnCPU();
     }
 
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(pSurf_read);
     free(pSurf_write);
     cleanup(SUCCESS);
@@ -463,6 +465,7 @@ void checkSyncOnCPU(void)
         newData++;
         expectedData++;
 
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         verify_and_update_kernel<<<(width * height) / 256, 256>>>(
             writeSurface, readSurface, expectedData, newData, width, height);
 
@@ -502,6 +505,7 @@ void checkSyncOnCPU(void)
 /*
     Performs same function as checkSyncOnCPU
     Here instead of glFinish() and cuCtxSynchronize like in checkSyncOnCPU,
+    // JP: `cuStreamWaitEvent`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     we make use of EGLSync, CUDA Event and cuStreamWaitEvent, eglWaitSyncKHR to
    achieve the synchronization due to this CPU is not blocked for any
    synchronization needed between GL-EGL & CUDA operations all synchronizations
@@ -669,6 +673,7 @@ void checkSyncOnGPU(EGLDisplay dpy)
 __global__ void
 verify_and_update_kernel(CUsurfObject write, CUsurfObject read, char expected, char newval, int width, int height)
 {
+    // JP: `blockDim`, `blockIdx`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     unsigned int x = blockDim.x * blockIdx.x + threadIdx.x;
     unsigned int y = blockDim.y * blockIdx.y + threadIdx.y;
 
@@ -699,14 +704,17 @@ extern "C" cudaError_t cudaGetValueMismatch()
     int        *numErr_d = NULL;
     cudaError_t err      = cudaSuccess;
 
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     err = cudaMalloc(&numErr_d, sizeof(int));
     if (err != cudaSuccess) {
+        // JP: `cudaMemcpy`, `cudaGetErrorString`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         printf("Cuda Main: cudaMemcpy failed with %s\n", cudaGetErrorString(err));
         cudaFree(numErr_d);
         return err;
     }
 
     getNumErrors<<<1, 1>>>(numErr_d);
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     err = cudaDeviceSynchronize();
     if (err != cudaSuccess) {
         printf("Cuda Main: cudaDeviceSynchronize failed with %s\n", cudaGetErrorString(err));

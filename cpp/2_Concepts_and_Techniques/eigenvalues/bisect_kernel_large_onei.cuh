@@ -68,9 +68,11 @@ __global__ void bisectKernelLarge_OneIntervals(float             *g_d,
                                                float              precision)
 {
     // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     cg::thread_block   cta  = cg::this_thread_block();
     const unsigned int gtid = (blockDim.x * blockIdx.x) + threadIdx.x;
 
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ float s_left_scratch[MAX_THREADS_BLOCK];
     __shared__ float s_right_scratch[MAX_THREADS_BLOCK];
 
@@ -102,6 +104,7 @@ __global__ void bisectKernelLarge_OneIntervals(float             *g_d,
         converged_all_threads = 0;
     }
 
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 
     // process until all threads converged to an eigenvalue

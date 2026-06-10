@@ -61,6 +61,7 @@ __constant__ short Q[] = {32, 33, 51, 81, 66, 39, 34, 17, 33, 36, 48, 47, 28, 23
 __global__ void CUDAkernelQuantizationFloat(float *SrcDst, int Stride)
 {
     // Block index
+    // JP: `blockIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int bx = blockIdx.x;
     int by = blockIdx.y;
 
@@ -118,6 +119,7 @@ __global__ void CUDAkernelQuantizationShort(short *SrcDst, int Stride)
         curCoef /= curQuant;
     }
 
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 
     curCoef = curCoef * curQuant;

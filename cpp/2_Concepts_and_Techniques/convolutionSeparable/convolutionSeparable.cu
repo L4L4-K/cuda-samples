@@ -54,7 +54,9 @@ extern "C" void setConvolutionKernel(float *h_Kernel)
 __global__ void convolutionRowsKernel(float *d_Dst, float *d_Src, int imageW, int imageH, int pitch)
 {
     // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     cg::thread_block cta = cg::this_thread_block();
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ float s_Data[ROWS_BLOCKDIM_Y][(ROWS_RESULT_STEPS + 2 * ROWS_HALO_STEPS) * ROWS_BLOCKDIM_X];
 
     // Offset to the left halo edge
@@ -88,6 +90,7 @@ __global__ void convolutionRowsKernel(float *d_Dst, float *d_Src, int imageW, in
     }
 
     // Compute and store results
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 #pragma unroll
 
@@ -106,6 +109,7 @@ __global__ void convolutionRowsKernel(float *d_Dst, float *d_Src, int imageW, in
 
 extern "C" void convolutionRowsGPU(float *d_Dst, float *d_Src, int imageW, int imageH)
 {
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(ROWS_BLOCKDIM_X * ROWS_HALO_STEPS >= KERNEL_RADIUS);
     assert(imageW % (ROWS_RESULT_STEPS * ROWS_BLOCKDIM_X) == 0);
     assert(imageH % ROWS_BLOCKDIM_Y == 0);
@@ -113,6 +117,7 @@ extern "C" void convolutionRowsGPU(float *d_Dst, float *d_Src, int imageW, int i
     dim3 blocks(imageW / (ROWS_RESULT_STEPS * ROWS_BLOCKDIM_X), imageH / ROWS_BLOCKDIM_Y);
     dim3 threads(ROWS_BLOCKDIM_X, ROWS_BLOCKDIM_Y);
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     convolutionRowsKernel<<<blocks, threads>>>(d_Dst, d_Src, imageW, imageH, imageW);
     getLastCudaError("convolutionRowsKernel() execution failed\n");
 }

@@ -66,6 +66,7 @@ __global__ void sample_kernel(unsigned long long base_seed,
                               int               *poisson_out,
                               int               *bernoulli_out)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     const int tid           = blockIdx.x * blockDim.x + threadIdx.x;
     const int total_threads = gridDim.x * blockDim.x;
 
@@ -146,19 +147,23 @@ int main(int argc, char **argv)
     float *d_normal    = nullptr;
     int   *d_poisson   = nullptr;
     int   *d_bernoulli = nullptr;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc(&d_uniform, n * sizeof(float)));
     checkCudaErrors(cudaMalloc(&d_normal, n * sizeof(float)));
     checkCudaErrors(cudaMalloc(&d_poisson, n * sizeof(int)));
     checkCudaErrors(cudaMalloc(&d_bernoulli, n * sizeof(int)));
 
     const unsigned long long seed = 0xC0FFEE00ULL;
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     sample_kernel<<<num_blocks, THREADS_PER_BLOCK>>>(
         seed, SAMPLES_PER_THREAD, d_uniform, d_normal, d_poisson, d_bernoulli);
     checkCudaErrors(cudaGetLastError());
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
 
     std::vector<float> uniform(n), normal(n);
     std::vector<int>   poisson(n), bernoulli(n);
+    // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(uniform.data(), d_uniform, n * sizeof(float), cudaMemcpyDeviceToHost));
     checkCudaErrors(cudaMemcpy(normal.data(), d_normal, n * sizeof(float), cudaMemcpyDeviceToHost));
     checkCudaErrors(cudaMemcpy(poisson.data(), d_poisson, n * sizeof(int), cudaMemcpyDeviceToHost));
@@ -171,6 +176,7 @@ int main(int argc, char **argv)
 
     printf("\nEngines exercised: cuda::pcg64 (NumPy-compatible) and cuda::std::philox4x32 (C++26)\n");
 
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_uniform));
     checkCudaErrors(cudaFree(d_normal));
     checkCudaErrors(cudaFree(d_poisson));

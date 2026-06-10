@@ -35,6 +35,7 @@
 
 extern "C" __global__ void vectorAdd(const float *A, const float *B, float *C, int numElements)
 {
+    // JP: `blockDim`, `blockIdx`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int i = blockDim.x * blockIdx.x + threadIdx.x;
 
     if (i < numElements) {

@@ -81,6 +81,7 @@ int          iGLUTWindowHandle = 0; // handle to the GLUT window
 // pbo and fbo variables
 #ifdef USE_TEXSUBIMAGE2D
 GLuint                       pbo_dest;
+// JP: `cudaGraphicsResource`, `cuda_pbo_dest_resource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
 struct cudaGraphicsResource *cuda_pbo_dest_resource;
 #else
 unsigned int                *cuda_dest_resource;
@@ -166,6 +167,7 @@ void createPBO(GLuint *pbo, struct cudaGraphicsResource **pbo_resource)
     glGenBuffers(1, pbo);
     glBindBuffer(GL_ARRAY_BUFFER, *pbo);
     glBufferData(GL_ARRAY_BUFFER, size_tex_data, data, GL_DYNAMIC_DRAW);
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(data);
 
     glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -340,6 +342,7 @@ void display()
 
     // NOTE: I needed to add this call so the timing is consistent.
     // Need to investigate why
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cudaDeviceSynchronize();
     sdkStopTimer(&timer);
 
@@ -516,6 +519,7 @@ void FreeResource()
     checkCudaErrors(cudaGraphicsUnregisterResource(cuda_pbo_dest_resource));
     deletePBO(&pbo_dest);
 #else
+    // JP: `cudaFree`, `cuda_dest_resource`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     cudaFree(cuda_dest_resource);
 #endif
     deleteTexture(&tex_screen);

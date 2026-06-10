@@ -49,6 +49,7 @@ __device__ void reduceBlockData(cuda::barrier<cuda::thread_scope_block> &barrier
                                 double                                  &threadSum,
                                 double                                  *result)
 {
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     extern __shared__ double tmp[];
 
 #pragma unroll
@@ -86,6 +87,7 @@ __global__ void normVecByDotProductAWBarrier(float *vecA, float *vecB, double *p
 {
 #if __CUDA_ARCH__ >= 700
 #pragma diag_suppress static_var_with_dynamic_init
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     cg::thread_block cta  = cg::this_thread_block();
     cg::grid_group   grid = cg::this_grid();
     ;
@@ -97,6 +99,7 @@ __global__ void normVecByDotProductAWBarrier(float *vecA, float *vecB, double *p
         init(&barrier, blockDim.x);
     }
 
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 
     double threadSum = 0.0;
@@ -176,9 +179,11 @@ int runNormVecByDotProductAWBarrier(int argc, char **argv, int deviceId)
     double *d_partialResults;
     int     size = 10000000;
 
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
     checkCudaErrors(cudaMallocHost(&vecA, sizeof(float) * size));
     checkCudaErrors(cudaMallocHost(&vecB, sizeof(float) * size));
 
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc(&d_vecA, sizeof(float) * size));
     checkCudaErrors(cudaMalloc(&d_vecB, sizeof(float) * size));
 
@@ -187,9 +192,11 @@ int runNormVecByDotProductAWBarrier(int argc, char **argv, int deviceId)
         vecA[i] = vecB[i] = baseVal;
     }
 
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t stream;
     checkCudaErrors(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
+    // JP: `cudaMemcpyAsync`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpyAsync(d_vecA, vecA, sizeof(float) * size, cudaMemcpyHostToDevice, stream));
     checkCudaErrors(cudaMemcpyAsync(d_vecB, vecB, sizeof(float) * size, cudaMemcpyHostToDevice, stream));
 
@@ -239,6 +246,7 @@ int runNormVecByDotProductAWBarrier(int argc, char **argv, int deviceId)
     }
 
     printf("Result = %s\n", matches == size ? "PASSED" : "FAILED");
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_vecA));
     checkCudaErrors(cudaFree(d_vecB));
     checkCudaErrors(cudaFree(d_partialResults));

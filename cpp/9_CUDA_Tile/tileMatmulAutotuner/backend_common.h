@@ -50,6 +50,7 @@
 #endif
 
 enum class CompilerBackend {
+    // JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
     NVRTC,
     NVCC
 };

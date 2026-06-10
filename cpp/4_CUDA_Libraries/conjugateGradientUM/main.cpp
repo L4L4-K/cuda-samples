@@ -106,6 +106,7 @@ int main(int argc, char **argv)
 
     if (!deviceProp.managedMemory) {
         // This samples requires being run on a device that supports Unified Memory
+        // JP: managed_memory: Unified Memory は CPU/GPU で同じ pointer を使います。prefetch や同期で移動タイミングを意識します。
         fprintf(stderr, "Unified Memory not supported on this device\n");
         exit(EXIT_WAIVED);
     }
@@ -135,6 +136,7 @@ int main(int argc, char **argv)
     }
 
     /* Get handle to the CUBLAS context */
+    // JP: `cublasHandle_t`, `cublasHandle`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
     cublasHandle_t cublasHandle = 0;
     cublasStatus_t cublasStatus;
     cublasStatus = cublasCreate(&cublasHandle);
@@ -172,6 +174,7 @@ int main(int argc, char **argv)
     cusparseDnVecDescr_t vecAx = NULL;
     checkCudaErrors(cusparseCreateDnVec(&vecAx, N, Ax, CUDA_R_32F));
 
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cudaDeviceSynchronize();
 
     for (int i = 0; i < N; i++) {
@@ -196,6 +199,7 @@ int main(int argc, char **argv)
                                             CUSPARSE_SPMV_ALG_DEFAULT,
                                             &bufferSize));
     void *buffer = NULL;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc(&buffer, bufferSize));
 
     checkCudaErrors(cusparseSpMV(cusparseHandle,
@@ -283,6 +287,7 @@ int main(int argc, char **argv)
         checkCudaErrors(cusparseDestroyDnVec(vecp));
     }
 
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     cudaFree(I);
     cudaFree(J);
     cudaFree(val);

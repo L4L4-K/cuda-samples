@@ -38,8 +38,10 @@
 
 __forceinline__ __device__ void reduceInShared_intrinsics(half2 *const v)
 {
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     if (threadIdx.x < 64)
         v[threadIdx.x] = __hadd2(v[threadIdx.x], v[threadIdx.x + 64]);
+    // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     __syncthreads();
     if (threadIdx.x < 32)
         v[threadIdx.x] = __hadd2(v[threadIdx.x], v[threadIdx.x + 32]);
@@ -90,6 +92,7 @@ __global__ void
 scalarProductKernel_intrinsics(half2 const *const a, half2 const *const b, float *const results, size_t const size)
 {
     const int        stride = gridDim.x * blockDim.x;
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ half2 shArray[NUM_OF_THREADS];
 
     shArray[threadIdx.x] = __float2half2_rn(0.f);
@@ -167,7 +170,9 @@ int main(int argc, char *argv[])
     }
 
     for (int i = 0; i < 2; ++i) {
+        // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
         checkCudaErrors(cudaMallocHost((void **)&vec[i], size * sizeof *vec[i]));
+        // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
         checkCudaErrors(cudaMalloc((void **)&devVec[i], size * sizeof *devVec[i]));
     }
 
@@ -176,9 +181,11 @@ int main(int argc, char *argv[])
 
     for (int i = 0; i < 2; ++i) {
         generateInput(vec[i], size);
+        // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         checkCudaErrors(cudaMemcpy(devVec[i], vec[i], size * sizeof *vec[i], cudaMemcpyHostToDevice));
     }
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     scalarProductKernel_native<<<NUM_OF_BLOCKS, NUM_OF_THREADS>>>(devVec[0], devVec[1], devResults, size);
 
     checkCudaErrors(cudaMemcpy(results, devResults, NUM_OF_BLOCKS * sizeof *results, cudaMemcpyDeviceToHost));
@@ -202,6 +209,7 @@ int main(int argc, char *argv[])
     printf("&&&& fp16ScalarProduct %s\n", (fabs(result_intrinsics - result_native) < 0.00001) ? "PASSED" : "FAILED");
 
     for (int i = 0; i < 2; ++i) {
+        // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         checkCudaErrors(cudaFree(devVec[i]));
         checkCudaErrors(cudaFreeHost(vec[i]));
     }

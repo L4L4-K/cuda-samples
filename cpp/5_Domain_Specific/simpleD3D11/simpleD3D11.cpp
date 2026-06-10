@@ -117,6 +117,7 @@ const unsigned int g_WindowHeight = 720;
 
 int g_iFrameToCompare = 10;
 
+// JP: `cudaStream_t`, `cuda_stream`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
 cudaStream_t cuda_stream;
 
 //-----------------------------------------------------------------------------
@@ -143,6 +144,7 @@ bool findCUDADevice()
         return false;
     }
     else {
+        // JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
         printf("> Found %d CUDA Capable Device(s)\n", deviceCount);
     }
 
@@ -152,6 +154,7 @@ bool findCUDADevice()
 bool findDXDevice(char *dev_name)
 {
     HRESULT   hr = S_OK;
+    // JP: `cudaError`, `cuStatus`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     cudaError cuStatus;
     int       cuda_dev = -1;
 
@@ -572,6 +575,7 @@ bool DrawScene(uint64_t &key)
 //-----------------------------------------------------------------------------
 void Cleanup()
 {
+    // JP: `cudaFree`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。 ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_VertexBufPtr));
     checkCudaErrors(cudaDestroyExternalMemory(extMemory));
     checkCudaErrors(cudaDestroyExternalSemaphore(extSemaphore));

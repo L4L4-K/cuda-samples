@@ -44,6 +44,7 @@
 __global__ void testKernel(int val)
 {
     printf("[%d, %d]:\t\tValue is:%d\n",
+           // JP: `blockIdx`, `gridDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
            blockIdx.y * gridDim.x + blockIdx.x,
            threadIdx.z * blockDim.x * blockDim.y + threadIdx.y * blockDim.x + threadIdx.x,
            val);
@@ -68,7 +69,9 @@ int main(int argc, char **argv)
     // three-dimensional blocks are configured.
     dim3 dimGrid(2, 2);
     dim3 dimBlock(2, 2, 2);
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     testKernel<<<dimGrid, dimBlock>>>(10);
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cudaDeviceSynchronize();
 
     return EXIT_SUCCESS;

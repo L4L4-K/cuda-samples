@@ -40,6 +40,7 @@ void flipBits(uint8_t *pBuff, uint32_t size)
 }
 
 // Compare input and generated image files
+// JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
 void compareFiles(std::string &path1, std::string &path2)
 {
     bool  result = true;
@@ -93,6 +94,7 @@ void Caller::init()
 void Caller::deinit()
 {
     NvSciBufAttrListFree(attrList);
+    // JP: `cudaDestroyExternalMemory`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaDestroyExternalMemory(extMem));
 }
 
@@ -166,6 +168,7 @@ void cudaNvSciBufMultiplanar::initCuda(int devId)
            major,
            minor);
 
+    // JP: `cuDriverGetVersion`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     checkCudaDrvErrors(cuDriverGetVersion(&drvVersion));
 
     if (drvVersion <= 11030) {
@@ -374,6 +377,7 @@ void Caller::copyYUVToCudaArrayAndFlipBits(std::string &path, cudaArray_t *cudaA
                                             copyWidthInBytes[i],
                                             copyWidthInBytes[i],
                                             copyHeight[i],
+                                            // JP: `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
                                             cudaMemcpyHostToDevice));
     }
 

@@ -81,6 +81,7 @@ int ThreadLaunchCount;
 
 typedef struct _CUDAContext_st
 {
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     CUcontext   hcuContext;
     CUmodule    hcuModule;
     CUfunction  hcuFunction;
@@ -198,6 +199,7 @@ void *ThreadProc(CUDAContext *pParams)
     if (CUDA_SUCCESS != status) {
         THREAD_QUIT;
     }
+    // JP: `cuMemAlloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cuMemAlloc(&pParams->dptr, NUM_INTS * sizeof(int)));
 
     // There are two ways to launch CUDA kernels via the Driver API.
@@ -210,6 +212,7 @@ void *ThreadProc(CUDAContext *pParams)
         void *args[5] = {&pParams->dptr};
 
         // new CUDA 4.0 Driver API Kernel launch call
+        // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         status = cuLaunchKernel(pParams->hcuFunction, 1, 1, 1, 32, 1, 1, 0, NULL, args, NULL);
 
         if (CUDA_SUCCESS != status) {
@@ -245,6 +248,7 @@ void *ThreadProc(CUDAContext *pParams)
     if (!pInt)
         return 0;
 
+    // JP: `cuMemcpyDtoH`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     if (CUDA_SUCCESS == cuMemcpyDtoH(pInt, pParams->dptr, NUM_INTS * sizeof(int))) {
         for (int i = 0; i < NUM_INTS; i++) {
             if (pInt[i] != 32 - i) {
@@ -266,6 +270,7 @@ void *ThreadProc(CUDAContext *pParams)
         LEAVECRITICALSECTION
     }
 
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(pInt);
     fflush(stdout);
     checkCudaErrors(cuMemFree(pParams->dptr));

@@ -58,6 +58,7 @@ const char *sSDKname = "simpleMultiCopy";
 // Compute workload on the system
 __global__ void incKernel(int *g_out, int *g_in, int N, int inner_reps)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (idx < N) {
@@ -81,6 +82,7 @@ int *d_data_in[STREAM_COUNT];
 int *h_data_out[STREAM_COUNT];
 int *d_data_out[STREAM_COUNT];
 
+// JP: `cudaEvent_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
 cudaEvent_t  cycleDone[STREAM_COUNT];
 cudaStream_t stream[STREAM_COUNT];
 
@@ -171,8 +173,11 @@ int main(int argc, char *argv[])
     h_data_sink   = (int *)malloc(memsize);
 
     for (int i = 0; i < STREAM_COUNT; ++i) {
+        // JP: `cudaHostAlloc`, `cudaHostAllocDefault`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
         checkCudaErrors(cudaHostAlloc(&h_data_in[i], memsize, cudaHostAllocDefault));
+        // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
         checkCudaErrors(cudaMalloc(&d_data_in[i], memsize));
+        // JP: `cudaMemset`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         checkCudaErrors(cudaMemset(d_data_in[i], 0, memsize));
 
         checkCudaErrors(cudaHostAlloc(&h_data_out[i], memsize, cudaHostAllocDefault));
@@ -190,12 +195,14 @@ int main(int argc, char *argv[])
     init();
 
     // Kernel warmup
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     incKernel<<<grid, block>>>(d_data_out[0], d_data_in[0], N, inner_reps);
 
     // Time copies and kernel
     cudaEventRecord(start, 0);
     checkCudaErrors(cudaMemcpyAsync(d_data_in[0], h_data_in[0], memsize, cudaMemcpyHostToDevice, 0));
     cudaEventRecord(stop, 0);
+    // JP: `cudaEventSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cudaEventSynchronize(stop);
 
     float memcpy_h2d_time;
@@ -263,6 +270,7 @@ int main(int argc, char *argv[])
 
     // Free resources
 
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(h_data_source);
     free(h_data_sink);
 

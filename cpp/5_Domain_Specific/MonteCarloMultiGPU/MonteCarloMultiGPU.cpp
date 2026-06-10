@@ -120,6 +120,7 @@ static CUT_THREADPROC solverThread(TOptionPlan *plan)
     // Main computation
     MonteCarloGPU(plan);
 
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
 
     // Stop the timer
@@ -128,6 +129,7 @@ static CUT_THREADPROC solverThread(TOptionPlan *plan)
     // Shut down this GPU
     closeMonteCarloGPU(plan);
 
+    // JP: `cudaStreamSynchronize`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStreamSynchronize(0);
 
     printf("solverThread() finished - GPU Device %d: %s\n", plan->device, deviceProp.name);
@@ -192,6 +194,7 @@ static void multiSolver(TOptionPlan *plan, int nPlans)
     for (int i = 0; i < nPlans; i++) {
         checkCudaErrors(cudaSetDevice(plan[i].device));
         closeMonteCarloGPU(&plan[i]);
+        // JP: `cudaStreamDestroy`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         checkCudaErrors(cudaStreamDestroy(streams[i]));
         checkCudaErrors(cudaEventDestroy(events[i]));
     }

@@ -45,6 +45,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "Utilities"))
 from cuda_samples_utils import verify_array_result
 
 try:
+    # JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
     import cupy as cp
     import numpy as np
     from cuda.core import Device, EventOptions
@@ -206,6 +207,7 @@ def run_fft_analysis(
         # GPU FFT (cuFFT via CuPy)
         # ---------------------------------------------------------------------
         print("\n" + "-" * 60)
+        # JP: `cuFFT`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。 CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
         print("GPU FFT (cuFFT)")
         print("-" * 60)
 
@@ -292,6 +294,7 @@ def run_fft_analysis(
         all_found = True
         for expected_freq in test_frequencies:
             found = any(abs(f - expected_freq) < 10 for f in detected_freqs)
+            # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
             status = "[OK]" if found else "[FAIL]"
             print(f"  {expected_freq:6.0f} Hz: {status}")
             all_found = all_found and found

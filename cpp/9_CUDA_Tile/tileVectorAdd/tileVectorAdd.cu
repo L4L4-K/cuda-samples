@@ -47,6 +47,7 @@
 #include <cstdio>
 
 __global__ void initializeVectors(__half* a, __half* b, std::size_t n) {
+  // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
   auto idx = blockIdx.x * blockDim.x + threadIdx.x;
 
   if (idx < n) {
@@ -103,19 +104,23 @@ int main() {
   int chunk_size = 1024;
   int num_blocks = 1 + ((N - 1) / chunk_size);
 
+  // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
   checkCudaErrors(cudaMalloc(&d_a, N * sizeof(__half)));
   checkCudaErrors(cudaMalloc(&d_b, N * sizeof(__half)));
   checkCudaErrors(cudaMalloc(&d_c, N * sizeof(__half)));
 
+  // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
   initializeVectors<<<num_blocks, chunk_size>>>(d_a, d_b, N);
   checkCudaErrors(cudaGetLastError());
 
   vectorAdd<<<num_blocks>>>(d_a, d_b, d_c, N);
   checkCudaErrors(cudaGetLastError());
 
+  // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
   checkCudaErrors(cudaDeviceSynchronize());
 
   __half* h_c = new __half[N];
+  // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
   checkCudaErrors(cudaMemcpy(h_c, d_c, N * sizeof(__half), cudaMemcpyDeviceToHost));
 
   for (int idx = 0; idx != N; ++idx) {
@@ -129,6 +134,7 @@ int main() {
 
   printf("Success! Vector addition matches expected results.\n");
 
+  // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
   checkCudaErrors(cudaFree(d_a));
   checkCudaErrors(cudaFree(d_b));
   checkCudaErrors(cudaFree(d_c));

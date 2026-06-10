@@ -94,6 +94,7 @@ bool inline findModulePath(const char *module_file, std::string &module_path, ch
     }
 }
 
+// JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
 void ptxJIT(int argc, char **argv, CUmodule *phModule, CUfunction *phKernel, CUlinkState *lState)
 {
     CUjit_option options[6];
@@ -200,6 +201,7 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc(&d_data, memSize));
 
     // JIT Compile the Kernel from PTX and get the Handles (Driver API)
@@ -212,10 +214,12 @@ int main(int argc, char **argv)
     void *args[1] = {&d_data};
 
     // Launch the kernel (Driver API_)
+    // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     checkCudaErrors(cuLaunchKernel(hKernel, grid.x, grid.y, grid.z, block.x, block.y, block.z, 0, NULL, args, NULL));
     std::cout << "CUDA kernel launched" << std::endl;
 
     // Copy the result back to the host
+    // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(h_data, d_data, memSize, cudaMemcpyDeviceToHost));
 
     // Check the result
@@ -230,6 +234,7 @@ int main(int argc, char **argv)
 
     // Cleanup
     if (d_data) {
+        // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         checkCudaErrors(cudaFree(d_data));
         d_data = 0;
     }

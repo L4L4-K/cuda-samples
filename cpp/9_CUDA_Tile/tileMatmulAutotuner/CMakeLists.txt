@@ -6,6 +6,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Module
 
 project(tileMatmulAutotuner LANGUAGES C CXX CUDA)
 
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
 find_package(CUDAToolkit REQUIRED)
 
 get_filename_component(CUDA_TOOLKIT_BIN_DIR "${CMAKE_CUDA_COMPILER}" DIRECTORY)
@@ -52,6 +53,7 @@ target_compile_definitions(tileMatmulAutotuner PRIVATE
 target_link_libraries(tileMatmulAutotuner PRIVATE
     CUDA::cuda_driver
     CUDA::cudart
+    # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
     CUDA::nvrtc
 )
 

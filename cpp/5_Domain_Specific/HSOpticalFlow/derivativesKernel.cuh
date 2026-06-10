@@ -48,6 +48,7 @@ __global__ void ComputeDerivativesKernel(int                 width,
                                          cudaTextureObject_t texSource,
                                          cudaTextureObject_t texTarget)
 {
+    // JP: `threadIdx`, `blockIdx`, `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     const int ix = threadIdx.x + blockIdx.x * blockDim.x;
     const int iy = threadIdx.y + blockIdx.y * blockDim.y;
 
@@ -144,5 +145,6 @@ static void ComputeDerivatives(const float *I0, const float *I1, int w, int h, i
     texRes.res.pitch2D.pitchInBytes = s * sizeof(float);
     checkCudaErrors(cudaCreateTextureObject(&texTarget, &texRes, &texDescr, NULL));
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     ComputeDerivativesKernel<<<blocks, threads>>>(w, h, s, Ix, Iy, Iz, texSource, texTarget);
 }

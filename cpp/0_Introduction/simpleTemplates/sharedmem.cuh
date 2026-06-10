@@ -69,6 +69,7 @@
 // this
 // struct by putting an undefined symbol in the function body so it won't
 // compile.
+// JP: shared_memory: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
 template <typename T> struct SharedMemory
 {
     // Ensure that we won't compile any un-specialized types

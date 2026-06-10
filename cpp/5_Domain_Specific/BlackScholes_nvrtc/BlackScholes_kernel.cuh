@@ -90,6 +90,7 @@ extern "C" __launch_bounds__(128) __global__ void BlackScholesGPU(float2 *__rest
                                                                   int   optN)
 {
     ////Thread index
+    // JP: `blockDim`, `blockIdx`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     const int opt = blockDim.x * blockIdx.x + threadIdx.x;
 
     // Calculating 2 options per thread to increase ILP (instruction level

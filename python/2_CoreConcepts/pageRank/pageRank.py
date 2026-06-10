@@ -58,6 +58,7 @@ if sys.platform == "win32":
 try:
     import cudf
     import cugraph
+    # JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
     import cupy as cp
     import numpy as np
     from cuda.core import Device, EventOptions, Stream
@@ -209,6 +210,7 @@ def run_pagerank_benchmark(
         True if benchmark succeeded
     """
     print("=" * 60)
+    # JP: `cuGraph`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     print("PageRank Algorithm (using RAPIDS cuGraph)")
     print("=" * 60)
 
@@ -263,6 +265,7 @@ def run_pagerank_benchmark(
             "dst": destinations,
         }
     )
+    # JP: graphs: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
     G = cugraph.Graph(directed=True)
     G.from_cudf_edgelist(gdf, source="src", destination="dst", store_transposed=True)
 

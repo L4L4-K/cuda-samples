@@ -160,6 +160,7 @@ WindowsSecurityAttributes::~WindowsSecurityAttributes()
     if (*ppACL) {
         LocalFree(*ppACL);
     }
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(m_winPSecurityDescriptor);
 }
 #endif
@@ -292,6 +293,7 @@ __global__ void d_boxfilter_rgba_x(cudaSurfaceObject_t *dstSurfMipMapArray,
                                    int                  filter_radius)
 {
     float        scale = 1.0f / (float)((filter_radius << 1) + 1);
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     unsigned int y     = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (y < baseHeight) {
@@ -499,6 +501,7 @@ private:
 
     cudaExternalSemaphore_t cudaExtCudaUpdateVkSemaphore;
     cudaExternalSemaphore_t cudaExtVkUpdateCudaSemaphore;
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t            streamToRun;
 
     void initWindow()
@@ -603,6 +606,7 @@ private:
             checkCudaErrors(cudaDestroySurfaceObject(surfaceObjectListTemp[i]));
         }
 
+        // JP: `cudaFree`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
         checkCudaErrors(cudaFree(d_surfaceObjectList));
         checkCudaErrors(cudaFree(d_surfaceObjectListTemp));
         checkCudaErrors(cudaFreeMipmappedArray(cudaMipmappedImageArrayTemp));
@@ -1055,6 +1059,7 @@ private:
         layoutInfo.pBindings                                   = bindings.data();
 
         if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
+            // JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
             throw std::runtime_error("failed to create descriptor set layout!");
         }
     }
@@ -1450,6 +1455,7 @@ private:
         samplerInfo.maxAnisotropy           = 16;
         samplerInfo.borderColor             = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
         samplerInfo.unnormalizedCoordinates = VK_FALSE;
+        // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         samplerInfo.compareEnable           = VK_FALSE;
         samplerInfo.compareOp               = VK_COMPARE_OP_ALWAYS;
         samplerInfo.mipmapMode              = VK_SAMPLER_MIPMAP_MODE_LINEAR;
@@ -1711,6 +1717,7 @@ private:
         checkCudaErrors(cudaMalloc((void **)&d_surfaceObjectList, sizeof(cudaSurfaceObject_t) * mipLevels));
         checkCudaErrors(cudaMalloc((void **)&d_surfaceObjectListTemp, sizeof(cudaSurfaceObject_t) * mipLevels));
 
+        // JP: `cudaMemcpy`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         checkCudaErrors(cudaMemcpy(d_surfaceObjectList,
                                    surfaceObjectList.data(),
                                    sizeof(cudaSurfaceObject_t) * mipLevels,
@@ -1730,6 +1737,7 @@ private:
         int nthreads = 128;
 
         /*Perform 2D box filter on image using CUDA */
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         d_boxfilter_rgba_x<<<imageHeight / nthreads, nthreads, 0, streamToRun>>>(
             d_surfaceObjectListTemp, textureObjMipMapInput, imageWidth, imageHeight, mipLevels, filter_radius);
 

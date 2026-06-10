@@ -48,5 +48,6 @@ struct Vertex
 void RunSineWaveKernel(size_t       mesh_width,
                        size_t       mesh_height,
                        Vertex      *cudaDevVertptr,
+                       // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
                        cudaStream_t streamToRun,
                        float        AnimTime);

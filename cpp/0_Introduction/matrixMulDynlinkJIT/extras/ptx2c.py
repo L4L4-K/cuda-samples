@@ -90,4 +90,5 @@ h_in.close()
 h_out_c.close()
 h_out_h.close()
 
+# JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
 print("ptx2c: CUmodule " + args[0] + " packed successfully")

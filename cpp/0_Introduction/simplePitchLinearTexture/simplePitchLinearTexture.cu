@@ -74,6 +74,7 @@ bool bTestResult = true;
 __global__ void
 shiftPitchLinear(float *odata, int pitch, int width, int height, int shiftX, int shiftY, cudaTextureObject_t texRefPL)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int xid = blockIdx.x * blockDim.x + threadIdx.x;
     int yid = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -135,6 +136,7 @@ void runTest(int argc, char **argv)
     int devID = findCudaDevice(argc, (const char **)argv);
 
     // CUDA events for timing
+    // JP: `cudaEvent_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
@@ -153,6 +155,7 @@ void runTest(int argc, char **argv)
     float *d_idataPL;
     size_t d_pitchBytes;
 
+    // JP: `cudaMallocPitch`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMallocPitch((void **)&d_idataPL, &d_pitchBytes, nx * sizeof(float), ny));
 
     // Array input data
@@ -170,6 +173,7 @@ void runTest(int argc, char **argv)
     size_t h_pitchBytes = nx * sizeof(float);
 
     checkCudaErrors(
+        // JP: `cudaMemcpy2D`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         cudaMemcpy2D(d_idataPL, d_pitchBytes, h_idata, h_pitchBytes, nx * sizeof(float), ny, cudaMemcpyHostToDevice));
 
     // Array
@@ -223,11 +227,13 @@ void runTest(int argc, char **argv)
     checkCudaErrors(cudaEventRecord(start, 0));
 
     for (int i = 0; i < NUM_REPS; ++i) {
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         shiftPitchLinear<<<dimGrid, dimBlock>>>(
             d_odata, (int)(d_pitchBytes / sizeof(float)), nx, ny, x_shift, y_shift, texRefPL);
     }
 
     checkCudaErrors(cudaEventRecord(stop, 0));
+    // JP: `cudaEventSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaEventSynchronize(stop));
     float timePL;
     checkCudaErrors(cudaEventElapsedTime(&timePL, start, stop));
@@ -236,6 +242,7 @@ void runTest(int argc, char **argv)
     checkCudaErrors(
         cudaMemcpy2D(h_odata, h_pitchBytes, d_odata, d_pitchBytes, nx * sizeof(float), ny, cudaMemcpyDeviceToHost));
 
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     bool res = compareData(gold, h_odata, nx * ny, 0.0f, 0.15f);
 
     bTestResult = true;
@@ -283,6 +290,7 @@ void runTest(int argc, char **argv)
            fetchRateArray);
 
     // Cleanup
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(h_idata);
     free(h_odata);
     free(gold);

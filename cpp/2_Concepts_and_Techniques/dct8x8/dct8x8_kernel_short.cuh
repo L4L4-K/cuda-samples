@@ -443,7 +443,9 @@ __device__ void CUDAshortInplaceIDCT(unsigned int *V8)
 __global__ void CUDAkernelShortDCT(short *SrcDst, int ImgStride)
 {
     // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     cg::thread_block cta = cg::this_thread_block();
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ short block[KERS_BLOCK_HEIGHT * KERS_SMEMBLOCK_STRIDE];
     int              OffsThreadInRow = FMUL(threadIdx.y, BLOCK_SIZE) + threadIdx.x;
     int              OffsThreadInCol = FMUL(threadIdx.z, BLOCK_SIZE);
@@ -464,6 +466,7 @@ __global__ void CUDAkernelShortDCT(short *SrcDst, int ImgStride)
             ((int *)bl_ptr)[i * (KERS_SMEMBLOCK_STRIDE / 2)] = ((int *)SrcDst)[i * (ImgStride / 2)];
     }
 
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
     CUDAshortInplaceDCT(block + OffsThreadInCol * KERS_SMEMBLOCK_STRIDE + OffsThrRowPermuted, KERS_SMEMBLOCK_STRIDE);
     cg::sync(cta);

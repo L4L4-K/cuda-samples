@@ -42,6 +42,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 int main(int argc, char **argv)
 {
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     CUdevice dev;
     int      major = 0, minor = 0;
     int      deviceCount = 0;
@@ -155,10 +156,12 @@ int main(int argc, char **argv)
         printf("  Total amount of constant memory:               %u bytes\n", totalConstantMemory);
         int sharedMemPerBlock;
         getCudaAttribute<int>(&sharedMemPerBlock, CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK, dev);
+        // JP: shared_memory: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
         printf("  Total amount of shared memory per block:       %u bytes\n", sharedMemPerBlock);
         int regsPerBlock;
         getCudaAttribute<int>(&regsPerBlock, CU_DEVICE_ATTRIBUTE_MAX_REGISTERS_PER_BLOCK, dev);
         printf("  Total number of registers available per block: %d\n", regsPerBlock);
+        // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
         int warpSize;
         getCudaAttribute<int>(&warpSize, CU_DEVICE_ATTRIBUTE_WARP_SIZE, dev);
         printf("  Warp size:                                     %d\n", warpSize);
@@ -319,6 +322,7 @@ int main(int argc, char **argv)
         }
     }
 
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     printf("Result = PASS\n");
 
     exit(EXIT_SUCCESS);

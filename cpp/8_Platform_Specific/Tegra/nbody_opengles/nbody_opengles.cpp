@@ -59,6 +59,7 @@ float       camera_rot_lag[]   = {0, 0, 0};
 const float inertia            = 0.1f;
 
 bool         benchmark           = false;
+// JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
 bool         compareToCPU        = false;
 bool         QATest              = false;
 int          blockSize           = 256;
@@ -154,6 +155,7 @@ bool bShowSliders = true;
 // fps
 static int  fpsCount = 0;
 static int  fpsLimit = 5;
+// JP: `cudaEvent_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
 cudaEvent_t startEvent, stopEvent;
 cudaEvent_t hostMemSyncEvent;
 
@@ -161,6 +163,7 @@ template <typename T> class NBodyDemo
 {
 public:
     static void Create() { m_singleton = new NBodyDemo; }
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     static void Destroy() { delete m_singleton; }
 
     static void init(int numBodies, int numDevices, int blockSize, bool usePBO, bool useHostMem, bool useCpu)
@@ -194,6 +197,7 @@ public:
             // updating it, we will render partially updated data, resulting in a
             // jerky frame rate.
             if (!useCpu) {
+                // JP: `cudaEventSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
                 cudaEventSynchronize(hostMemSyncEvent);
             }
 

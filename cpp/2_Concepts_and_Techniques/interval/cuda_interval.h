@@ -311,6 +311,7 @@ template <class T>
 __global__ void
 test_interval_newton(interval_gpu<T> *buffer, int *nresults, interval_gpu<T> i, int implementation_choice)
 {
+    // JP: `blockIdx`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int                     thread_id = blockIdx.x * BLOCK_SIZE + threadIdx.x;
     typedef interval_gpu<T> I;
 

@@ -57,6 +57,7 @@ class VulkanCudaSineWave : public VulkanBaseApp
     UniformBufferObject     m_ubo;
     VkSemaphore             m_vkWaitSemaphore, m_vkSignalSemaphore;
     SineWaveSimulation      m_sim;
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t            m_stream;
     cudaExternalSemaphore_t m_cudaWaitSemaphore, m_cudaSignalSemaphore, m_cudaTimelineSemaphore;
     cudaExternalMemory_t    m_cudaVertMem;
@@ -99,10 +100,12 @@ public:
     ~VulkanCudaSineWave()
     {
         // Make sure there's no pending work before we start tearing down
+        // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         checkCudaErrors(cudaStreamSynchronize(m_stream));
 
 #ifdef _VK_TIMELINE_SEMAPHORE
         if (m_vkTimelineSemaphore != VK_NULL_HANDLE) {
+            // JP: `cudaDestroyExternalSemaphore`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
             checkCudaErrors(cudaDestroyExternalSemaphore(m_cudaTimelineSemaphore));
             vkDestroySemaphore(m_device, m_vkTimelineSemaphore, nullptr);
         }

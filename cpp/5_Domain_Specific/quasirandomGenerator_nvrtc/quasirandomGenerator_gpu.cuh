@@ -39,6 +39,7 @@
 // Global variables for nvrtc outputs
 char    *cubin;
 size_t   cubinSize;
+// JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
 CUmodule module;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -54,6 +55,7 @@ void initTableGPU(unsigned int tableCPU[QRNG_DIMENSIONS][QRNG_RESOLUTION])
 {
     CUdeviceptr c_Table;
     checkCudaErrors(cuModuleGetGlobal(&c_Table, NULL, module, "c_Table"));
+    // JP: `cuMemcpyHtoD`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cuMemcpyHtoD(c_Table, tableCPU, QRNG_DIMENSIONS * QRNG_RESOLUTION * sizeof(unsigned int)));
 }
 
@@ -67,6 +69,7 @@ void quasirandomGeneratorGPU(CUdeviceptr d_Output, unsigned int seed, unsigned i
     checkCudaErrors(cuModuleGetFunction(&kernel_addr, module, "quasirandomGeneratorKernel"));
 
     void *args[] = {(void *)&d_Output, (void *)&seed, (void *)&N};
+    // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     checkCudaErrors(cuLaunchKernel(kernel_addr,
                                    cudaGridSize.x,
                                    cudaGridSize.y,

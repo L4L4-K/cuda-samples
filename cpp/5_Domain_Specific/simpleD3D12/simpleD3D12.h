@@ -134,6 +134,7 @@ private:
     cudaExternalMemoryHandleType m_externalMemoryHandleType;
     cudaExternalMemory_t         m_externalMemory;
     cudaExternalSemaphore_t      m_externalSemaphore;
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t                 m_streamToRun;
     LUID                         m_dx12deviceluid;
     UINT                         m_cudaDeviceID;

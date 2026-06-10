@@ -107,6 +107,7 @@ template <typename T_ELEM> void fillupMatrix(T_ELEM *A, int lda, int rows, int c
 {
     for (int j = 0; j < cols; j++) {
         for (int i = 0; i < rows; i++) {
+            // JP: `cuGet`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
             A[i + lda * j] = cuGet<T_ELEM>(((double)(((lda * i + j + seed) % 253) + 1)) / 256.0,
                                            ((double)((((cols * i + j) + 123 + seed) % 253) + 1)) / 256.0);
         }
@@ -179,6 +180,7 @@ struct gemmOpts
 
 template <typename T_ELEM> struct gemmTestParams
 {
+    // JP: `cublasOperation_t`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
     cublasOperation_t transa;
     cublasOperation_t transb;
     int               m;
@@ -396,6 +398,7 @@ template <typename T_ELEM>
 int test_gemm_loop(struct gemmOpts &opts, float err, double max_relative_error, cublasHandle_t handle)
 {
     struct gemmTestParams<T_ELEM> params;
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t                 *streamArray = 0;
     cublasStatus_t                status1, status2, status3;
     T_ELEM                       *A           = NULL;
@@ -436,6 +439,7 @@ int test_gemm_loop(struct gemmOpts &opts, float err, double max_relative_error, 
     devPtrC = (T_ELEM **)malloc(opts.N * sizeof(*devPtrC));
 
     for (int i = 0; i < opts.N; i++) {
+        // JP: `cudaError_t`, `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
         cudaError_t err1 = cudaMalloc((void **)&devPtrA[i], matrixSizeA * sizeof(devPtrA[0][0]));
         cudaError_t err2 = cudaMalloc((void **)&devPtrB[i], matrixSizeB * sizeof(devPtrB[0][0]));
         cudaError_t err3 = cudaMalloc((void **)&devPtrC[i], matrixSizeC * sizeof(devPtrC[0][0]));
@@ -459,6 +463,7 @@ int test_gemm_loop(struct gemmOpts &opts, float err, double max_relative_error, 
             return CUBLASTEST_FAILED;
         }
 
+        // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         err1 = cudaMemcpy(devPtrA_dev, devPtrA, opts.N * sizeof(*devPtrA), cudaMemcpyHostToDevice);
         err2 = cudaMemcpy(devPtrB_dev, devPtrB, opts.N * sizeof(*devPtrB), cudaMemcpyHostToDevice);
         err3 = cudaMemcpy(devPtrC_dev, devPtrC, opts.N * sizeof(*devPtrC), cudaMemcpyHostToDevice);
@@ -595,6 +600,7 @@ int test_gemm_loop(struct gemmOpts &opts, float err, double max_relative_error, 
             }
         }
 
+        // JP: `cudaError_t`, `cudaStatus`, `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         cudaError_t cudaStatus = cudaDeviceSynchronize();
 
         if (cudaStatus != cudaSuccess) {
@@ -617,6 +623,7 @@ int test_gemm_loop(struct gemmOpts &opts, float err, double max_relative_error, 
     } // end while (TESTGEN..
 
     CLEANUP();
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     fprintf(stdout, "@@@@ %cgemm test %s\n", *opts.elem_type, errors ? "FAIL" : "OK");
     return CUBLASTEST_PASSED;
 }

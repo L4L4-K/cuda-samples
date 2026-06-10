@@ -55,7 +55,9 @@
 
 __global__ void shfl_scan_test(int *data, int width, int *partial_sums = NULL)
 {
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     extern __shared__ int sums[];
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int                   id      = ((blockIdx.x * blockDim.x) + threadIdx.x);
     int                   lane_id = id % warpSize;
     // determine a warp_id within a block
@@ -90,6 +92,7 @@ __global__ void shfl_scan_test(int *data, int width, int *partial_sums = NULL)
         sums[warp_id] = value;
     }
 
+    // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     __syncthreads();
 
     //
@@ -236,6 +239,7 @@ bool shuffle_simple_test(int argc, char **argv)
         exit(EXIT_WAIVED);
     }
 
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
     checkCudaErrors(cudaMallocHost(reinterpret_cast<void **>(&h_data), sizeof(int) * n_elements));
     checkCudaErrors(cudaMallocHost(reinterpret_cast<void **>(&h_result), sizeof(int) * n_elements));
 
@@ -263,20 +267,24 @@ bool shuffle_simple_test(int argc, char **argv)
     printf("Partial summing %d elements with %d blocks of size %d\n", n_partialSums, p_gridSize, p_blockSize);
 
     // initialize a timer
+    // JP: `cudaEvent_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaEvent_t start, stop;
     checkCudaErrors(cudaEventCreate(&start));
     checkCudaErrors(cudaEventCreate(&stop));
     float et  = 0;
     float inc = 0;
 
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&d_data), sz));
     checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&d_partial_sums), partial_sz));
+    // JP: `cudaMemset`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemset(d_partial_sums, 0, partial_sz));
 
     checkCudaErrors(cudaMallocHost(reinterpret_cast<void **>(&h_partial_sums), partial_sz));
     checkCudaErrors(cudaMemcpy(d_data, h_data, sz, cudaMemcpyHostToDevice));
 
     checkCudaErrors(cudaEventRecord(start, 0));
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     shfl_scan_test<<<gridSize, blockSize, shmem_sz>>>(d_data, 32, d_partial_sums);
     shfl_scan_test<<<p_gridSize, p_blockSize, shmem_sz>>>(d_partial_sums, 32);
     uniform_add<<<gridSize - 1, blockSize>>>(d_data + blockSize, d_partial_sums, n_elements);
@@ -297,6 +305,7 @@ bool shuffle_simple_test(int argc, char **argv)
 
     bool bTestResult = CPUverify(h_data, h_result, n_elements);
 
+    // JP: `cudaFreeHost`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFreeHost(h_data));
     checkCudaErrors(cudaFreeHost(h_result));
     checkCudaErrors(cudaFreeHost(h_partial_sums));

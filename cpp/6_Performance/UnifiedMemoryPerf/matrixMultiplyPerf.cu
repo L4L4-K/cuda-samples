@@ -54,6 +54,7 @@ const char *memAllocTypeShortStr[MEMALLOC_TYPE_COUNT] = {
     "0Copy",   // Zero Copy
     "MemCopy", // USE HOST PAGEABLE AND DEVICE_MEMORY
     "CpAsync", // USE HOST PAGEABLE AND DEVICE_MEMORY ASYNC
+    // JP: pinned_memory: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
     "CpHpglk", // USE HOST PAGELOCKED AND DEVICE MEMORY
     "CpPglAs"  // USE HOST PAGELOCKED AND DEVICE MEMORY ASYNC
 };
@@ -132,6 +133,7 @@ void verifyMatrixData(float *expectedData, float *observedData, unsigned int mat
 __global__ void matrixMultiplyKernel(float *C, float *A, float *B, unsigned int matrixDim)
 {
     // Block index
+    // JP: `blockIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int bx = blockIdx.x;
     int by = blockIdx.y;
 
@@ -166,6 +168,7 @@ __global__ void matrixMultiplyKernel(float *C, float *A, float *B, unsigned int 
     for (int a = aBegin, b = bBegin; a <= aEnd; a += aStep, b += bStep) {
         // Declaration of the shared memory array As used to
         // store the sub-matrix of A
+        // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
         __shared__ float As[BLOCK_SIZE][BLOCK_SIZE];
 
         // Declaration of the shared memory array Bs used to
@@ -179,6 +182,7 @@ __global__ void matrixMultiplyKernel(float *C, float *A, float *B, unsigned int 
         Bs[ty][tx] = B[b + wB * ty + tx];
 
         // Synchronize to make sure the matrices are loaded
+        // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         __syncthreads();
 
         // Multiply the two matrices together;
@@ -222,6 +226,7 @@ void runMatrixMultiplyKernel(unsigned int matrixDim,
     bool                copyRequired = false, hintsRequired = false;
     bool                someTransferOpRequired;
     bool                isAsync = false;
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t        streamToRunOn;
     unsigned int       *latch;
     size_t              size = matrixDim * matrixDim * sizeof(float);
@@ -255,6 +260,7 @@ void runMatrixMultiplyKernel(unsigned int matrixDim,
     if (!randValuesVerifyYmulX) {
         exit(EXIT_FAILURE); // exit since memory allocation error
     }
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc(&dptrA, size));
     checkCudaErrors(cudaMalloc(&dptrB, size));
     checkCudaErrors(cudaMalloc(&dptrC, size));
@@ -262,8 +268,10 @@ void runMatrixMultiplyKernel(unsigned int matrixDim,
     fillMatrixWithRandomValues(randValuesX, matrixDim);
     fillMatrixWithRandomValues(randValuesY, matrixDim);
 
+    // JP: `cudaMemcpyAsync`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpyAsync(dptrA, randValuesX, size, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpyAsync(dptrB, randValuesY, size, cudaMemcpyHostToDevice));
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     matrixMultiplyKernel<<<grid, threads>>>(dptrC, dptrA, dptrB, matrixDim);
     checkCudaErrors(cudaMemcpyAsync(randValuesVerifyXmulY, dptrC, size, cudaMemcpyDeviceToHost));
     checkCudaErrors(cudaStreamSynchronize(NULL));
@@ -274,6 +282,7 @@ void runMatrixMultiplyKernel(unsigned int matrixDim,
     verifyMatrixMultiplyCorrectness(randValuesVerifyXmulY, randValuesX, randValuesY, matrixDim);
     verifyMatrixMultiplyCorrectness(randValuesVerifyYmulX, randValuesY, randValuesX, matrixDim);
 #endif
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(dptrA));
     checkCudaErrors(cudaFree(dptrB));
     checkCudaErrors(cudaFree(dptrC));
@@ -322,6 +331,7 @@ void runMatrixMultiplyKernel(unsigned int matrixDim,
         break;
 
     case USE_MANAGED_MEMORY:
+        // JP: `cudaMallocManaged`: Unified Memory は CPU/GPU で同じ pointer を使います。prefetch や同期で移動タイミングを意識します。
         checkCudaErrors(cudaMallocManaged(&dptrA, size));
         checkCudaErrors(cudaMallocManaged(&dptrB, size));
         checkCudaErrors(cudaMallocManaged(&dptrC, size));

@@ -60,6 +60,7 @@ sumReduce(T *sum, T *sum2, cg::thread_block &cta, cg::thread_block_tile<32> &til
             sum[tid]  = beta;
             sum2[tid] = beta2;
         }
+        // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         cg::sync(tile32);
     }
     cg::sync(cta);
@@ -67,6 +68,7 @@ sumReduce(T *sum, T *sum2, cg::thread_block &cta, cg::thread_block_tile<32> &til
     if (tid == 0) {
         beta  = 0;
         beta2 = 0;
+        // JP: `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
         for (int i = 0; i < blockDim.x; i += VEC) {
             beta += sum[i];
             beta2 += sum2[i];

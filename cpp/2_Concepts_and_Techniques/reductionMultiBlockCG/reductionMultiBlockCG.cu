@@ -74,6 +74,7 @@ const char *sSDKsample = "reductionMultiBlockCG";
 namespace cg = cooperative_groups;
 
 /*
+  // JP: shared_memory: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
   Parallel sum reduction using shared memory
   - takes log(n) steps for n input elements
   - uses n/2 threads
@@ -93,11 +94,13 @@ __device__ void reduceBlock(double *sdata, const cg::thread_block &cta)
     cg::thread_block_tile<32> tile32 = cg::tiled_partition<32>(cta);
 
     sdata[tid] = cg::reduce(tile32, sdata[tid], cg::plus<double>());
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 
     double beta = 0.0;
     if (cta.thread_rank() == 0) {
         beta = 0;
+        // JP: `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
         for (int i = 0; i < blockDim.x; i += tile32.size()) {
             beta += sdata[i];
         }
@@ -271,6 +274,7 @@ float benchmarkReduce(int                 n,
     }
 
     // copy final sum from device to host
+    // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     error = cudaMemcpy(&gpu_result, d_odata, sizeof(float), cudaMemcpyDeviceToHost);
     checkCudaErrors(error);
 
@@ -348,6 +352,7 @@ bool runTest(int argc, char **argv, int device)
     float *d_idata = NULL;
     float *d_odata = NULL;
 
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_idata, bytes));
     checkCudaErrors(cudaMalloc((void **)&d_odata, numBlocks * sizeof(float)));
 
@@ -381,6 +386,7 @@ bool runTest(int argc, char **argv, int device)
     // cleanup
     sdkDeleteTimer(&timer);
 
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(h_idata);
     free(h_odata);
     cudaFree(d_idata);

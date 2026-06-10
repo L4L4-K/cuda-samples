@@ -120,6 +120,7 @@ int main(int argc, char **argv)
     h_OptionYears   = (float *)malloc(OPT_SZ);
 
     printf("...allocating GPU memory for options.\n");
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_CallResult, OPT_SZ));
     checkCudaErrors(cudaMalloc((void **)&d_PutResult, OPT_SZ));
     checkCudaErrors(cudaMalloc((void **)&d_StockPrice, OPT_SZ));
@@ -140,17 +141,20 @@ int main(int argc, char **argv)
 
     printf("...copying input data to GPU mem.\n");
     // Copy options data to GPU memory for further processing
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(d_StockPrice, h_StockPrice, OPT_SZ, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_OptionStrike, h_OptionStrike, OPT_SZ, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_OptionYears, h_OptionYears, OPT_SZ, cudaMemcpyHostToDevice));
     printf("Data init done.\n\n");
 
     printf("Executing Black-Scholes GPU kernel (%i iterations)...\n", NUM_ITERATIONS);
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
     sdkResetTimer(&hTimer);
     sdkStartTimer(&hTimer);
 
     for (i = 0; i < NUM_ITERATIONS; i++) {
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         BlackScholesGPU<<<DIV_UP((OPT_N / 2), 128), 128 /*480, 128*/>>>((float2 *)d_CallResult,
                                                                         (float2 *)d_PutResult,
                                                                         (float2 *)d_StockPrice,
@@ -216,6 +220,7 @@ int main(int argc, char **argv)
 
     printf("Shutting down...\n");
     printf("...releasing GPU memory.\n");
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_OptionYears));
     checkCudaErrors(cudaFree(d_OptionStrike));
     checkCudaErrors(cudaFree(d_StockPrice));

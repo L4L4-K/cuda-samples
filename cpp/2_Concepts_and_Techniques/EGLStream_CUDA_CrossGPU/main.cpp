@@ -52,6 +52,7 @@ void DoneCons(int consumerStatus, int send_fd)
     if (-1 == recv(send_fd, (void *)&producerStatus, sizeof(int), 0)) {
         printf("%s: Cuda Consumer could not receive status from producer.\n", __func__);
     }
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     close(send_fd);
 
     if (producerStatus == 0 && consumerStatus == 0) {
@@ -83,6 +84,7 @@ int WIDTH = 8192, HEIGHT = 8192;
 int main(int argc, char **argv)
 {
     TestArgs                   args           = {0, false};
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     CUresult                   curesult       = CUDA_SUCCESS;
     unsigned int               j              = 0;
     cudaError_t                err            = cudaSuccess;
@@ -152,6 +154,7 @@ int main(int argc, char **argv)
         // Send the EGL stream FD to producer
         fileDescriptor = eglGetStreamFileDescriptorKHR(cudaConsumer.eglDisplay, cudaConsumer.eglStream);
         if (EGL_NO_FILE_DESCRIPTOR_KHR == fileDescriptor) {
+            // JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
             printf("%s: Cuda Consumer could not get EGL file descriptor.\n", __func__);
             eglDestroyStreamKHR(cudaConsumer.eglDisplay, cudaConsumer.eglStream);
             consumerStatus = -1;

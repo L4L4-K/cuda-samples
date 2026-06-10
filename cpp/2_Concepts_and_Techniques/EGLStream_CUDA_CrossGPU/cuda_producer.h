@@ -43,6 +43,7 @@
 typedef struct _test_cuda_producer_s
 {
     //  Stream params
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     CUcontext             context;
     CUeglStreamConnection cudaConn;
     int                   cudaDevId;
@@ -53,6 +54,7 @@ typedef struct _test_cuda_producer_s
     char                 *tempBuff;
     CUdeviceptr           cudaPtr;
     CUdeviceptr           cudaPtr1;
+    // JP: streams_events: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     CUstream              prodCudaStream;
 } test_cuda_producer_s;
 

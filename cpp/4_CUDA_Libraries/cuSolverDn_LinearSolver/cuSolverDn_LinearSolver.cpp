@@ -98,6 +98,7 @@ void UsageDN(void)
  *  solve A*x = b by Cholesky factorization
  *
  */
+// JP: `cusolverDnHandle_t`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
 int linearSolverCHOL(cusolverDnHandle_t handle, int n, const double *Acopy, int lda, const double *b, double *x)
 {
     int              bufferSize = 0;
@@ -111,11 +112,13 @@ int linearSolverCHOL(cusolverDnHandle_t handle, int n, const double *Acopy, int 
 
     checkCudaErrors(cusolverDnDpotrf_bufferSize(handle, uplo, n, (double *)Acopy, lda, &bufferSize));
 
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc(&info, sizeof(int)));
     checkCudaErrors(cudaMalloc(&buffer, sizeof(double) * bufferSize));
     checkCudaErrors(cudaMalloc(&A, sizeof(double) * lda * n));
 
     // prepare a copy of A because potrf will overwrite A with L
+    // JP: `cudaMemcpy`, `cudaMemcpyDeviceToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(A, Acopy, sizeof(double) * lda * n, cudaMemcpyDeviceToDevice));
     checkCudaErrors(cudaMemset(info, 0, sizeof(int)));
 
@@ -134,6 +137,7 @@ int linearSolverCHOL(cusolverDnHandle_t handle, int n, const double *Acopy, int 
 
     checkCudaErrors(cusolverDnDpotrs(handle, uplo, n, 1, A, lda, x, n, info));
 
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
     stop = second();
 
@@ -141,6 +145,7 @@ int linearSolverCHOL(cusolverDnHandle_t handle, int n, const double *Acopy, int 
     fprintf(stdout, "timing: cholesky = %10.6f sec\n", time_solve);
 
     if (info) {
+        // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         checkCudaErrors(cudaFree(info));
     }
     if (buffer) {
@@ -355,6 +360,7 @@ int main(int argc, char *argv[])
     struct testOpts    opts;
     cusolverDnHandle_t handle       = NULL;
     cublasHandle_t     cublasHandle = NULL; // used in residual evaluation
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t       stream       = NULL;
 
     int rowsA = 0; // number of rows of A
@@ -447,6 +453,7 @@ int main(int argc, char *argv[])
     h_x = (double *)malloc(sizeof(double) * colsA);
     h_b = (double *)malloc(sizeof(double) * rowsA);
     h_r = (double *)malloc(sizeof(double) * rowsA);
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(NULL != h_A);
     assert(NULL != h_x);
     assert(NULL != h_b);

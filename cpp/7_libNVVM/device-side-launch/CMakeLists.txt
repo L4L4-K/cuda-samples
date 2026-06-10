@@ -31,6 +31,7 @@ set(CMAKE_INCLUDE_CURRENT_DIR YES)
 set_property(SOURCE dsl.c
              PROPERTY COMPILE_DEFINITIONS LIBCUDADEVRT="${CUDADEVRT_LIB}")
 
+# JP: `add_executable`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
 add_executable(dsl dsl.c)
 
 add_test(NAME device-side-launch COMMAND dsl

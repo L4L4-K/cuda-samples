@@ -76,6 +76,7 @@ __global__ void delay(volatile int *flag, unsigned long long timeout_clocks = 10
 // p2p transfers.
 __global__ void copyp2p(int4 *__restrict__ dest, int4 const *__restrict__ src, size_t num_elems)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     size_t globalId = blockIdx.x * blockDim.x + threadIdx.x;
     size_t gridSize = blockDim.x * gridDim.x;
 
@@ -122,10 +123,12 @@ bool detectFallback(int numGPUs)
 
     cudaSetDevice(0);
     int         *tmp0 = nullptr, *tmp1 = nullptr;
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t s;
     cudaStreamCreateWithFlags(&s, cudaStreamNonBlocking);
 
     size_t testElems = 1;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     cudaMalloc(&tmp0, testElems * sizeof(int));
     cudaSetDevice(1);
     cudaMalloc(&tmp1, testElems * sizeof(int));
@@ -151,7 +154,9 @@ bool detectFallback(int numGPUs)
         cudaGetLastError();
     }
 
+    // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cudaStreamSynchronize(s);
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     cudaFree(tmp0);
     cudaFree(tmp1);
     cudaStreamDestroy(s);
@@ -199,6 +204,7 @@ void performP2PCopy(int         *dest,
 
     if (p2p_mechanism == SM && p2paccess) {
         for (int r = 0; r < repeat; r++) {
+            // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
             copyp2p<<<numBlocks, blockSize, 0, streamToRun>>>((int4 *)dest, (int4 *)src, num_elems / 4);
         }
         cudaCheckError();
@@ -206,6 +212,7 @@ void performP2PCopy(int         *dest,
     else if (useFallback && srcDevice != destDevice) {
         // Use host-mediated copy for cross-GPU transfers when cudaMemcpyPeerAsync is not supported
         for (int r = 0; r < repeat; r++) {
+            // JP: `cudaMemcpyAsync`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
             cudaMemcpyAsync(hostBuffer, src, sizeof(int) * num_elems, cudaMemcpyDeviceToHost, streamToRun);
             cudaMemcpyAsync(dest, hostBuffer, sizeof(int) * num_elems, cudaMemcpyHostToDevice, streamToRun);
         }
@@ -237,6 +244,7 @@ void outputBandwidthMatrix(int numElems, int numGPUs, bool p2p, P2PDataTransfer 
     vector<cudaEvent_t>  stop(numGPUs);
     vector<cudaStream_t> stream(numGPUs);
 
+    // JP: `cudaHostAlloc`, `cudaHostAllocPortable`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
     cudaHostAlloc((void **)&flag, sizeof(*flag), cudaHostAllocPortable);
     cudaCheckError();
 

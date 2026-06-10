@@ -75,6 +75,7 @@ using extents2d = cuda::std::dextents<cuda::std::size_t, 2>;
 template <typename Tensor>
 __global__ void scale_rows_kernel(Tensor tensor)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     const int r = blockIdx.y * blockDim.y + threadIdx.y;
     const int c = blockIdx.x * blockDim.x + threadIdx.x;
     if (r < static_cast<int>(tensor.extent(0)) && c < static_cast<int>(tensor.extent(1))) {
@@ -89,6 +90,7 @@ __global__ void scale_rows_kernel(Tensor tensor)
 template <typename InTensor, typename OutTensor>
 __global__ void shared_tile_transpose_kernel(InTensor in, OutTensor out)
 {
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ float smem_storage[TILE * TILE];
     cuda::shared_memory_mdspan smem(smem_storage, cuda::std::dextents<cuda::std::size_t, 2>{TILE, TILE});
 
@@ -100,6 +102,7 @@ __global__ void shared_tile_transpose_kernel(InTensor in, OutTensor out)
     if (r < static_cast<int>(in.extent(0)) && c < static_cast<int>(in.extent(1))) {
         smem(tr, tc) = in(r, c);
     }
+    // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     __syncthreads();
 
     const int r_out = blockIdx.x * TILE + tr;
@@ -141,6 +144,7 @@ int main(int argc, char **argv)
     float       *d_in  = nullptr;
     float       *d_out = nullptr;
     const size_t nelem = static_cast<size_t>(ROWS) * COLS;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc(&d_in, nelem * sizeof(float)));
     checkCudaErrors(cudaMalloc(&d_out, nelem * sizeof(float)));
 
@@ -150,6 +154,7 @@ int main(int argc, char **argv)
             host[r * COLS + c] = static_cast<float>(r * COLS + c);
         }
     }
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(d_in, host.data(), nelem * sizeof(float), cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemset(d_out, 0, nelem * sizeof(float)));
 
@@ -165,6 +170,7 @@ int main(int argc, char **argv)
 
     dim3 block(8, 8);
     dim3 grid((COLS + block.x - 1) / block.x, (ROWS + block.y - 1) / block.y);
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     scale_rows_kernel<<<grid, block>>>(in_md);
     checkCudaErrors(cudaGetLastError());
     checkCudaErrors(cudaDeviceSynchronize());
@@ -236,6 +242,7 @@ int main(int argc, char **argv)
                static_cast<long long>(dltensor.strides[1]));
     }
 
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_in));
     checkCudaErrors(cudaFree(d_out));
 

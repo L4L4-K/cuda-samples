@@ -142,6 +142,7 @@ __global__ void calcHashD(uint   *gridParticleHash,  // output
                           float4 *pos,               // input: positions
                           uint    numParticles)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     uint index = __umul24(blockIdx.x, blockDim.x) + threadIdx.x;
 
     if (index >= numParticles)
@@ -172,6 +173,7 @@ __global__ void reorderDataAndFindCellStartD(uint   *cellStart,         // outpu
 {
     // Handle to thread block group
     cg::thread_block       cta = cg::this_thread_block();
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     extern __shared__ uint sharedHash[]; // blockSize + 1 elements
     uint                   index = __umul24(blockIdx.x, blockDim.x) + threadIdx.x;
 
@@ -192,6 +194,7 @@ __global__ void reorderDataAndFindCellStartD(uint   *cellStart,         // outpu
         }
     }
 
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 
     if (index < numParticles) {

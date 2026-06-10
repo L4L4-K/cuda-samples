@@ -32,6 +32,7 @@
  */
 extern "C" __global__ void myKernel(int *data)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int tid   = blockIdx.x * blockDim.x + threadIdx.x;
     data[tid] = tid;
 }

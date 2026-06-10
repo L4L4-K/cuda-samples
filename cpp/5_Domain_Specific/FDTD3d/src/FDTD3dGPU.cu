@@ -86,6 +86,7 @@ bool fdtdGPU(float       *output,
     const size_t paddedVolumeSize = volumeSize + padding;
 
 #ifdef GPU_PROFILING
+    // JP: `cudaEvent_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaEvent_t profileStart     = 0;
     cudaEvent_t profileEnd       = 0;
     const int   profileTimesteps = timesteps - 1;
@@ -113,6 +114,7 @@ bool fdtdGPU(float       *output,
     checkCudaErrors(cudaSetDevice(targetDevice));
 
     // Allocate memory buffers
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&bufferOut, paddedVolumeSize * sizeof(float)));
     checkCudaErrors(cudaMalloc((void **)&bufferIn, paddedVolumeSize * sizeof(float)));
 
@@ -156,6 +158,7 @@ bool fdtdGPU(float       *output,
     }
 
     // Copy the input to the device input buffer
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(bufferIn + padding, input, volumeSize * sizeof(float), cudaMemcpyHostToDevice));
 
     // Copy the input to the device output buffer (actually only need the halo)
@@ -187,6 +190,7 @@ bool fdtdGPU(float       *output,
 
         // Launch the kernel
         printf("launch kernel\n");
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         FiniteDifferencesKernel<<<dimGrid, dimBlock>>>(bufferDst, bufferSrc, dimx, dimy, dimz);
 
         // Toggle the buffers
@@ -205,6 +209,7 @@ bool fdtdGPU(float       *output,
 #endif
 
     // Wait for the kernel to complete
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
 
     // Read the result back, result is in bufferSrc (after final toggle)
@@ -239,6 +244,7 @@ bool fdtdGPU(float       *output,
 
     // Cleanup
     if (bufferIn) {
+        // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         checkCudaErrors(cudaFree(bufferIn));
     }
 

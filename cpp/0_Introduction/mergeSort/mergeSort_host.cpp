@@ -160,6 +160,7 @@ static void mergeRanksAndIndices(uint *limits, uint *ranks, uint stride, uint N)
                 binarySearchExclusive(
                     ranks[(segmentBase + 0) / SAMPLE_STRIDE + i], ranks + (segmentBase + stride) / SAMPLE_STRIDE, nB, 1)
                 + i;
+            // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
             assert(dstPosA < nA + nB);
             limits[(segmentBase / SAMPLE_STRIDE) + dstPosA] = ranks[(segmentBase + 0) / SAMPLE_STRIDE + i];
         }
@@ -357,6 +358,7 @@ mergeSortHost(uint *dstKey, uint *dstVal, uint *bufKey, uint *bufVal, uint *srcK
         oval = t;
     }
 
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(limitsB);
     free(limitsA);
     free(ranksB);

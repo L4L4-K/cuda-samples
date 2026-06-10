@@ -51,6 +51,7 @@
 // device
 __global__ void copyP2PAndScale(const int *src, int *dst, int N)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (idx < N) {
@@ -163,6 +164,7 @@ std::pair<int, int> getP2PCapableGpuPair()
 int memPoolP2PCopy()
 {
     int          *dev0_srcVec, *dev1_dstVec; // Device buffers
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t  stream1, stream2;
     cudaMemPool_t memPool;
     cudaEvent_t   waitOnStream1;
@@ -192,6 +194,7 @@ int memPoolP2PCopy()
     // Allocate memory in a stream from the pool set above.
     checkCudaErrors(cudaMallocAsync(&dev0_srcVec, bytes, stream1));
 
+    // JP: `cudaMemcpyAsync`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpyAsync(dev0_srcVec, a, bytes, cudaMemcpyHostToDevice, stream1));
     checkCudaErrors(cudaEventRecord(waitOnStream1, stream1));
 
@@ -213,11 +216,14 @@ int memPoolP2PCopy()
     dim3 block(256);
     dim3 grid((unsigned int)ceil(nelem / (int)block.x));
     checkCudaErrors(cudaStreamWaitEvent(stream2, waitOnStream1));
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     copyP2PAndScale<<<grid, block, 0, stream2>>>(dev0_srcVec, dev1_dstVec, nelem);
 
     checkCudaErrors(cudaMemcpyAsync(output, dev1_dstVec, bytes, cudaMemcpyDeviceToHost, stream2));
+    // JP: `cudaFreeAsync`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFreeAsync(dev0_srcVec, stream2));
     checkCudaErrors(cudaFreeAsync(dev1_dstVec, stream2));
+    // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaStreamSynchronize(stream2));
 
     /* Compare the results */

@@ -42,6 +42,7 @@ __device__ int g_uids = 0;
 ////////////////////////////////////////////////////////////////////////////////
 __device__ void print_info(int depth, int thread, int uid, int parent_uid)
 {
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     if (threadIdx.x == 0) {
         if (depth == 0)
             printf("BLOCK %d launched by the host\n", uid);
@@ -59,6 +60,7 @@ __device__ void print_info(int depth, int thread, int uid, int parent_uid)
         }
     }
 
+    // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     __syncthreads();
 }
 
@@ -73,6 +75,7 @@ __global__ void cdp_kernel(int max_depth, int depth, int thread, int parent_uid)
 {
     // We create a unique ID per block. Thread 0 does that and shares the value
     // with the other threads.
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ int s_uid;
 
     if (threadIdx.x == 0) {
@@ -89,6 +92,7 @@ __global__ void cdp_kernel(int max_depth, int depth, int thread, int parent_uid)
         return;
     }
 
+    // JP: `gridDim`, `blockDim`, `threadIdx`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     cdp_kernel<<<gridDim.x, blockDim.x>>>(max_depth, depth, threadIdx.x, s_uid);
 }
 

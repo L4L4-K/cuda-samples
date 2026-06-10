@@ -171,6 +171,7 @@ void initParticles(int numParticles, bool bUseVBO, bool bUseGL)
 void cleanup()
 {
     if (psystem) {
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         delete psystem;
     }
 
@@ -898,6 +899,7 @@ int main(int argc, char **argv)
         sdkDumpBin(pos, numParticles * sizeof(float4), "smokeParticles_pos.bin");
         sdkDumpBin(vel, numParticles * sizeof(float4), "smokeParticles_vel.bin");
 
+        // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         if (!sdkCompareBin2BinFloat("smokeParticles_pos.bin",
                                     sRefBin[0],
                                     numParticles * sizeof(float4),

@@ -41,6 +41,7 @@ __constant__ unsigned int c_Table[QRNG_DIMENSIONS][QRNG_RESOLUTION];
 
 extern "C" __global__ void quasirandomGeneratorKernel(float *d_Output, unsigned int seed, unsigned int N)
 {
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     unsigned int *dimBase = &c_Table[threadIdx.y][0];
     unsigned int  tid     = MUL(blockDim.x, blockIdx.x) + threadIdx.x;
     unsigned int  threadN = MUL(blockDim.x, gridDim.x);

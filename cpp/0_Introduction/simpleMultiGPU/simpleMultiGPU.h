@@ -54,6 +54,7 @@ typedef struct
     float *h_Sum_from_device;
 
     // Stream for asynchronous command execution
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t stream;
 
 } TGPUplan;

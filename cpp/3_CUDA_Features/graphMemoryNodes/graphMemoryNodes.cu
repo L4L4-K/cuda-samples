@@ -46,6 +46,7 @@
 // Stores the square of each input element in output array
 __global__ void squareArray(const float *input, float *output, int numElements)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (idx < numElements) {
@@ -107,6 +108,7 @@ void prepareHostArrays(negSquareArrays *hostArrays)
     fillRandomly(hostArrays->negSquare, hostArrays->numElements);
 }
 
+// JP: `cudaGraphExec_t`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
 void createFreeGraph(cudaGraphExec_t *graphExec, float *dPtr)
 {
     cudaGraph_t     graph;
@@ -200,6 +202,7 @@ void createNegateSquaresGraphExplicitly(cudaGraphExec_t *graphExec,
                                              d_input,
                                              hostArrays->input,
                                              hostArrays->bytes,
+                                             // JP: `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
                                              cudaMemcpyHostToDevice));
 
     void *squareKernelArgs[3]     = {(void *)&d_input, (void *)&d_square, (void *)&(hostArrays->numElements)};
@@ -304,6 +307,7 @@ void createNegateSquaresGraphExplicitly(cudaGraphExec_t *graphExec,
  *       |                                      |
  * wait squareFreeEvent --------------<---- record squareFreeEvent
  */
+// JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
 void doNegateSquaresInStream(cudaStream_t stream1, negSquareArrays *hostArrays, float **d_negSquare_out = NULL)
 {
     float       *d_input, *d_square, *d_negSquare;
@@ -329,6 +333,7 @@ void doNegateSquaresInStream(cudaStream_t stream1, negSquareArrays *hostArrays, 
     checkCudaErrors(cudaStreamWaitEvent(stream2, squareKernelCompleteEvent, 0));
     checkCudaErrors(cudaMemcpyAsync(hostArrays->square, d_square, hostArrays->bytes, cudaMemcpyDeviceToHost, stream2));
 
+    // JP: `cudaFreeAsync`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFreeAsync(d_input, stream1));
     checkCudaErrors(cudaMallocAsync(&d_negSquare, hostArrays->bytes, stream1));
     negateArray<<<hostArrays->numBlocks, THREADS_PER_BLOCK, 0, stream1>>>(
@@ -388,10 +393,12 @@ void prepareRefArrays(negSquareArrays *hostArrays, negSquareArrays *deviceRefArr
         hostArrays->negSquare[i] = hostArrays->square[i] * -1;
     }
 
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&deviceRefArrays->negSquare, deviceRefArrays->bytes));
     checkCudaErrors(
         cudaMemcpy(deviceRefArrays->negSquare, hostArrays->negSquare, hostArrays->bytes, cudaMemcpyHostToDevice));
 
+    // JP: `cudaMallocManaged`: Unified Memory は CPU/GPU で同じ pointer を使います。prefetch や同期で移動タイミングを意識します。
     checkCudaErrors(cudaMallocManaged((void **)foundValidationFailure, sizeof(bool)));
 }
 
@@ -408,6 +415,7 @@ int checkValidationFailure(bool *foundValidationFailure)
     }
 }
 
+// JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
 __global__ void validateGPU(float *d_negSquare, negSquareArrays devRefArrays, bool *foundValidationFailure)
 {
     int   idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -479,6 +487,7 @@ int main(int argc, char **argv)
 
     printf("Running negateSquares in a stream.\n");
     doNegateSquaresInStream(stream, &hostArrays);
+    // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaStreamSynchronize(stream));
     printf("Validating negateSquares in a stream...\n");
     validateHost(&hostArrays, foundValidationFailure);
@@ -510,6 +519,7 @@ int main(int argc, char **argv)
     printf("Running negateSquares with d_negSquare freed outside the stream.\n");
     createNegateSquaresGraphExplicitly(&graphExec, device, &hostArrays, &d_negSquare);
     checkCudaErrors(cudaGraphLaunch(graphExec, stream));
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     validateGPU<<<hostArrays.numBlocks, THREADS_PER_BLOCK, 0, stream>>>(
         d_negSquare, deviceRefArrays, foundValidationFailure);
     // Since cudaFree is synchronous, the stream must synchronize before freeing

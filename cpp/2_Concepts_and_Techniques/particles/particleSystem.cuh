@@ -35,6 +35,7 @@ extern "C"
 
     void threadSync();
 
+    // JP: `cudaGraphicsResource`, `cuda_vbo_resource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
     void copyArrayFromDevice(void *host, const void *device, struct cudaGraphicsResource **cuda_vbo_resource, int size);
     void copyArrayToDevice(void *device, const void *host, int offset, int size);
     void registerGLBufferObject(uint vbo, struct cudaGraphicsResource **cuda_vbo_resource);

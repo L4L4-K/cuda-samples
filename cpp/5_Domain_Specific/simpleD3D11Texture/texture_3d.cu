@@ -42,6 +42,7 @@ __global__ void cuda_kernel_texture_3d(unsigned char *surface,
                                        size_t         pitchSlice,
                                        float          t)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -71,6 +72,7 @@ cuda_texture_3d(void *surface, int width, int height, int depth, size_t pitch, s
     dim3 Db = dim3(16, 16); // block dimensions are fixed to be 256 threads
     dim3 Dg = dim3((width + Db.x - 1) / Db.x, (height + Db.y - 1) / Db.y);
 
+    // JP: `cuda_kernel_texture_3d`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     cuda_kernel_texture_3d<<<Dg, Db>>>((unsigned char *)surface, width, height, depth, pitch, pitchSlice, t);
 
     error = cudaGetLastError();

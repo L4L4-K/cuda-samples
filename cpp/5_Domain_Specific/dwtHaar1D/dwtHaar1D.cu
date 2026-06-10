@@ -196,6 +196,7 @@ void runTest(int argc, char **argv)
         // error message
         fprintf(stderr, "Signal length not supported.\n");
         // cleanup and abort
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         free(signal);
         exit(EXIT_FAILURE);
     }
@@ -215,10 +216,12 @@ void runTest(int argc, char **argv)
 
     // allocate device mem
     const unsigned int smem_size = sizeof(float) * slength;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_idata, smem_size));
     checkCudaErrors(cudaMalloc((void **)&d_odata, smem_size));
     checkCudaErrors(cudaMalloc((void **)&approx_final, smem_size));
     // copy input data to device
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(d_idata, signal, smem_size, cudaMemcpyHostToDevice));
 
     // total number of threads
@@ -256,6 +259,7 @@ void runTest(int argc, char **argv)
     }
 
     // Initialize d_odata to 0.0f
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     initValue<<<grid_size, block_size>>>(d_odata, 0.0f);
 
     // do until full decomposition is accomplished
@@ -341,6 +345,7 @@ void runTest(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(slength == len_reference);
 
     // compare the computed solution and the reference

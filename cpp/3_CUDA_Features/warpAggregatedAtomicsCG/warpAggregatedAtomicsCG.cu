@@ -59,6 +59,7 @@ __device__ int atomicAggInc(int *counter)
 
 __global__ void filter_arr(int *dst, int *nres, const int *src, int n)
 {
+    // JP: `threadIdx`, `blockIdx`, `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int id = threadIdx.x + blockIdx.x * blockDim.x;
 
     for (int i = id; i < n; i += gridDim.x * blockDim.x) {
@@ -116,14 +117,17 @@ int mapIndicesToBuckets(int *h_srcArr, int *d_srcArr, int numOfBuckets)
         h_bucketCounters[i] = i * NUM_ELEMS;
     }
 
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc(&d_indicesBuckets, sizeof(int) * NUM_ELEMS * numOfBuckets));
     checkCudaErrors(cudaMalloc(&d_bucketCounters, sizeof(int) * numOfBuckets));
 
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(d_bucketCounters, h_bucketCounters, sizeof(int) * numOfBuckets, cudaMemcpyHostToDevice));
 
     dim3 dimBlock(NUM_THREADS_PER_BLOCK, 1, 1);
     dim3 dimGrid((NUM_ELEMS / NUM_THREADS_PER_BLOCK), 1, 1);
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     mapToBuckets<<<dimGrid, dimBlock>>>(d_srcArr, d_indicesBuckets, d_bucketCounters, NUM_ELEMS, numOfBuckets);
 
     checkCudaErrors(cudaMemcpy(h_bucketCounters, d_bucketCounters, sizeof(int) * numOfBuckets, cudaMemcpyDeviceToHost));
@@ -233,6 +237,7 @@ int calculateMaxInBuckets(int *h_srcArr, int *d_srcArr, int numOfBuckets)
     delete[] h_valueInBuckets;
     delete[] cpuBucketsMax;
     delete[] h_bucketsMax;
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_valueInBuckets));
     checkCudaErrors(cudaFree(d_bucketsMax));
 

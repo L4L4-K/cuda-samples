@@ -57,8 +57,10 @@ int main(int argc, char **argv)
     }
 
     printf("Allocating and initializing CUDA arrays...\n");
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_Input, N * sizeof(uint)));
     checkCudaErrors(cudaMalloc((void **)&d_Output, N * sizeof(uint)));
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(d_Input, h_Input, N * sizeof(uint), cudaMemcpyHostToDevice));
 
     printf("Initializing CUDA-C scan...\n\n");
@@ -71,6 +73,7 @@ int main(int argc, char **argv)
 
     for (uint arrayLength = MIN_SHORT_ARRAY_SIZE; arrayLength <= MAX_SHORT_ARRAY_SIZE; arrayLength <<= 1) {
         printf("Running scan for %u elements (%u arrays)...\n", arrayLength, N / arrayLength);
+        // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         checkCudaErrors(cudaDeviceSynchronize());
         sdkResetTimer(&hTimer);
         sdkStartTimer(&hTimer);
@@ -173,6 +176,7 @@ int main(int argc, char **argv)
 
     printf("Shutting down...\n");
     closeScan();
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_Output));
     checkCudaErrors(cudaFree(d_Input));
 

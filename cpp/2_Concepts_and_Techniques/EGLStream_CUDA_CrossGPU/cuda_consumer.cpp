@@ -88,6 +88,7 @@ void acquireApiStat(void)
     printf("release min: %lf\n", min);
     printf("release max: %lf\n", max);
 }
+// JP: `cudaConsumerAcquireFrame`, `cudaConsumer`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
 CUresult cudaConsumerAcquireFrame(test_cuda_consumer_s *cudaConsumer, int frameNumber)
 {
     CUresult        cuStatus = CUDA_SUCCESS;
@@ -260,6 +261,7 @@ done:
 CUresult cuda_consumer_Deinit(test_cuda_consumer_s *cudaConsumer)
 {
     if (cudaConsumer->pCudaCopyMem) {
+        // JP: `cudaConsumer`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         free(cudaConsumer->pCudaCopyMem);
     }
     return cuEGLStreamConsumerDisconnect(&cudaConsumer->cudaConn);

@@ -26,6 +26,7 @@
 #include <stdio.h>
 
 tcuInit                    *_cuInit;
+// JP: `cuDriverGetVersion`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
 tcuDriverGetVersion        *cuDriverGetVersion;
 tcuDeviceGet               *cuDeviceGet;
 tcuDeviceGetCount          *cuDeviceGetCount;
@@ -55,8 +56,10 @@ tcuModuleGetGlobal         *cuModuleGetGlobal;
 tcuModuleGetTexRef         *cuModuleGetTexRef;
 tcuModuleGetSurfRef        *cuModuleGetSurfRef;
 tcuMemGetInfo              *cuMemGetInfo;
+// JP: `cuMemAlloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
 tcuMemAlloc                *cuMemAlloc;
 tcuMemAllocPitch           *cuMemAllocPitch;
+// JP: `cuMemFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
 tcuMemFree                 *cuMemFree;
 tcuMemGetAddressRange      *cuMemGetAddressRange;
 tcuMemAllocHost            *cuMemAllocHost;
@@ -75,6 +78,7 @@ tcuIpcCloseMemHandle       *cuIpcCloseMemHandle;
 
 tcuMemHostRegister                   *cuMemHostRegister;
 tcuMemHostUnregister                 *cuMemHostUnregister;
+// JP: `cuMemcpyHtoD`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
 tcuMemcpyHtoD                        *cuMemcpyHtoD;
 tcuMemcpyDtoH                        *cuMemcpyDtoH;
 tcuMemcpyDtoD                        *cuMemcpyDtoD;
@@ -106,6 +110,7 @@ tcuFuncSetSharedSize                 *cuFuncSetSharedSize;
 tcuFuncGetAttribute                  *cuFuncGetAttribute;
 tcuFuncSetCacheConfig                *cuFuncSetCacheConfig;
 tcuFuncSetSharedMemConfig            *cuFuncSetSharedMemConfig;
+// JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
 tcuLaunchKernel                      *cuLaunchKernel;
 tcuArrayCreate                       *cuArrayCreate;
 tcuArrayGetDescriptor                *cuArrayGetDescriptor;

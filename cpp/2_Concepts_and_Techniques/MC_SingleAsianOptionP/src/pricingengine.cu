@@ -46,9 +46,11 @@ using std::string;
 using std::vector;
 
 // RNG init kernel
+// JP: `curandState`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
 __global__ void initRNG(curandState *const rngStates, const unsigned int seed)
 {
     // Determine thread ID
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
     // Initialise the RNG
@@ -99,6 +101,7 @@ __global__ void generatePaths(Real *const                    paths,
 
 template <typename Real> __device__ Real reduce_sum(Real in, cg::thread_block cta)
 {
+    // JP: shared_memory: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     SharedMemory<Real> sdata;
 
     // Perform first level of reduction:
@@ -106,6 +109,7 @@ template <typename Real> __device__ Real reduce_sum(Real in, cg::thread_block ct
     unsigned int ltid = threadIdx.x;
 
     sdata[ltid] = in;
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 
     // Do reduction in shared mem
@@ -268,6 +272,7 @@ template <typename Real> void PricingEngine<Real>::operator()(AsianOption<Real> 
 
     // Setup problem on GPU
     AsianOption<Real> *d_option = 0;
+    // JP: `cudaResult`, `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     cudaResult                  = cudaMalloc((void **)&d_option, sizeof(AsianOption<Real>));
 
     if (cudaResult != cudaSuccess) {
@@ -276,6 +281,7 @@ template <typename Real> void PricingEngine<Real>::operator()(AsianOption<Real> 
         throw std::runtime_error(msg);
     }
 
+    // JP: `cudaResult`, `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     cudaResult = cudaMemcpy(d_option, &option, sizeof(AsianOption<Real>), cudaMemcpyHostToDevice);
 
     if (cudaResult != cudaSuccess) {
@@ -316,6 +322,7 @@ template <typename Real> void PricingEngine<Real>::operator()(AsianOption<Real> 
     }
 
     // Initialise RNG
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     initRNG<<<grid, block>>>(d_rngStates, m_seed);
 
     // Generate paths
@@ -345,6 +352,7 @@ template <typename Real> void PricingEngine<Real>::operator()(AsianOption<Real> 
 
     // Cleanup
     if (d_option) {
+        // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         cudaFree(d_option);
         d_option = 0;
     }

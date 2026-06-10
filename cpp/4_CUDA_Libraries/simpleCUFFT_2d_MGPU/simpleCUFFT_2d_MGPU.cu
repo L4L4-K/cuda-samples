@@ -65,6 +65,7 @@ const int BSZ_X     = 4;
 // Forward Declaration
 void solvePoissonEquation(cudaLibXtDesc *, cudaLibXtDesc *, float **, int, int);
 
+// JP: `cufftComplex`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
 __global__ void solvePoisson(cufftComplex *, cufftComplex *, float *, int, int, int n_gpu);
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -116,6 +117,7 @@ int main(int argc, char **argv)
         }
     }
 
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(major_minor);
     if (!found2IdenticalGPUs) {
         printf("No Two GPUs with same architecture found\nWaiving simpleCUFFT_2d_MGPU "
@@ -205,7 +207,9 @@ int main(int argc, char **argv)
 
     for (int i = 0; i < nGPUs; i++) {
         cudaSetDevice(whichGPUs[i]);
+        // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
         cudaMalloc((void **)&d_k[i], sizeof(float) * N);
+        // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         cudaMemcpy(d_k[i], k, sizeof(float) * N, cudaMemcpyHostToDevice);
     }
 
@@ -341,6 +345,7 @@ void solvePoissonEquation(cudaLibXtDesc *d_ft, cudaLibXtDesc *d_ft_k, float **k,
     for (int i = 0; i < nGPUs; i++) {
         device = d_ft_k->descriptor->GPUs[i];
         cudaSetDevice(device);
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         solvePoisson<<<dimGrid, dimBlock>>>(
             (cufftComplex *)d_ft->descriptor->data[i], (cufftComplex *)d_ft_k->descriptor->data[i], k[i], N, i, nGPUs);
     }
@@ -349,6 +354,7 @@ void solvePoissonEquation(cudaLibXtDesc *d_ft, cudaLibXtDesc *d_ft_k, float **k,
     for (int i = 0; i < nGPUs; i++) {
         device = d_ft_k->descriptor->GPUs[i];
         cudaSetDevice(device);
+        // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         cudaDeviceSynchronize();
 
         // Check if kernel execution generated and error
@@ -361,6 +367,7 @@ void solvePoissonEquation(cudaLibXtDesc *d_ft, cudaLibXtDesc *d_ft_k, float **k,
 ////////////////////////////////////////////////////////////////////////////////
 __global__ void solvePoisson(cufftComplex *ft, cufftComplex *ft_k, float *k, int N, int gpu_id, int n_gpu)
 {
+    // JP: `threadIdx`, `blockIdx`, `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int i     = threadIdx.x + blockIdx.x * blockDim.x;
     int j     = threadIdx.y + blockIdx.y * blockDim.y;
     int index = j * N + i;

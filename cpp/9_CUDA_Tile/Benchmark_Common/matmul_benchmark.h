@@ -84,6 +84,7 @@ inline bool verify_matmul_result(const char* name,
 template<typename KernelFunc, typename ValidateFunc>
 inline BenchmarkResult run_benchmark(const char* name,
                                      KernelFunc kernel_launch,
+                                     // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
                                      ValidateFunc validate_result,
                                      int M, int N, int K) {
     BenchmarkResult result;

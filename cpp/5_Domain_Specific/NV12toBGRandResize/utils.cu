@@ -39,6 +39,7 @@
 
 __global__ void floatToChar(float *src, unsigned char *dst, int height, int width, int batchSize)
 {
+    // JP: `threadIdx`, `blockIdx`, `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int x = threadIdx.x + blockIdx.x * blockDim.x;
 
     if (x >= height * width)
@@ -58,6 +59,7 @@ __global__ void floatToChar(float *src, unsigned char *dst, int height, int widt
 
 void floatPlanarToChar(float *src, unsigned char *dst, int height, int width, int batchSize)
 {
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     floatToChar<<<(height * width - 1) / 1024 + 1, 1024, 0, NULL>>>(src, dst, height, width, batchSize);
 }
 
@@ -89,12 +91,14 @@ void dumpRawBGR(float *d_srcBGR, int pitch, int width, int height, int batchSize
         char           filename[256];
         std::ofstream *outputFile;
 
+        // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         checkCudaErrors(cudaMemcpy((void *)bgr, (void *)d_bgr, frameSize, cudaMemcpyDeviceToHost));
         snprintf(filename, sizeof(filename), "%s/%s_%d.raw", directory, tag, (i + 1));
 
         outputFile = new std::ofstream(filename);
         if (outputFile) {
             outputFile->write((char *)bgr, frameSize);
+            // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
             delete outputFile;
         }
 

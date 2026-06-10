@@ -56,11 +56,15 @@ __tile_global__ void tileKernel(int* x) {
 int main() {
   int* d_x = nullptr;
 
+  // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
   checkCudaErrors(cudaMalloc(&d_x, sizeof(int)));
+  // JP: `cudaMemset`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
   checkCudaErrors(cudaMemset(d_x, 0, sizeof(int)));
 
+  // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
   simtKernel<<<1, 1>>>(d_x);
   checkCudaErrors(cudaGetLastError());
+  // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
   checkCudaErrors(cudaDeviceSynchronize());
 
   /* launches tile kernel, the threads per block parameter is omitted because it must always be 1. */
@@ -70,6 +74,7 @@ int main() {
 
   int h_x = 0;
   checkCudaErrors(cudaMemcpy(&h_x, d_x, sizeof(int), cudaMemcpyDeviceToHost));
+  // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
   checkCudaErrors(cudaFree(d_x));
 
   printf("Hello, Host!\n");

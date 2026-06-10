@@ -64,6 +64,7 @@ void cleanup(void);
 void reshape(int x, int y);
 
 // CUFFT plan handle
+// JP: `cufftHandle`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
 cufftHandle   planr2c;
 cufftHandle   planc2r;
 static cData *vxfield = NULL;
@@ -88,6 +89,7 @@ float translate_z = -3.0;
 // Particle data
 GLuint                       vbo = 0, vao = 0; // OpenGLES vertex buffer object
 GLuint                       m_texture = 0;
+// JP: `cudaGraphicsResource`, `cuda_vbo_resource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
 struct cudaGraphicsResource *cuda_vbo_resource; // handles OpenGLES-CUDA exchange
 static cData                *particles = NULL;  // particle positions in host memory
 static int                   lastx = 0, lasty = 0;
@@ -228,6 +230,7 @@ void readAndCompileShaderFromGLSLFile(GLuint new_shaderprogram, const char *file
 
     glAttachShader(new_shaderprogram, shader);
 
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(data);
 }
 
@@ -479,6 +482,7 @@ bool runFluidsSimulation(int argc, char **argv, char *ref_file)
 
         glClear(GL_COLOR_BUFFER_BIT);
         graphics_swap_buffers();
+        // JP: streams_events: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
         XEvent event;
         KeySym key;
         char   text[255];
@@ -578,6 +582,7 @@ void keyboard(unsigned char key, int x, int y, int argc, char **argv)
     case 'r':
         printf("\nResetting\n");
         memset(hvfield, 0, sizeof(cData) * DS);
+        // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         cudaMemcpy(dvfield, hvfield, sizeof(cData) * DS, cudaMemcpyHostToDevice);
 
         initParticles(particles, DIM, DIM);
@@ -608,6 +613,7 @@ void cleanup(void)
     // Free all host and device resources
     free(hvfield);
     free(particles);
+    // JP: `cudaFree`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaFree(dvfield));
     checkCudaErrors(cudaFree(vxfield));
     checkCudaErrors(cudaFree(vyfield));

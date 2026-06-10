@@ -6,6 +6,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Module
 
 project(cannyEdgeDetectorNPP LANGUAGES CXX)
 
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
 find_package(CUDAToolkit REQUIRED)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -43,6 +44,7 @@ target_compile_features(cannyEdgeDetectorNPP PRIVATE cxx_std_17 cuda_std_17)
     )
 
     target_link_libraries(cannyEdgeDetectorNPP PRIVATE
+        # JP: `nppc`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
         CUDA::nppc
         CUDA::nppisu
         CUDA::nppif

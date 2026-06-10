@@ -176,6 +176,7 @@ def main() -> int:
         f"(is_ipc_enabled={mr.is_ipc_enabled})"
     )
 
+    # JP: streams_events: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     buffer = mr.allocate(nbytes, stream=device.default_stream)
     try:
         # Fill the buffer with a known pattern from the parent side.
@@ -207,6 +208,7 @@ def main() -> int:
         got = arr[:5].get()
         expected = (np.arange(N, dtype=np.float32) * child_seed)[:5]
         print(f"Parent sees child's pattern (first 5 values): {got}")
+        # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         if np.allclose(got, expected):
             print("IPC round-trip: OK")
             return 0

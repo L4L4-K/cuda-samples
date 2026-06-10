@@ -131,6 +131,7 @@ protected: // data
     float *m_cudaPosVBO;   // these are the CUDA deviceMem Pos
     float *m_cudaColorVBO; // these are the CUDA deviceMem Color
 
+    // JP: `cudaGraphicsResource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
     struct cudaGraphicsResource *m_cuda_posvbo_resource;   // handles OpenGL-CUDA exchange
     struct cudaGraphicsResource *m_cuda_colorvbo_resource; // handles OpenGL-CUDA exchange
 

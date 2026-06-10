@@ -67,6 +67,7 @@ RNG::RNG(unsigned long prngSeed, unsigned int qrngDimensions, unsigned int nSamp
         throw invalid_argument("RNG batch size must be greater than RNG::s_maxQrngDimensions");
     }
 
+    // JP: `curandStatus_t`, `curandResult`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
     curandStatus_t curandResult;
     cudaError_t    cudaResult;
 
@@ -78,6 +79,7 @@ RNG::RNG(unsigned long prngSeed, unsigned int qrngDimensions, unsigned int nSamp
     }
 
     // Allocate sample array in device mem
+    // JP: `cudaResult`, `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     cudaResult = cudaMalloc((void **)&m_d_samples, m_nSamplesBatchTarget * sizeof(float));
 
     if (cudaResult != cudaSuccess) {
@@ -127,6 +129,7 @@ RNG::~RNG()
     curandDestroyGenerator(m_sqrng);
 
     if (m_d_samples) {
+        // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         cudaFree(m_d_samples);
     }
 
@@ -153,6 +156,7 @@ void RNG::generateBatch(void)
     }
 
     // Copy random numbers to host
+    // JP: `cudaResult`, `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     cudaResult = cudaMemcpy(m_h_samples, m_d_samples, m_nSamplesBatchActual * sizeof(float), cudaMemcpyDeviceToHost);
 
     if (cudaResult != cudaSuccess) {

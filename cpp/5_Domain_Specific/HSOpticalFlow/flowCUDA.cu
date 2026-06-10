@@ -92,6 +92,7 @@ void ComputeFlowCUDA(const float *I0,
 
     const int dataSize = stride * height * sizeof(float);
 
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc(&d_tmp, dataSize));
     checkCudaErrors(cudaMalloc(&d_du0, dataSize));
     checkCudaErrors(cudaMalloc(&d_dv0, dataSize));
@@ -114,6 +115,7 @@ void ComputeFlowCUDA(const float *I0,
     checkCudaErrors(cudaMalloc(pI0 + currentLevel, dataSize));
     checkCudaErrors(cudaMalloc(pI1 + currentLevel, dataSize));
 
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy((void *)pI0[currentLevel], I0, dataSize, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy((void *)pI1[currentLevel], I1, dataSize, cudaMemcpyHostToDevice));
 
@@ -229,6 +231,7 @@ void ComputeFlowCUDA(const float *I0,
 
     // cleanup
     for (int i = 0; i < nLevels; ++i) {
+        // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         checkCudaErrors(cudaFree((void *)pI0[i]));
         checkCudaErrors(cudaFree((void *)pI1[i]));
     }

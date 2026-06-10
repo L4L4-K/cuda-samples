@@ -6,6 +6,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Module
 
 project(watershedSegmentationNPP LANGUAGES CXX)
 
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
 find_package(CUDAToolkit REQUIRED)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -41,6 +42,7 @@ target_include_directories(watershedSegmentationNPP PRIVATE
         ${CUDAToolkit_INCLUDE_DIRS}
 )
 target_link_libraries(watershedSegmentationNPP PRIVATE
+        # JP: `nppc`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
         CUDA::nppc
         CUDA::nppisu
         CUDA::nppif

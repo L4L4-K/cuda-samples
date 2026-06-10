@@ -73,6 +73,7 @@ unsigned int findNumSizesToTest(unsigned int minSize, unsigned int maxSize, unsi
     return numSizesToTest;
 }
 
+// JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
 int compareDoubles(const void *ptr1, const void *ptr2) { return (*(double *)ptr1 > *(double *)ptr2) ? 1 : -1; }
 
 static inline double getTimeOrBandwidth(double runTimeInMs, unsigned long size, bool getBandwidth)
@@ -148,6 +149,7 @@ void freeTestResultsAndAllResultsData(struct testResults *results)
     for (data = results->resultsDataHead; data != NULL;) {
         for (i = 0; i < MEMALLOC_TYPE_COUNT; i++) {
             for (j = 0; j < results->numSizesToTest; j++) {
+                // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
                 free(data->runTimesInMs[i][j]);
             }
             free(data->runTimesInMs[i]);

@@ -53,10 +53,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "Utilities"))
 try:
     import cupy as cp
     import numpy as np
+    # JP: `DeviceMemoryResource`/`PinnedMemoryResource`/`ManagedMemoryResource` は Python object ですが、device/host/managed memory の所有権を明示します。
     from cuda.core import (
         Device,
         DeviceMemoryResource,
         LaunchConfig,
+        # JP: `ManagedMemoryResource` は CPU/GPU 共有 pointer の allocator です。allocation と close の lifetime を対応させます。
         ManagedMemoryResource,
         PinnedMemoryResource,
         Program,
@@ -97,8 +99,10 @@ def demo_device_and_pinned(device, stream, kernel, size):
     device_mr = device.memory_resource
     pinned_mr = PinnedMemoryResource()
 
+    # JP: streams_events: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     pinned_in = pinned_mr.allocate(nbytes, stream=stream)
     pinned_out = pinned_mr.allocate(nbytes, stream=stream)
+    # JP: device_memory: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     device_buffer = device_mr.allocate(nbytes, stream=stream)
     try:
         # Wrap each Buffer as a typed array via DLPack (no copies).
@@ -114,6 +118,7 @@ def demo_device_and_pinned(device, stream, kernel, size):
 
         # Launch kernel on the device buffer.
         config = LaunchConfig(grid=(size + 255) // 256, block=256)
+        # JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         launch(
             stream,
             config,
@@ -129,9 +134,12 @@ def demo_device_and_pinned(device, stream, kernel, size):
         stream.sync()
 
         expected = original * 3.0 - 0.5
+        # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         assert np.allclose(pinned_out_view, expected), "H2D -> kernel -> D2H mismatch"
+        # JP: pinned_memory: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
         print("  Pinned staging, device kernel, and copy_to verified")
     finally:
+        # JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         device_buffer.close(stream)
         pinned_out.close(stream)
         pinned_in.close(stream)
@@ -239,6 +247,7 @@ def main():
 
     try:
         program_options = ProgramOptions(std="c++17", arch=f"sm_{device.arch}")
+        # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
         program = Program(SCALE_BIAS_KERNEL, code_type="c++", options=program_options)
         module = program.compile("cubin")
         kernel = module.get_kernel("scale_and_bias")

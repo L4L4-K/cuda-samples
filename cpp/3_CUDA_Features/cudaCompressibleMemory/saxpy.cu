@@ -40,6 +40,7 @@
 
 __global__ void saxpy(const float a, const float4 *x, const float4 *y, float4 *z, const size_t n)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     for (size_t i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += gridDim.x * blockDim.x) {
         const float4 x4 = x[i];
         const float4 y4 = y[i];
@@ -63,6 +64,7 @@ void launchSaxpy(const float  a,
                  const float  init_val,
                  const bool   compressibleZbuf)
 {
+    // JP: `cudaEvent_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaEvent_t start, stop;
     float       ms;
     int         blockSize;
@@ -79,8 +81,10 @@ void launchSaxpy(const float  a,
             h_x[i].x = h_x[i].y = h_x[i].z = h_x[i].w = init_val;
             h_y[i].x = h_y[i].y = h_y[i].z = h_y[i].w = init_val;
         }
+        // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         checkCudaErrors(cudaMemcpy(x, h_x, sizeof(float4) * n, cudaMemcpyHostToDevice));
         checkCudaErrors(cudaMemcpy(y, h_y, sizeof(float4) * n, cudaMemcpyHostToDevice));
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         free(h_x);
         free(h_y);
     }
@@ -88,6 +92,7 @@ void launchSaxpy(const float  a,
         checkCudaErrors(cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, (void *)init));
         threads = dim3(blockSize, 1, 1);
         blocks  = dim3(minGridSize, 1, 1);
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         init<<<blocks, threads>>>(x, y, init_val, n);
     }
 
@@ -100,6 +105,7 @@ void launchSaxpy(const float  a,
     checkCudaErrors(cudaEventRecord(start));
     saxpy<<<blocks, threads>>>(a, x, y, z, n);
     checkCudaErrors(cudaEventRecord(stop));
+    // JP: `cudaEventSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaEventSynchronize(stop));
     checkCudaErrors(cudaEventElapsedTime(&ms, start, stop));
 
@@ -121,6 +127,7 @@ int main(int argc, char **argv)
     }
 
     findCudaDevice(argc, (const char **)argv);
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     CUdevice currentDevice;
     checkCudaErrors(cuCtxGetDevice(&currentDevice));
 

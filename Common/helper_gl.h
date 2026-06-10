@@ -199,6 +199,7 @@ namespace __HelperGL {
 
         stream >> major >> dot >> minor;
 
+        // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         assert (dot == '.');
         return major > reqMajor || (major == reqMajor && minor >= reqMinor);
     }

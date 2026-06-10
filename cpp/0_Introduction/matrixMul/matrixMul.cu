@@ -59,6 +59,7 @@
 template <int BLOCK_SIZE> __global__ void MatrixMulCUDA(float *C, float *A, float *B, int wA, int wB)
 {
     // Block index
+    // JP: `blockIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int bx = blockIdx.x;
     int by = blockIdx.y;
 
@@ -90,6 +91,7 @@ template <int BLOCK_SIZE> __global__ void MatrixMulCUDA(float *C, float *A, floa
     for (int a = aBegin, b = bBegin; a <= aEnd; a += aStep, b += bStep) {
         // Declaration of the shared memory array As used to
         // store the sub-matrix of A
+        // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
         __shared__ float As[BLOCK_SIZE][BLOCK_SIZE];
 
         // Declaration of the shared memory array Bs used to
@@ -103,6 +105,7 @@ template <int BLOCK_SIZE> __global__ void MatrixMulCUDA(float *C, float *A, floa
         Bs[ty][tx] = B[b + wB * ty + tx];
 
         // Synchronize to make sure the matrices are loaded
+        // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         __syncthreads();
 
         // Multiply the two matrices together;
@@ -142,11 +145,13 @@ int MatrixMultiply(int argc, char **argv, int block_size, const dim3 &dimsA, con
     unsigned int size_A     = dimsA.x * dimsA.y;
     unsigned int mem_size_A = sizeof(float) * size_A;
     float       *h_A;
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
     checkCudaErrors(cudaMallocHost(&h_A, mem_size_A));
     unsigned int size_B     = dimsB.x * dimsB.y;
     unsigned int mem_size_B = sizeof(float) * size_B;
     float       *h_B;
     checkCudaErrors(cudaMallocHost(&h_B, mem_size_B));
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t stream;
 
     // Initialize host memory
@@ -168,6 +173,7 @@ int MatrixMultiply(int argc, char **argv, int block_size, const dim3 &dimsA, con
         exit(EXIT_FAILURE);
     }
 
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&d_A), mem_size_A));
     checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&d_B), mem_size_B));
     checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&d_C), mem_size_C));
@@ -179,6 +185,7 @@ int MatrixMultiply(int argc, char **argv, int block_size, const dim3 &dimsA, con
     checkCudaErrors(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
     // copy host memory to device
+    // JP: `cudaMemcpyAsync`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpyAsync(d_A, h_A, mem_size_A, cudaMemcpyHostToDevice, stream));
     checkCudaErrors(cudaMemcpyAsync(d_B, h_B, mem_size_B, cudaMemcpyHostToDevice, stream));
 
@@ -191,6 +198,7 @@ int MatrixMultiply(int argc, char **argv, int block_size, const dim3 &dimsA, con
 
     // Performs warmup operation using matrixMul CUDA kernel
     if (block_size == 16) {
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         MatrixMulCUDA<16><<<grid, threads, 0, stream>>>(d_C, d_A, d_B, dimsA.x, dimsB.x);
     }
     else {
@@ -259,9 +267,11 @@ int MatrixMultiply(int argc, char **argv, int block_size, const dim3 &dimsA, con
         }
     }
 
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     printf("%s\n", correct ? "Result = PASS" : "Result = FAIL");
 
     // Clean up memory
+    // JP: `cudaFreeHost`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFreeHost(h_A));
     checkCudaErrors(cudaFreeHost(h_B));
     checkCudaErrors(cudaFreeHost(h_C));

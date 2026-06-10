@@ -38,6 +38,7 @@
 ///////////////////////////////////////////////////////////////////////////////
 __global__ void UpscaleKernel(int width, int height, int stride, float scale, float *out, cudaTextureObject_t texCoarse)
 {
+    // JP: `threadIdx`, `blockIdx`, `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     const int ix = threadIdx.x + blockIdx.x * blockDim.x;
     const int iy = threadIdx.y + blockIdx.y * blockDim.y;
 
@@ -99,5 +100,6 @@ static void Upscale(const float *src,
 
     checkCudaErrors(cudaCreateTextureObject(&texCoarse, &texRes, &texDescr, NULL));
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     UpscaleKernel<<<blocks, threads>>>(newWidth, newHeight, newStride, scale, out, texCoarse);
 }

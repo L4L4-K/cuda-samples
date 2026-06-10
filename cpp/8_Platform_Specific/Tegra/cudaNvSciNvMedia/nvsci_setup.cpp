@@ -120,6 +120,7 @@ void setupNvSciBuf(NvSciBufObj &bufobj, NvSciBufAttrList &nvmediaAttrlist, int c
     NvSciBufAttrList conflictlist;
     NvSciBufAttrList bufUnreconciledAttrlist[1];
 
+    // JP: `cuDeviceGetUuid`, `cudaDeviceId`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     CUresult res = cuDeviceGetUuid(&devUUID, cudaDeviceId);
     if (res != CUDA_SUCCESS) {
         fprintf(stderr, "Driver API error = %04d \n", res);

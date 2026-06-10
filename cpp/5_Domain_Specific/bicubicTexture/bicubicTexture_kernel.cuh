@@ -278,6 +278,7 @@ __global__ void d_render(uchar4             *d_output,
                          float               cy,
                          cudaTextureObject_t texObj)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     uint x = __umul24(blockIdx.x, blockDim.x) + threadIdx.x;
     uint y = __umul24(blockIdx.y, blockDim.y) + threadIdx.y;
     uint i = __umul24(y, width) + x;

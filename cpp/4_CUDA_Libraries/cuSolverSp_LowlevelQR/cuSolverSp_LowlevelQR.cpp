@@ -85,8 +85,10 @@ void parseCommandLineArguments(int argc, char *argv[], struct testOpts &opts)
 int main(int argc, char *argv[])
 {
     struct testOpts    opts;
+    // JP: `cusolverSpHandle_t`, `cusolverSpH`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
     cusolverSpHandle_t cusolverSpH = NULL; // reordering, permutation and 1st LU factorization
     cusparseHandle_t   cusparseH   = NULL; // residual evaluation
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t       stream      = NULL;
     cusparseMatDescr_t descrA      = NULL; // A is a base-0 general matrix
 
@@ -200,11 +202,13 @@ int main(int argc, char *argv[])
     h_bcopy = (double *)malloc(sizeof(double) * rowsA);
     h_r     = (double *)malloc(sizeof(double) * rowsA);
 
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(NULL != h_x);
     assert(NULL != h_b);
     assert(NULL != h_bcopy);
     assert(NULL != h_r);
 
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_csrRowPtrA, sizeof(int) * (rowsA + 1)));
     checkCudaErrors(cudaMalloc((void **)&d_csrColIndA, sizeof(int) * nnzA));
     checkCudaErrors(cudaMalloc((void **)&d_csrValA, sizeof(double) * nnzA));
@@ -239,6 +243,7 @@ int main(int argc, char *argv[])
                                                    &size_chol));
 
     if (buffer_cpu) {
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         free(buffer_cpu);
     }
     buffer_cpu = (void *)malloc(sizeof(char) * size_chol);
@@ -263,6 +268,7 @@ int main(int argc, char *argv[])
 
     printf("step 8: evaluate residual r = b - A*x (result on CPU)\n");
     // use GPU gemv to compute r = b - A*x
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(d_csrRowPtrA, h_csrRowPtrA, sizeof(int) * (rowsA + 1), cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_csrColIndA, h_csrColIndA, sizeof(int) * nnzA, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_csrValA, h_csrValA, sizeof(double) * nnzA, cudaMemcpyHostToDevice));

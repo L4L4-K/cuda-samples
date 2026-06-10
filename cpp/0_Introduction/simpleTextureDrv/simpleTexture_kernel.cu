@@ -37,6 +37,7 @@
 extern "C" __global__ void transformKernel(float *g_odata, int width, int height, float theta, CUtexObject tex)
 {
     // calculate normalized texture coordinates
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
 

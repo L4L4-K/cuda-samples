@@ -44,6 +44,7 @@
 /* Add two vectors on the GPU */
 __global__ void vectorAddGPU(float *a, float *b, float *c, int N)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (idx < N) {
@@ -66,6 +67,7 @@ int main(int argc, char **argv)
     char          *device = NULL;
     unsigned int   flags;
     size_t         bytes;
+    // JP: pinned_memory: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
     float         *a, *b, *c;          // Pinned memory allocated on the CPU
     float         *a_UA, *b_UA, *c_UA; // Non-4K Aligned Pinned memory on the CPU
     float         *d_a, *d_b, *d_c;    // Device pointers for mapped memory
@@ -205,7 +207,9 @@ int main(int argc, char **argv)
     printf("> vectorAddGPU kernel will add vectors using mapped CPU memory...\n");
     dim3 block(256);
     dim3 grid((unsigned int)ceil(nelem / (float)block.x));
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     vectorAddGPU<<<grid, block>>>(d_a, d_b, d_c, nelem);
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
     getLastCudaError("vectorAddGPU() execution failed");
 
@@ -234,6 +238,7 @@ int main(int argc, char **argv)
         checkCudaErrors(cudaHostUnregister(a));
         checkCudaErrors(cudaHostUnregister(b));
         checkCudaErrors(cudaHostUnregister(c));
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         free(a_UA);
         free(b_UA);
         free(c_UA);

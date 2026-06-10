@@ -142,6 +142,7 @@ inline CompiledKernel compileFileWithNVRTC(const char *filename,
     }
     const char **argv = argv_vec.data();
     int argc = static_cast<int>(argv_vec.size());
+    // JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
     std::cerr << "\nCompiling file with NVRTC\n";
     std::ifstream inputFile(filename, std::ios::in | std::ios::binary |
               std::ios::ate);
@@ -171,6 +172,7 @@ inline CompiledKernel compileFileWithNVRTC(const char *filename,
     std::cerr << "\n compilation log ---\n";
     std::cerr << log;
     std::cerr << "\n end log ---\n\n";
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(log);
     NVRTC_SAFE_CALL("nvrtcCompileProgram", res);
 

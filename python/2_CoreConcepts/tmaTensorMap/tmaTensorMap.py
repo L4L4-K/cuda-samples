@@ -60,6 +60,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "Utilities"))
 try:
     import cupy as cp
     import numpy as np
+    # JP: `cuda.core`/`cuda.pathfinder`/CuPy が TMA descriptor、device buffer、header discovery の Python 境界になります。
     from cuda.core import (
         Device,
         LaunchConfig,
@@ -235,6 +236,7 @@ def main() -> int:
 
     n_tiles = n // TILE_SIZE
     config = LaunchConfig(grid=n_tiles, block=TILE_SIZE)
+    # JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     launch(
         dev.default_stream,
         config,
@@ -270,6 +272,7 @@ def main() -> int:
     if not cp.array_equal(output2, replacement):
         print("replace_address produced incorrect results")
         return 1
+    # JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
     print("replace_address verified: descriptor reused with new source tensor")
     return 0
 

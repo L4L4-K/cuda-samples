@@ -61,6 +61,7 @@ extern "C"
 
 #endif /* __CUDA_API_VERSION >= 3020 */
 
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     typedef int                           CUdevice;           /**< CUDA device */
     typedef struct CUctx_st              *CUcontext;          /**< CUDA context */
     typedef struct CUmod_st              *CUmodule;           /**< CUDA module */
@@ -69,6 +70,7 @@ extern "C"
     typedef struct CUmipmappedArray_st   *CUmipmappedArray;   /**< CUDA mipmapped array */
     typedef struct CUtexref_st           *CUtexref;           /**< CUDA texture reference */
     typedef struct CUsurfref_st          *CUsurfref;          /**< CUDA surface reference */
+    // JP: streams_events: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     typedef struct CUevent_st            *CUevent;            /**< CUDA event */
     typedef struct CUstream_st           *CUstream;           /**< CUDA stream */
     typedef struct CUgraphicsResource_st *CUgraphicsResource; /**< CUDA graphics interop resource */
@@ -89,6 +91,7 @@ extern "C"
         CU_CTX_SCHED_YIELD         = 0x02, /**< Set yield as default scheduling */
         CU_CTX_SCHED_BLOCKING_SYNC = 0x04, /**< Set blocking synchronization as default scheduling */
         CU_CTX_BLOCKING_SYNC       = 0x04, /**< Set blocking synchronization as default scheduling \deprecated */
+        // JP: pinned_memory: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
         CU_CTX_MAP_HOST            = 0x08, /**< Support mapped pinned allocations */
         CU_CTX_LMEM_RESIZE_TO_MAX  = 0x10, /**< Keep local memory allocation after launch */
 #if __CUDA_API_VERSION < 4000
@@ -153,6 +156,7 @@ extern "C"
         CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_X              = 5, /**< Maximum grid dimension X */
         CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_Y              = 6, /**< Maximum grid dimension Y */
         CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_Z              = 7, /**< Maximum grid dimension Z */
+        // JP: shared_memory: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
         CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK = 8, /**< Maximum shared memory available per block in bytes */
         CU_DEVICE_ATTRIBUTE_SHARED_MEMORY_PER_BLOCK =
             8, /**< Deprecated, use CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK */
@@ -1689,6 +1693,7 @@ tcuMemsetD2D32(CUdeviceptr dstDevice, unsigned int dstPitch, unsigned int ui, un
     typedef CUresult CUDAAPI tcuFuncSetCacheConfig(CUfunction hfunc, CUfunc_cache config);
     typedef CUresult CUDAAPI tcuFuncSetSharedMemConfig(CUfunction hfunc, CUsharedconfig config);
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     typedef CUresult CUDAAPI tcuLaunchKernel(CUfunction   f,
                                              unsigned int gridDimX,
                                              unsigned int gridDimY,
@@ -1913,12 +1918,14 @@ typedef CUresult CUDAAPI tcuGraphicsResourceGetMappedPointer(CUdeviceptr       *
     extern tcuModuleGetFunction   *cuModuleGetFunction;
     extern tcuModuleGetTexRef     *cuModuleGetTexRef;
     extern tcuModuleGetSurfRef    *cuModuleGetSurfRef;
+    // JP: `cuMemFreeHost`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。 ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     extern tcuMemFreeHost         *cuMemFreeHost;
     extern tcuMemHostAlloc        *cuMemHostAlloc;
     extern tcuMemHostGetFlags     *cuMemHostGetFlags;
 
     extern tcuMemHostRegister   *cuMemHostRegister;
     extern tcuMemHostUnregister *cuMemHostUnregister;
+    // JP: `cuMemcpy`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     extern tcuMemcpy            *cuMemcpy;
     extern tcuMemcpyPeer        *cuMemcpyPeer;
 

@@ -32,6 +32,7 @@
 
 #include <cstring>
 
+// JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
 namespace npp
 {
     class Signal

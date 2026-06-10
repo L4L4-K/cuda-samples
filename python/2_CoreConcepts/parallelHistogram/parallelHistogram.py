@@ -45,6 +45,7 @@ import sys
 try:
     import cupy as cp
     import numpy as np
+    # JP: `Device`/`Program`/`LaunchConfig`/`launch` が Python から CUDA kernel を compile して投入する境界です。CuPy buffer の pointer と stream を合わせます。
     from cuda.core import (
         Device,
         EventOptions,
@@ -131,6 +132,7 @@ def _run_histogram(device, stream):
     print("\nCompiling CUDA kernels with cuda.core.Program...")
     arch = f"sm_{device.arch}"
     options = ProgramOptions(arch=arch)
+    # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
     program = Program(HISTOGRAM_KERNELS, code_type="c++", options=options)
     object_code = program.compile("cubin")
 
@@ -160,6 +162,7 @@ def _run_histogram(device, stream):
     stream.sync()
 
     # Launch global atomics kernel (hist_gpu is already zeros from cp.zeros)
+    # JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     launch(
         stream, config, kernel_global, data_gpu.data.ptr, hist_gpu.data.ptr, np.int32(n)
     )

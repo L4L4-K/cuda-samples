@@ -74,6 +74,7 @@ const char *sReference[] = {"ref_passthru.ppm", "ref_knn.ppm", "ref_nlm.ppm", "r
 ////////////////////////////////////////////////////////////////////////////////
 // OpenGL PBO and texture "names"
 GLuint                       gl_PBO, gl_Tex;
+// JP: `cudaGraphicsResource`, `cuda_pbo_resource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
 struct cudaGraphicsResource *cuda_pbo_resource; // handles OpenGL-CUDA exchange
 // Source image on the host side
 uchar4 *h_Src;
@@ -413,6 +414,7 @@ void initOpenGLBuffers()
 
 void cleanup()
 {
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(h_Src);
     checkCudaErrors(CUDA_FreeArray());
     checkCudaErrors(cudaGraphicsUnregisterResource(cuda_pbo_resource));
@@ -446,6 +448,7 @@ void runAutoTest(int argc, char **argv, const char *filename, int kernel_param)
 
     TColor        *d_dst = NULL;
     unsigned char *h_dst = NULL;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_dst, imageW * imageH * sizeof(TColor)));
     h_dst = (unsigned char *)malloc(imageH * imageW * 4);
 
@@ -455,8 +458,10 @@ void runAutoTest(int argc, char **argv, const char *filename, int kernel_param)
 
         runImageFilters(d_dst);
 
+        // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         checkCudaErrors(cudaDeviceSynchronize());
 
+        // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         checkCudaErrors(cudaMemcpy(h_dst, d_dst, imageW * imageH * sizeof(TColor), cudaMemcpyDeviceToHost));
         sdkSavePPM4ub(filename, h_dst, imageW, imageH);
     }

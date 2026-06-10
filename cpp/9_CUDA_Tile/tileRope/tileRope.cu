@@ -73,6 +73,7 @@ constexpr std::size_t INIT_N = cmax(Q_SIZE, cmax(K_SIZE, COS_SIZE));
  * are laid out as (COS_BS, SEQ_LEN, HALF_ROPE_DIM): one entry per
  * (batch, position, frequency-index) triple. */
 __global__ void initializeInputs(__half* q, __half* k, __half* cos, __half* sin) {
+  // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
   std::size_t tid = (std::size_t)blockIdx.x * blockDim.x + threadIdx.x;
 
   if (tid < Q_SIZE) {
@@ -223,6 +224,7 @@ int main() {
   __half* d_cos = nullptr;
   __half* d_sin = nullptr;
 
+  // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
   checkCudaErrors(cudaMalloc(&d_q,   Q_SIZE   * sizeof(__half)));
   checkCudaErrors(cudaMalloc(&d_k,   K_SIZE   * sizeof(__half)));
   checkCudaErrors(cudaMalloc(&d_cos, COS_SIZE * sizeof(__half)));
@@ -231,6 +233,7 @@ int main() {
   int threads_per_block = 256;
   int num_blocks        = (int)((INIT_N + threads_per_block - 1) / threads_per_block);
 
+  // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
   initializeInputs<<<num_blocks, threads_per_block>>>(d_q, d_k, d_cos, d_sin);
   checkCudaErrors(cudaGetLastError());
 
@@ -239,6 +242,7 @@ int main() {
   __half* h_k_in = new __half[K_SIZE];
   __half* h_cos  = new __half[COS_SIZE];
   __half* h_sin  = new __half[COS_SIZE];
+  // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
   checkCudaErrors(cudaMemcpy(h_q_in, d_q,   Q_SIZE   * sizeof(__half), cudaMemcpyDeviceToHost));
   checkCudaErrors(cudaMemcpy(h_k_in, d_k,   K_SIZE   * sizeof(__half), cudaMemcpyDeviceToHost));
   checkCudaErrors(cudaMemcpy(h_cos,  d_cos, COS_SIZE * sizeof(__half), cudaMemcpyDeviceToHost));
@@ -249,6 +253,7 @@ int main() {
       <<<BATCH * SEQ_LEN>>>(d_q, d_k, d_cos, d_sin);
   checkCudaErrors(cudaGetLastError());
 
+  // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
   checkCudaErrors(cudaDeviceSynchronize());
 
   __half* h_q_out = new __half[Q_SIZE];
@@ -261,6 +266,7 @@ int main() {
 
   printf("Success! RoPE matches expected results.\n");
 
+  // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
   checkCudaErrors(cudaFree(d_q));
   checkCudaErrors(cudaFree(d_k));
   checkCudaErrors(cudaFree(d_cos));

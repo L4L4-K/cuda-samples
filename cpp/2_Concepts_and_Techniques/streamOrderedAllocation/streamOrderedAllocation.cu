@@ -55,6 +55,7 @@
 /* Add two vectors on the GPU */
 __global__ void vectorAddGPU(const float *a, const float *b, float *c, int N)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (idx < N) {
@@ -68,6 +69,7 @@ int basicStreamOrderedAllocation(const int dev, const int nelem, const float *a,
     float  errorNorm, refNorm, ref, diff;
     size_t bytes = nelem * sizeof(float);
 
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t stream;
     printf("Starting basicStreamOrderedAllocation()\n");
     checkCudaErrors(cudaSetDevice(dev));
@@ -76,17 +78,21 @@ int basicStreamOrderedAllocation(const int dev, const int nelem, const float *a,
     checkCudaErrors(cudaMallocAsync(&d_a, bytes, stream));
     checkCudaErrors(cudaMallocAsync(&d_b, bytes, stream));
     checkCudaErrors(cudaMallocAsync(&d_c, bytes, stream));
+    // JP: `cudaMemcpyAsync`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpyAsync(d_a, a, bytes, cudaMemcpyHostToDevice, stream));
     checkCudaErrors(cudaMemcpyAsync(d_b, b, bytes, cudaMemcpyHostToDevice, stream));
 
     dim3 block(256);
     dim3 grid((unsigned int)ceil(nelem / (float)block.x));
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     vectorAddGPU<<<grid, block, 0, stream>>>(d_a, d_b, d_c, nelem);
 
+    // JP: `cudaFreeAsync`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFreeAsync(d_a, stream));
     checkCudaErrors(cudaFreeAsync(d_b, stream));
     checkCudaErrors(cudaMemcpyAsync(c, d_c, bytes, cudaMemcpyDeviceToHost, stream));
     checkCudaErrors(cudaFreeAsync(d_c, stream));
+    // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaStreamSynchronize(stream));
 
     /* Compare the results */

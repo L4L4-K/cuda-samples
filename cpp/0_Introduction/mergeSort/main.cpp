@@ -72,12 +72,14 @@ int main(int argc, char **argv)
     fillValues(h_SrcVal, N);
 
     printf("Allocating and initializing CUDA arrays...\n\n");
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_DstKey, N * sizeof(uint)));
     checkCudaErrors(cudaMalloc((void **)&d_DstVal, N * sizeof(uint)));
     checkCudaErrors(cudaMalloc((void **)&d_BufKey, N * sizeof(uint)));
     checkCudaErrors(cudaMalloc((void **)&d_BufVal, N * sizeof(uint)));
     checkCudaErrors(cudaMalloc((void **)&d_SrcKey, N * sizeof(uint)));
     checkCudaErrors(cudaMalloc((void **)&d_SrcVal, N * sizeof(uint)));
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(d_SrcKey, h_SrcKey, N * sizeof(uint), cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(d_SrcVal, h_SrcVal, N * sizeof(uint), cudaMemcpyHostToDevice));
 
@@ -85,6 +87,7 @@ int main(int argc, char **argv)
     initMergeSort();
 
     printf("Running GPU merge sort...\n");
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
     sdkResetTimer(&hTimer);
     sdkStartTimer(&hTimer);
@@ -98,6 +101,7 @@ int main(int argc, char **argv)
     checkCudaErrors(cudaMemcpy(h_DstVal, d_DstVal, N * sizeof(uint), cudaMemcpyDeviceToHost));
 
     printf("Inspecting the results...\n");
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     uint keysFlag = validateSortedKeys(h_DstKey, h_SrcKey, 1, N, numValues, DIR);
 
     uint valuesFlag = validateSortedValues(h_DstKey, h_DstVal, h_SrcKey, 1, N);
@@ -105,6 +109,7 @@ int main(int argc, char **argv)
     printf("Shutting down...\n");
     closeMergeSort();
     sdkDeleteTimer(&hTimer);
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_SrcVal));
     checkCudaErrors(cudaFree(d_SrcKey));
     checkCudaErrors(cudaFree(d_BufVal));

@@ -452,6 +452,7 @@ static s_CudaErrorStr sCudaDrvErrorString[] = {
 
 // This is just a linear search through the array, since the error_id's are not
 // always ocurring consecutively
+// JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
 inline const char *getCudaDrvErrorString(CUresult error_id) {
   int index = 0;
 

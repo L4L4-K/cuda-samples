@@ -84,6 +84,7 @@ typedef struct
     void *d_Buffer;
 
     // random number generator states
+    // JP: `curandState`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
     curandState *rngStates;
 
     // Pseudorandom samples count
@@ -96,6 +97,7 @@ typedef struct
 } TOptionPlan;
 
 extern "C" void initMonteCarloGPU(TOptionPlan *plan);
+// JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
 extern "C" void MonteCarloGPU(TOptionPlan *plan, cudaStream_t stream = 0);
 extern "C" void closeMonteCarloGPU(TOptionPlan *plan);
 

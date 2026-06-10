@@ -57,6 +57,7 @@ public:
 WindowsSecurityAttributes::WindowsSecurityAttributes()
 {
     m_winPSecurityDescriptor = (PSECURITY_DESCRIPTOR)calloc(1, SECURITY_DESCRIPTOR_MIN_LENGTH + 2 * sizeof(void **));
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(m_winPSecurityDescriptor != (PSECURITY_DESCRIPTOR)NULL);
 
     PSID *ppSID = (PSID *)((PBYTE)m_winPSecurityDescriptor + SECURITY_DESCRIPTOR_MIN_LENGTH);
@@ -96,6 +97,7 @@ WindowsSecurityAttributes::~WindowsSecurityAttributes()
     if (*ppACL) {
         LocalFree(*ppACL);
     }
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(m_winPSecurityDescriptor);
 }
 
@@ -238,6 +240,7 @@ void DX12CudaInterop::InitCuda()
             checkCudaErrors(cudaSetDevice(devId));
             m_cudaDeviceID = devId;
             m_nodeMask     = devProp.luidDeviceNodeMask;
+            // JP: `cudaStreamCreate`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
             checkCudaErrors(cudaStreamCreate(&m_streamToRun));
             printf("CUDA Device Used [%d] %s\n", devId, devProp.name);
             break;
@@ -345,6 +348,7 @@ void DX12CudaInterop::LoadAssets()
         HANDLE                    sharedHandle;
         WindowsSecurityAttributes windowsSecurityAttributes;
         LPCWSTR                   name = NULL;
+        // JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
         ThrowIfFailed(m_device->CreateSharedHandle(
             m_vertexBuffer.Get(), &windowsSecurityAttributes, GENERIC_ALL, name, &sharedHandle));
 
@@ -374,6 +378,7 @@ void DX12CudaInterop::LoadAssets()
         checkCudaErrors(
             cudaExternalMemoryGetMappedBuffer(&m_cudaDevVertptr, m_externalMemory, &externalMemoryBufferDesc));
         RunSineWaveKernel(vertBufWidth, vertBufHeight, (Vertex *)m_cudaDevVertptr, m_streamToRun, 1.0f);
+        // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         checkCudaErrors(cudaStreamSynchronize(m_streamToRun));
     }
 
@@ -438,6 +443,7 @@ void DX12CudaInterop::OnDestroy()
     WaitForGpu();
     checkCudaErrors(cudaDestroyExternalSemaphore(m_externalSemaphore));
     checkCudaErrors(cudaDestroyExternalMemory(m_externalMemory));
+    // JP: `cudaFree`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaFree(m_cudaDevVertptr));
     CloseHandle(m_fenceEvent);
 }

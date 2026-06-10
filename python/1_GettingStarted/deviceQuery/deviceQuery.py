@@ -36,6 +36,7 @@ import sys
 
 # cuda.bindings used for properties not yet exposed in cuda.core (see comments below)
 try:
+    # JP: `cudart`: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
     from cuda.bindings import driver as cuda, runtime as cudart
     from cuda.core import Device, system
 except ImportError as e:
@@ -156,6 +157,7 @@ def print_device_info(dev_id, device):
     )
 
     # cuda.bindings workaround: global memory (free/total) not in device.properties
+    # JP: `cuMemGetInfo`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     err, free_mem, total_mem_bytes = cuda.cuMemGetInfo()
     if err != cuda.CUresult.CUDA_SUCCESS:
         raise RuntimeError(f"Failed to get memory info: {err}")
@@ -200,6 +202,7 @@ def print_device_info(dev_id, device):
         "Total amount of constant memory:", f"{props.total_constant_memory} bytes"
     )
     print_property(
+        # JP: shared_memory: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
         "Total amount of shared memory per block:",
         f"{props.max_shared_memory_per_block} bytes",
     )

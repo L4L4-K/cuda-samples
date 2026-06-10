@@ -55,6 +55,7 @@
  * Values are bounded so the K-summed result fits comfortably in __half. */
 __global__ void initializeMatrices(__half* a, __half* b,
                                    int Q, int M, int N, int K) {
+  // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
   auto idx = blockIdx.x * blockDim.x + threadIdx.x;
   std::size_t a_size = std::size_t(Q) * M * K;
   std::size_t b_size = std::size_t(Q) * K * N;
@@ -185,6 +186,7 @@ int main() {
   __half* d_A = nullptr;
   __half* d_B = nullptr;
   __half* d_C = nullptr;
+  // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
   checkCudaErrors(cudaMalloc(&d_A, a_size * sizeof(__half)));
   checkCudaErrors(cudaMalloc(&d_B, b_size * sizeof(__half)));
   checkCudaErrors(cudaMalloc(&d_C, c_size * sizeof(__half)));
@@ -193,6 +195,7 @@ int main() {
   int init_threads = 256;
   std::size_t init_elems = (a_size > b_size) ? a_size : b_size;
   int init_blocks = int((init_elems + init_threads - 1) / init_threads);
+  // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
   initializeMatrices<<<init_blocks, init_threads>>>(d_A, d_B, Q, M, N, K);
   checkCudaErrors(cudaGetLastError());
 
@@ -200,6 +203,7 @@ int main() {
   __half* h_A = new __half[a_size];
   __half* h_B = new __half[b_size];
   __half* h_C_ref = new __half[c_size];
+  // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
   checkCudaErrors(cudaMemcpy(h_A, d_A, a_size * sizeof(__half), cudaMemcpyDeviceToHost));
   checkCudaErrors(cudaMemcpy(h_B, d_B, b_size * sizeof(__half), cudaMemcpyDeviceToHost));
 
@@ -239,6 +243,7 @@ int main() {
                         NUM_CTAS, OCCUPANCY>
       <<<dim3(grid_size, 1, 1)>>>(d_A, d_B, d_C);
   checkCudaErrors(cudaGetLastError());
+  // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
   checkCudaErrors(cudaDeviceSynchronize());
 
   __half* h_C = new __half[c_size];
@@ -258,6 +263,7 @@ int main() {
 
   printf("Success! BMM matches expected results.\n");
 
+  // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
   checkCudaErrors(cudaFree(d_A));
   checkCudaErrors(cudaFree(d_B));
   checkCudaErrors(cudaFree(d_C));

@@ -37,10 +37,12 @@ import sys
 
 try:
     import numpy as np
+    # JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
     from cuda.core import (
         Device,
         EventOptions,
         LaunchConfig,
+        # JP: `ManagedMemoryResource` は unified memory resource を Python object として保持します。host/device の移動と同期 timing を意識します。
         ManagedMemoryResource,
         ManagedMemoryResourceOptions,
         Program,
@@ -117,6 +119,7 @@ def compile_kernel(device, kernel_code, kernel_name):
     """Compile a CUDA kernel using cuda.core.Program."""
     arch = f"sm_{device.arch}"
     options = ProgramOptions(arch=arch)
+    # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
     program = Program(kernel_code, code_type="c++", options=options)
     compiled = program.compile(target_type="cubin")
     return compiled.get_kernel(kernel_name)
@@ -145,6 +148,7 @@ def benchmark_kernel_1d(
     )
 
     # Warm-up run
+    # JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     launch(stream, config, kernel, *args)
     stream.sync()
 
@@ -179,6 +183,7 @@ def print_gpu_info(device):
 def allocate_managed_array(mr, stream, n_elements, dtype=np.float32):
     """Allocate device-preferred unified memory and return buffer with numpy view."""
     n_bytes = n_elements * np.dtype(dtype).itemsize
+    # JP: streams_events: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     buffer = mr.allocate(n_bytes, stream=stream)
     stream.sync()
 
@@ -245,6 +250,7 @@ def demo_vector_add_tuning(device, stream, mr, kernel):
             f"({best['mean_time_ms']:.4f} ms)"
         )
         print(
+            # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
             f"[FAIL] WORST: block_size={worst['block_size']} "
             f"({worst['mean_time_ms']:.4f} ms)"
         )
@@ -264,6 +270,7 @@ def demo_vector_add_tuning(device, stream, mr, kernel):
 
 
 def demo_reduction_tuning(device, stream, mr, kernel):
+    # JP: shared_memory: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     """Demonstrate launch config tuning for reduction (shared memory)."""
     print("\n" + "=" * 60)
     print("REDUCTION - Launch Configuration Tuning")

@@ -56,8 +56,10 @@ const unsigned height = 512;
 
 // If 'err' is non-zero, emit an error message and exit.
 #define checkCudaErrors(err) __checkCudaErrors(err, __FILE__, __LINE__)
+// JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
 static void __checkCudaErrors(CUresult err, const char *filename, int line)
 {
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(filename);
     if (CUDA_SUCCESS != err) {
         const char    *ename = NULL;
@@ -293,6 +295,7 @@ int main(int argc, char **argv)
 
     // Device data.
     CUdeviceptr devBuffer;
+    // JP: `cuMemAlloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cuMemAlloc(&devBuffer, sizeof(float) * width * height * 4));
     float *data = new float[width * height * 4];
 
@@ -308,10 +311,12 @@ int main(int argc, char **argv)
     // Execute the kernel.
     outs() << "Launching kernel\n";
     void *params[] = {&devBuffer};
+    // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     checkCudaErrors(cuLaunchKernel(
         function, gridSizeX, gridSizeY, gridSizeZ, blockSizeX, blockSizeY, blockSizeZ, 0, NULL, params, NULL));
 
     // Retrieve the result data from the device.
+    // JP: `cuMemcpyDtoH`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cuMemcpyDtoH(&data[0], devBuffer, sizeof(float) * width * height * 4));
 
     writeDDS("mandelbrot.dds", data, width, height);
@@ -319,6 +324,7 @@ int main(int argc, char **argv)
 
     // Cleanup.
     delete[] data;
+    // JP: `cuMemFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cuMemFree(devBuffer));
     checkCudaErrors(cuModuleUnload(cudaModule));
     checkCudaErrors(cuCtxDestroy(context));

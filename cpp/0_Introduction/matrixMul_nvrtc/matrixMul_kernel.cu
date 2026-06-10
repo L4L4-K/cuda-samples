@@ -54,6 +54,7 @@ template <int BLOCK_SIZE> __device__ void matrixMulCUDA(float *C, float *A, floa
     // Handle to thread block group
     cooperative_groups::thread_block cta = cooperative_groups::this_thread_block();
     // Block index
+    // JP: `blockIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int bx = blockIdx.x;
     int by = blockIdx.y;
 
@@ -85,6 +86,7 @@ template <int BLOCK_SIZE> __device__ void matrixMulCUDA(float *C, float *A, floa
     for (int a = aBegin, b = bBegin; a <= aEnd; a += aStep, b += bStep) {
         // Declaration of the shared memory array As used to
         // store the sub-matrix of A
+        // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
         __shared__ float As[BLOCK_SIZE][BLOCK_SIZE];
 
         // Declaration of the shared memory array Bs used to
@@ -98,6 +100,7 @@ template <int BLOCK_SIZE> __device__ void matrixMulCUDA(float *C, float *A, floa
         Bs[ty][tx] = B[b + wB * ty + tx];
 
         // Synchronize to make sure the matrices are loaded
+        // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         cooperative_groups::sync(cta);
 
 // Multiply the two matrices together;

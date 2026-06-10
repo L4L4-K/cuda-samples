@@ -45,6 +45,7 @@ __global__ void WarpingKernel(int                 width,
                               float              *out,
                               cudaTextureObject_t texToWarp)
 {
+    // JP: `threadIdx`, `blockIdx`, `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     const int ix = threadIdx.x + blockIdx.x * blockDim.x;
     const int iy = threadIdx.y + blockIdx.y * blockDim.y;
 
@@ -102,5 +103,6 @@ static void WarpImage(const float *src, int w, int h, int s, const float *u, con
 
     checkCudaErrors(cudaCreateTextureObject(&texToWarp, &texRes, &texDescr, NULL));
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     WarpingKernel<<<blocks, threads>>>(w, h, s, u, v, out, texToWarp);
 }

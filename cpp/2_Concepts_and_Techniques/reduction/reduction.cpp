@@ -263,11 +263,13 @@ T benchmarkReduce(int                 n,
     bool needReadBack = true;
 
     T *d_intermediateSums;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_intermediateSums, sizeof(T) * numBlocks));
 
     for (int i = 0; i < testIterations; ++i) {
         gpu_result = 0;
 
+        // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         cudaDeviceSynchronize();
         sdkStartTimer(&timer);
 
@@ -280,6 +282,7 @@ T benchmarkReduce(int                 n,
         if (cpuFinalReduction) {
             // sum partial sums from each block on CPU
             // copy result from device to host
+            // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
             checkCudaErrors(cudaMemcpy(h_odata, d_odata, numBlocks * sizeof(T), cudaMemcpyDeviceToHost));
 
             for (int i = 0; i < numBlocks; i++) {
@@ -327,6 +330,7 @@ T benchmarkReduce(int                 n,
         // copy final sum from device to host
         checkCudaErrors(cudaMemcpy(&gpu_result, d_odata, sizeof(T), cudaMemcpyDeviceToHost));
     }
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_intermediateSums));
     return gpu_result;
 }

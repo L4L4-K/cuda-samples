@@ -95,9 +95,11 @@ extern "C"
             make_cudaPitchedPtr((void *)volumeData, size.width * sizeof(float4), size.width, size.height);
         copyParams.dstArray = noiseArray;
         copyParams.extent   = size;
+        // JP: `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         copyParams.kind     = cudaMemcpyHostToDevice;
         checkCudaErrors(cudaMemcpy3D(&copyParams));
 
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         free(volumeData);
 
         cudaResourceDesc texRes;

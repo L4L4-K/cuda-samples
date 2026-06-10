@@ -78,6 +78,7 @@ const dim3       windowGridSize(windowSize.x / windowBlockSize.x, windowSize.y /
 float lod = 0.5; // texture mip map level
 
 GLuint                       pbo;                      // OpenGL pixel buffer object
+// JP: `cudaGraphicsResource`, `cuda_pbo_resource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
 struct cudaGraphicsResource *cuda_pbo_resource = NULL; // CUDA Graphics Resource (to transfer PBO)
 
 bool animate = true;
@@ -289,18 +290,22 @@ void runAutoTest(const char *ref_file, char *exec_path)
 {
     size_t windowBytes = windowSize.x * windowSize.y * sizeof(GLubyte) * 4;
 
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_output, windowBytes));
 
     // render the volumeData
     renderAtlasImage(windowGridSize, windowBlockSize, d_output, windowSize.x, windowSize.y, lod);
 
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
     getLastCudaError("render_kernel failed");
 
     void *h_output = malloc(windowBytes);
+    // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(h_output, d_output, windowBytes, cudaMemcpyDeviceToHost));
     sdkDumpBin(h_output, (unsigned int)windowBytes, "bindlessTexture.bin");
 
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     bool bTestResult = sdkCompareBin2BinFloat("bindlessTexture.bin",
                                               sdkFindFilePath(ref_file, exec_path),
                                               windowSize.x * windowSize.y,
@@ -308,6 +313,7 @@ void runAutoTest(const char *ref_file, char *exec_path)
                                               THRESHOLD,
                                               exec_path);
 
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_output));
     free(h_output);
     deinitAtlasAndImages();

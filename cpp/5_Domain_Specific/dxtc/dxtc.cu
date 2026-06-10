@@ -65,6 +65,7 @@ __constant__ float3 kColorMetric = {1.0f, 1.0f, 1.0f};
 ////////////////////////////////////////////////////////////////////////////////
 __device__ void sortColors(const float *values, int *ranks, cg::thread_group tile)
 {
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     const int tid = threadIdx.x;
 
     int rank = 0;
@@ -77,6 +78,7 @@ __device__ void sortColors(const float *values, int *ranks, cg::thread_group til
 
     ranks[tid] = rank;
 
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(tile);
 
     // Resolve elements with the same index.
@@ -101,6 +103,7 @@ __device__ void loadColorBlock(const uint      *image,
     const int bid = blockIdx.x + blockOffset;
     const int idx = threadIdx.x;
 
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ float dps[16];
 
     float3 tmp;
@@ -542,6 +545,7 @@ void BlockDXT1::decompress(Color32 *colors) const
     }
 }
 
+// JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
 static int compareColors(const Color32 *b0, const Color32 *b1)
 {
     int sum = 0;
@@ -622,6 +626,7 @@ int main(int argc, char **argv)
 
     // copy into global mem
     uint *d_data = NULL;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_data, memSize));
 
     // Result
@@ -637,6 +642,7 @@ int main(int argc, char **argv)
     // Copy permutations host to devie.
     uint *d_permutations = NULL;
     checkCudaErrors(cudaMalloc((void **)&d_permutations, 1024 * sizeof(uint)));
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(d_permutations, permutations, 1024 * sizeof(uint), cudaMemcpyHostToDevice));
 
     // create a timer
@@ -672,6 +678,7 @@ int main(int argc, char **argv)
         }
 
         for (int j = 0; j < (int)blocks; j += blocksPerLaunch) {
+            // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
             compress<<<min(blocksPerLaunch, blocks - j), NUM_THREADS>>>(d_permutations, d_data, (uint2 *)d_result, j);
         }
     }
@@ -776,6 +783,7 @@ int main(int argc, char **argv)
     rms /= w * h * 3;
 
     // Free allocated resources and exit
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_permutations));
     checkCudaErrors(cudaFree(d_data));
     checkCudaErrors(cudaFree(d_result));

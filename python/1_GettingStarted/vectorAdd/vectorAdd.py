@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "Utilities"))
 from cuda_samples_utils import verify_array_result  # noqa: E402
 
 try:
+    # JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
     import cupy as cp
     from cuda.core import Device, LaunchConfig, Program, ProgramOptions, launch
 except ImportError as e:
@@ -100,6 +101,7 @@ def vector_add_cuda_core(num_elements=50000, device_id=0, verify=True):
         # Compile kernel
         print("Compiling kernel 'vectorAdd<float>'...")
         program_options = ProgramOptions(std="c++17", arch=f"sm_{device.arch}")
+        # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
         program = Program(VECTOR_ADD_KERNEL, code_type="c++", options=program_options)
         module = program.compile("cubin", name_expressions=("vectorAdd<float>",))
         kernel = module.get_kernel("vectorAdd<float>")
@@ -128,6 +130,7 @@ def vector_add_cuda_core(num_elements=50000, device_id=0, verify=True):
         config = LaunchConfig(grid=blocks_per_grid, block=threads_per_block)
 
         # Launch kernel
+        # JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         launch(
             stream,
             config,

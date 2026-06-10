@@ -103,8 +103,10 @@ void runTest(int argc, char **argv)
 
     // Allocate device memory for signal
     Complex *d_signal;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&d_signal), mem_size));
     // Copy host memory to device
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(d_signal, h_padded_signal, mem_size, cudaMemcpyHostToDevice));
 
     // Allocate device memory for filter kernel
@@ -115,6 +117,7 @@ void runTest(int argc, char **argv)
     checkCudaErrors(cudaMemcpy(d_filter_kernel, h_padded_filter_kernel, mem_size, cudaMemcpyHostToDevice));
 
     // CUFFT plan simple API
+    // JP: `cufftHandle`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
     cufftHandle plan;
     checkCudaErrors(cufftPlan1d(&plan, new_size, CUFFT_C2C, 1));
 
@@ -138,6 +141,7 @@ void runTest(int argc, char **argv)
                                  CUFFT_FORWARD));
 
     // Multiply the coefficients together and normalize the result
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     printf("Launching ComplexPointwiseMulAndScale<<< >>>\n");
     ComplexPointwiseMulAndScale<<<32, 256>>>(d_signal, d_filter_kernel, new_size, 1.0f / new_size);
 
@@ -160,6 +164,7 @@ void runTest(int argc, char **argv)
     Convolve(h_signal, SIGNAL_SIZE, h_filter_kernel, FILTER_KERNEL_SIZE, h_convolved_signal_ref);
 
     // check result
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     bool bTestResult = sdkCompareL2fe(reinterpret_cast<float *>(h_convolved_signal_ref),
                                       reinterpret_cast<float *>(h_convolved_signal),
                                       2 * SIGNAL_SIZE,
@@ -170,6 +175,7 @@ void runTest(int argc, char **argv)
     checkCudaErrors(cufftDestroy(plan_adv));
 
     // cleanup memory
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(h_signal);
     free(h_filter_kernel);
     free(h_padded_signal);
@@ -273,6 +279,7 @@ static __device__ __host__ inline Complex ComplexMul(Complex a, Complex b)
 // Complex pointwise multiplication
 static __global__ void ComplexPointwiseMulAndScale(Complex *a, const Complex *b, int size, float scale)
 {
+    // JP: `blockDim`, `gridDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     const int numThreads = blockDim.x * gridDim.x;
     const int threadID   = blockIdx.x * blockDim.x + threadIdx.x;
 

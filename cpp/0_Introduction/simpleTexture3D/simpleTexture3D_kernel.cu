@@ -44,6 +44,7 @@ cudaTextureObject_t tex; // 3D texture
 
 __global__ void d_render(uint *d_output, uint imageW, uint imageH, float w, cudaTextureObject_t texObj)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     uint x = __umul24(blockIdx.x, blockDim.x) + threadIdx.x;
     uint y = __umul24(blockIdx.y, blockDim.y) + threadIdx.y;
 
@@ -62,6 +63,7 @@ __global__ void d_render(uint *d_output, uint imageW, uint imageH, float w, cuda
 extern "C" void setTextureFilterMode(bool bLinearFilter)
 {
     if (tex) {
+        // JP: `cudaDestroyTextureObject`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         checkCudaErrors(cudaDestroyTextureObject(tex));
     }
     cudaResourceDesc texRes;
@@ -96,6 +98,7 @@ extern "C" void initCuda(const uchar *h_volume, cudaExtent volumeSize)
         make_cudaPitchedPtr((void *)h_volume, volumeSize.width * sizeof(uchar), volumeSize.width, volumeSize.height);
     copyParams.dstArray = d_volumeArray;
     copyParams.extent   = volumeSize;
+    // JP: `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     copyParams.kind     = cudaMemcpyHostToDevice;
     checkCudaErrors(cudaMemcpy3D(&copyParams));
 
@@ -123,6 +126,7 @@ extern "C" void initCuda(const uchar *h_volume, cudaExtent volumeSize)
 
 extern "C" void render_kernel(dim3 gridSize, dim3 blockSize, uint *d_output, uint imageW, uint imageH, float w)
 {
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     d_render<<<gridSize, blockSize>>>(d_output, imageW, imageH, w, tex);
 }
 
@@ -132,6 +136,7 @@ void cleanupCuda()
         checkCudaErrors(cudaDestroyTextureObject(tex));
     }
     if (d_volumeArray) {
+        // JP: `cudaFreeArray`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
         checkCudaErrors(cudaFreeArray(d_volumeArray));
     }
 }

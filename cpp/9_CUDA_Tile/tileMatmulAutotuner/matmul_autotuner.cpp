@@ -68,6 +68,7 @@ static int smValue = 0;
 static constexpr const char *kMatmulKernelName = "matmul_tile";
 
 CompilerBackend parseCompilerBackendValue(const char *value) {
+    // JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
     if (std::strcmp(value, "nvrtc") == 0) {
         return CompilerBackend::NVRTC;
     }
@@ -112,6 +113,7 @@ CompilerBackend parseCompilerBackendArgs(int argc, char** argv, std::vector<char
 }
 
 void setSMValue() {
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     CUdevice device;
     int major = 0, minor = 0;
 
@@ -156,6 +158,7 @@ void loadAndExecuteKernel(const CompiledKernel& compiled_kernel,
     checkCudaErrors(cuModuleLoadData(&module, compiled_kernel.image.data()));
 
     checkCudaErrors(cuModuleGetFunction(&kernel_addr, module, kMatmulKernelName));
+    // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     checkCudaErrors(cuLaunchKernel(kernel_addr,
                 gridDimX, gridDimY, 1,  // grid dim
                 1, 1, 1,                // block dim
@@ -192,9 +195,11 @@ void autotuner(int M, int N, int K,
 
     // allocate device memory
     CUdeviceptr d_A, d_B, d_C;
+    // JP: `cuMemAlloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cuMemAlloc(&d_A, M * K * sizeof(__half)));
     checkCudaErrors(cuMemAlloc(&d_B, K * N * sizeof(__half)));
     checkCudaErrors(cuMemAlloc(&d_C, M * N * sizeof(float)));
+    // JP: `cuMemcpyHtoD`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cuMemcpyHtoD(d_A, h_A.data(), M * K * sizeof(__half)));
     checkCudaErrors(cuMemcpyHtoD(d_B, h_B.data(), K * N * sizeof(__half)));
 
@@ -283,6 +288,7 @@ void autotuner(int M, int N, int K,
     printf("  Performance: %.1f GFLOPS, %.3f ms, %.1f GB/s\n",
            best->result.gflops, best->result.time_ms, best->result.bandwidth_gb_s);
 
+    // JP: `cuMemFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cuMemFree(d_A));
     checkCudaErrors(cuMemFree(d_B));
     checkCudaErrors(cuMemFree(d_C));

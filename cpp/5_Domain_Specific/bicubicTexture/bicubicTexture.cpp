@@ -131,6 +131,7 @@ eFilterMode g_FilterMode = MODE_FAST_BICUBIC;
 bool drawCurves = false;
 
 GLuint                       pbo = 0;           // OpenGL pixel buffer object
+// JP: `cudaGraphicsResource`, `cuda_pbo_resource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
 struct cudaGraphicsResource *cuda_pbo_resource; // handles OpenGL-CUDA exchange
 GLuint                       displayTex = 0;
 GLuint                       bufferTex  = 0;
@@ -523,6 +524,7 @@ void runBenchmark(int iterations)
         render(imageWidth, imageHeight, tx, ty, scale, cx, cy, blockSize, gridSize, g_FilterMode, d_output);
     }
 
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cudaDeviceSynchronize();
     sdkStopTimer(&timer);
     float time = sdkGetTimerValue(&timer) / (float)iterations;
@@ -546,6 +548,7 @@ void runAutoTest(int argc, char **argv, const char *dump_filename, eFilterMode f
     loadImageData(argc, argv);
 
     uchar4 *d_output;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_output, imageWidth * imageHeight * 4));
     unsigned int *h_result = (unsigned int *)malloc(width * height * sizeof(unsigned int));
 
@@ -557,10 +560,12 @@ void runAutoTest(int argc, char **argv, const char *dump_filename, eFilterMode f
     getLastCudaError("Error: render (bicubicTexture) Kernel execution FAILED");
     checkCudaErrors(cudaDeviceSynchronize());
 
+    // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     cudaMemcpy(h_result, d_output, imageWidth * imageHeight * 4, cudaMemcpyDeviceToHost);
 
     sdkSavePPM4ub(dump_filename, (unsigned char *)h_result, imageWidth, imageHeight);
 
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_output));
     free(h_result);
 }

@@ -148,6 +148,7 @@ __global__ void qsort_warp(unsigned        *indata,
                            unsigned int     depth)
 {
     // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     cg::thread_block cta = cg::this_thread_block();
     // Find my data offset, based on warp ID
     unsigned int thread_id = threadIdx.x + (blockIdx.x << QSORT_BLOCKSIZE_SHIFT);
@@ -228,6 +229,7 @@ __global__ void qsort_warp(unsigned        *indata,
             unsigned int lt_len = atomicData->lt_offset;
             unsigned int gt_len = atomicData->gt_offset;
 
+            // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
             cudaStream_t lstream, rstream;
             cudaStreamCreateWithFlags(&lstream, cudaStreamNonBlocking);
             cudaStreamCreateWithFlags(&rstream, cudaStreamNonBlocking);
@@ -243,6 +245,7 @@ __global__ void qsort_warp(unsigned        *indata,
             // though)
             if (lt_len == 0) {
                 if (source_is_indata)
+                    // JP: `cudaMemcpyAsync`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
                     cudaMemcpyAsync(indata + offset,
                                     outdata + offset,
                                     gt_len * sizeof(unsigned),
@@ -261,6 +264,7 @@ __global__ void qsort_warp(unsigned        *indata,
                     // re-use "indata" as the out-of-range tracking buffer. For (2^n)+1
                     // elements we need (2^(n+1)) bytes of oor buffer. The backup qsort
                     // buffer is at least this large when sizeof(QTYPE) >= 2.
+                    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
                     big_bitonicsort<<<1, BITONICSORT_LEN, 0, lstream>>>(
                         outdata, source_is_indata ? indata : outdata, indata, offset, lt_len);
                 }
@@ -353,6 +357,7 @@ float run_quicksort_cdp(unsigned *gpudata, unsigned *scratchdata, unsigned int c
 
     // This is the stack, for atomic tracking of each sort's status
     qsortAtomicData *gpustack;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&gpustack, stacksize * sizeof(qsortAtomicData)));
     checkCudaErrors(cudaMemset(gpustack, 0, sizeof(qsortAtomicData))); // Only need set first entry to 0
 
@@ -387,6 +392,7 @@ float run_quicksort_cdp(unsigned *gpudata, unsigned *scratchdata, unsigned int c
 
     checkCudaErrors(cudaGetLastError());
     checkCudaErrors(cudaEventRecord(ev2));
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
 
     float elapse = 0.0f;
@@ -408,6 +414,7 @@ float run_quicksort_cdp(unsigned *gpudata, unsigned *scratchdata, unsigned int c
     }
 
     // Release our stack data once we're done
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(ringbuf));
     checkCudaErrors(cudaFree(gpustack));
 

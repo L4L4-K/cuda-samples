@@ -76,6 +76,7 @@ inline int cudaDeviceInit(int argc, const char **argv)
 
 // Error handler for FreeImage library.
 //  In case this handler is invoked, it throws an NPP exception.
+// JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
 extern "C" void FreeImageErrorHandler(FREE_IMAGE_FORMAT oFif, const char *zMessage) { throw npp::Exception(zMessage); }
 
 std::ostream &operator<<(std::ostream &rOutputStream, const FIBITMAP &rBitmap)
@@ -171,6 +172,7 @@ int main(int argc, char *argv[])
         if (cudaError != cudaSuccess)
             return NPP_NOT_SUFFICIENT_COMPUTE_CAPABILITY;
 
+        // JP: `cudaError`, `cudaStreamGetFlags`, `nppStreamCtx`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
         cudaError = cudaStreamGetFlags(nppStreamCtx.hStream, &nppStreamCtx.nStreamFlags);
 
         cudaDeviceProp oDeviceProperties;
@@ -264,6 +266,7 @@ int main(int argc, char *argv[])
         NPP_ASSERT_NOT_NULL(pSrcImageCUDA);
         // copy image loaded via FreeImage to into CUDA device memory, i.e.
         // transfer the image-data up to the GPU's video-memory
+        // JP: `cudaMemcpy2D`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         NPP_CHECK_CUDA(cudaMemcpy2D(
             pSrcImageCUDA, nSrcPitchCUDA, pSrcData, nSrcPitch, nImageWidth, nImageHeight, cudaMemcpyHostToDevice));
 

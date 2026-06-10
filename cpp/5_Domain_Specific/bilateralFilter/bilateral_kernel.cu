@@ -55,6 +55,7 @@ size_t pitch;
     the sample just uses a simple pixel by pixel step.
 
     Texture fetches automatically clamp to edge of image. 1D gaussian array
+    // JP: shared_memory: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     is mapped to a 1D texture instead of using shared memory, which may
     cause severe bank conflict.
 
@@ -100,6 +101,7 @@ __device__ float4 rgbaIntToFloat(uint c)
 // column pass using coalesced global memory reads
 __global__ void d_bilateral_filter(uint *od, int w, int h, float e_d, int r, cudaTextureObject_t rgbaTex)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -129,8 +131,10 @@ __global__ void d_bilateral_filter(uint *od, int w, int h, float e_d, int r, cud
 extern "C" void initTexture(int width, int height, uint *hImage)
 {
     // copy image data to array
+    // JP: `cudaMallocPitch`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMallocPitch(&dImage, &pitch, sizeof(uint) * width, height));
     checkCudaErrors(cudaMallocPitch(&dTemp, &pitch, sizeof(uint) * width, height));
+    // JP: `cudaMemcpy2D`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy2D(
         dImage, pitch, hImage, sizeof(uint) * width, sizeof(uint) * width, height, cudaMemcpyHostToDevice));
 
@@ -177,6 +181,7 @@ extern "C" void initTexture(int width, int height, uint *hImage)
 
 extern "C" void freeTextures()
 {
+    // JP: `cudaDestroyTextureObject`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaDestroyTextureObject(rgbaTexdImage));
     checkCudaErrors(cudaDestroyTextureObject(rgbaTexdTemp));
     checkCudaErrors(cudaFree(dImage));
@@ -236,6 +241,7 @@ extern "C" double bilateralFilterRGBA(uint               *dDest,
     for (int i = 0; i < iterations; i++) {
         // sync host and start kernel computation timer
         dKernelTime = 0.0;
+        // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         checkCudaErrors(cudaDeviceSynchronize());
         sdkResetTimer(&timer);
 
@@ -243,6 +249,7 @@ extern "C" double bilateralFilterRGBA(uint               *dDest,
         dim3 blockSize(16, 16);
 
         if (iterations > 1) {
+            // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
             d_bilateral_filter<<<gridSize, blockSize>>>(dDest, width, height, e_d, radius, rgbaTexdTemp);
         }
         else {

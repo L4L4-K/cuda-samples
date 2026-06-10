@@ -42,7 +42,9 @@ const int manualBlockSize = 32;
 ////////////////////////////////////////////////////////////////////////////////
 __global__ void square(uint32_t *array, int arrayCount)
 {
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     extern __shared__ int dynamicSmem[];
+    // JP: `threadIdx`, `blockIdx`, `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int                   idx = threadIdx.x + blockIdx.x * blockDim.x;
 
     if (idx < arrayCount) {
@@ -108,6 +110,7 @@ static int launchConfig(uint32_t *array, int arrayCount, bool automatic)
     int    gridSize;
     size_t dynamicSMemUsage = 0;
 
+    // JP: `cudaEvent_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaEvent_t start;
     cudaEvent_t end;
 
@@ -141,9 +144,11 @@ static int launchConfig(uint32_t *array, int arrayCount, bool automatic)
     // Launch and profile
     //
     checkCudaErrors(cudaEventRecord(start));
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     square<<<gridSize, blockSize, dynamicSMemUsage>>>(array, arrayCount);
     checkCudaErrors(cudaEventRecord(end));
 
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
 
     // Calculate occupancy
@@ -178,7 +183,9 @@ static int test(bool automaticLaunchConfig, const int count = 1000000)
         array[i] = i;
     }
 
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc(&dArray, size));
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(dArray, array, size, cudaMemcpyHostToDevice));
 
     for (uint32_t i = 0; i < count; i += 1) {
@@ -188,6 +195,7 @@ static int test(bool automaticLaunchConfig, const int count = 1000000)
     launchConfig(dArray, count, automaticLaunchConfig);
 
     checkCudaErrors(cudaMemcpy(array, dArray, size, cudaMemcpyDeviceToHost));
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(dArray));
 
     // Verify the return data

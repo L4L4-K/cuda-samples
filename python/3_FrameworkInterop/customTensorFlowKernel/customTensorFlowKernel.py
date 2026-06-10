@@ -52,6 +52,7 @@ import sys
 
 try:
     # CuPy is required for array operations and device pointer access
+    # JP: TensorFlow tensor を CuPy/CUDA pointer に橋渡しし、Python framework と custom CUDA kernel の所有境界をここから追います。
     import cupy as cp
     import tensorflow as tf
     from cuda.core import (
@@ -127,6 +128,7 @@ def _get_relu_kernels(device):
     if key not in _kernel_cache:
         # Compile the kernel with appropriate architecture
         opts = ProgramOptions(std="c++17", arch=f"sm_{device.arch}")
+        # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
         prog = Program(RELU_KERNEL, code_type="c++", options=opts)
         mod = prog.compile("cubin")
         forward_kernel = mod.get_kernel("relu_forward_kernel")
@@ -168,6 +170,7 @@ def _launch_relu_forward(x_np):
     config = LaunchConfig(grid=blocks_per_grid, block=threads_per_block)
 
     # Launch on the legacy default stream (stream 0) for TensorFlow interop
+    # JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     launch(
         LEGACY_DEFAULT_STREAM, config, forward_kernel, x_cp.data.ptr, y_cp.data.ptr, n
     )
@@ -336,6 +339,7 @@ def main():
         print(f"Max absolute error: {max_error:.2e}")
 
         if tf.reduce_all(tf.abs(y_custom - y_reference) < 1e-5):
+            # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
             print("[PASS] Forward pass PASSED")
         else:
             print("[FAIL] Forward pass FAILED")

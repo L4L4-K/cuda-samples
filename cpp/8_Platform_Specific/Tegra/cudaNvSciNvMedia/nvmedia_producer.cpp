@@ -351,6 +351,7 @@ void cleanupNvMedia(Blit2DTest *ctx, NvSciSyncObj &syncObj, NvSciSyncObj &preSyn
 void cleanupNvMedia(Blit2DTest *ctx)
 {
     cleanup(ctx);
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(ctx->dstBuffPitches);
     free(ctx->dstBuffer);
     free(ctx->dstBuff);

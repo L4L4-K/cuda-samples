@@ -54,6 +54,7 @@ template <typename Input> struct IsGreaterEqualThan
 // CUDA kernels.
 __global__ void addScalar(uint *array, int scalar, uint size)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     uint tid = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (tid < size) {

@@ -187,6 +187,7 @@ float dIsoValue = 0.005f;
 // device data
 GLuint                       posVbo, normalVbo;
 GLint                        gl_Shader;
+// JP: `cudaGraphicsResource`, `cuda_posvbo_resource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
 struct cudaGraphicsResource *cuda_posvbo_resource,
     *cuda_normalvbo_resource; // handles OpenGL-CUDA exchange
 
@@ -330,8 +331,10 @@ uchar *loadRawFile(char *filename, int size)
 void dumpFile(void *dData, int data_bytes, const char *file_name)
 {
     void *hData = malloc(data_bytes);
+    // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(hData, dData, data_bytes, cudaMemcpyDeviceToHost));
     sdkDumpBin(hData, data_bytes, file_name);
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(hData);
 }
 
@@ -369,6 +372,7 @@ void runAutoTest(int argc, char **argv)
     switch (dump_option) {
     case DUMP_POS:
         dumpFile((void *)d_pos, sizeof(float4) * maxVerts, "marchCube_posArray.bin");
+        // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         bTestResult = sdkCompareBin2BinFloat(
             "marchCube_posArray.bin", "posArray.bin", maxVerts * sizeof(float) * 4, EPSILON, THRESHOLD, argv[0]);
         break;
@@ -484,6 +488,7 @@ void initMC(int argc, char **argv)
 
     int    size   = gridSize.x * gridSize.y * gridSize.z * sizeof(uchar);
     uchar *volume = loadRawFile(path, size);
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_volume, size));
     checkCudaErrors(cudaMemcpy(d_volume, volume, size, cudaMemcpyHostToDevice));
     free(volume);

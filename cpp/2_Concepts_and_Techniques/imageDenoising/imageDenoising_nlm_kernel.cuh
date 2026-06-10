@@ -31,6 +31,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 __global__ void NLM(TColor *dst, int imageW, int imageH, float Noise, float lerpC, cudaTextureObject_t texImage)
 {
+    // JP: `blockDim`, `blockIdx`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     const int ix = blockDim.x * blockIdx.x + threadIdx.x;
     const int iy = blockDim.y * blockIdx.y + threadIdx.y;
     // Add half of a texel to always address exact texel centers
@@ -97,6 +98,7 @@ extern "C" void cuda_NLM(TColor *d_dst, int imageW, int imageH, float Noise, flo
     dim3 threads(BLOCKDIM_X, BLOCKDIM_Y);
     dim3 grid(iDivUp(imageW, BLOCKDIM_X), iDivUp(imageH, BLOCKDIM_Y));
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     NLM<<<grid, threads>>>(d_dst, imageW, imageH, Noise, lerpC, texImage);
 }
 

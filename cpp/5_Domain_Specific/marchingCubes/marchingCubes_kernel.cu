@@ -49,7 +49,9 @@ cudaTextureObject_t volumeTex;
 
 extern "C" void allocateTextures(uint **d_edgeTable, uint **d_triTable, uint **d_numVertsTable)
 {
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)d_edgeTable, 256 * sizeof(uint)));
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy((void *)*d_edgeTable, (void *)edgeTable, 256 * sizeof(uint), cudaMemcpyHostToDevice));
     cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc(32, 0, 0, 0, cudaChannelFormatKindUnsigned);
 
@@ -118,6 +120,7 @@ extern "C" void createVolumeTexture(uchar *d_volume, size_t buffSize)
 
 extern "C" void destroyAllTextureObjects()
 {
+    // JP: `cudaDestroyTextureObject`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaDestroyTextureObject(triTex));
     checkCudaErrors(cudaDestroyTextureObject(numVertsTex));
     checkCudaErrors(cudaDestroyTextureObject(volumeTex));
@@ -184,6 +187,7 @@ __global__ void classifyVoxel(uint               *voxelVerts,
                               cudaTextureObject_t numVertsTex,
                               cudaTextureObject_t volumeTex)
 {
+    // JP: `blockIdx`, `gridDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     uint blockId = __mul24(blockIdx.y, gridDim.x) + blockIdx.x;
     uint i       = __mul24(blockId, blockDim.x) + threadIdx.x;
 
@@ -250,6 +254,7 @@ extern "C" void launch_classifyVoxel(dim3   grid,
                                      float  isoValue)
 {
     // calculate number of vertices need per voxel
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     classifyVoxel<<<grid, threads>>>(voxelVerts,
                                      voxelOccupied,
                                      volume,
@@ -380,6 +385,7 @@ __global__ void generateTriangles(float4             *pos,
 
 #if USE_SHARED
     // use partioned shared memory to avoid using local memory
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ float3 vertlist[12 * NTHREADS];
     __shared__ float3 normlist[12 * NTHREADS];
 
@@ -456,6 +462,7 @@ __global__ void generateTriangles(float4             *pos,
                   field[7],
                   vertlist[threadIdx.x + (NTHREADS * 11)],
                   normlist[threadIdx.x + (NTHREADS * 11)]);
+    // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     __syncthreads();
 
 #else

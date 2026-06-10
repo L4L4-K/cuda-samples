@@ -111,9 +111,12 @@ __global__ void cdp_simple_quicksort(unsigned int *data, int left, int right, in
 
     // Launch a new block to sort the left part.
     if (left < (rptr - data)) {
+        // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
         cudaStream_t s;
         cudaStreamCreateWithFlags(&s, cudaStreamNonBlocking);
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         cdp_simple_quicksort<<<1, 1, 0, s>>>(data, left, nright, depth + 1);
+        // JP: `cudaStreamDestroy`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         cudaStreamDestroy(s);
     }
 
@@ -138,6 +141,7 @@ void run_qsort(unsigned int *data, unsigned int nitems)
     int right = nitems - 1;
     std::cout << "Launching kernel on the GPU" << std::endl;
     cdp_simple_quicksort<<<1, 1>>>(data, left, right, 0);
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
 }
 
@@ -160,6 +164,7 @@ void initialize_data(unsigned int *dst, unsigned int nitems)
 void check_results(int n, unsigned int *results_d)
 {
     unsigned int *results_h = new unsigned[n];
+    // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(results_h, results_d, n * sizeof(unsigned), cudaMemcpyDeviceToHost));
 
     for (int i = 1; i < n; ++i)
@@ -228,6 +233,7 @@ int main(int argc, char **argv)
     }
 
     // Allocate GPU memory.
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_data, num_items * sizeof(unsigned int)));
     checkCudaErrors(cudaMemcpy(d_data, h_data, num_items * sizeof(unsigned int), cudaMemcpyHostToDevice));
 

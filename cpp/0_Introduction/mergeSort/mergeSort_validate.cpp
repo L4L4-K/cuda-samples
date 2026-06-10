@@ -37,6 +37,7 @@
 // Validate sorted keys array (check for integrity and proper order)
 ////////////////////////////////////////////////////////////////////////////////
 extern "C" uint
+// JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
 validateSortedKeys(uint *resKey, uint *srcKey, uint batchSize, uint arrayLength, uint numValues, uint sortDir)
 {
     uint *srcHist;
@@ -88,6 +89,7 @@ validateSortedKeys(uint *resKey, uint *srcKey, uint batchSize, uint arrayLength,
     }
 
 brk:
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(resHist);
     free(srcHist);
 

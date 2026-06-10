@@ -44,6 +44,7 @@
 extern "C" void
 padKernel(float *d_Dst, float *d_Src, int fftH, int fftW, int kernelH, int kernelW, int kernelY, int kernelX)
 {
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(d_Src != d_Dst);
     dim3 threads(32, 8);
     dim3 grid(iDivUp(kernelW, threads.x), iDivUp(kernelH, threads.y));
@@ -70,6 +71,7 @@ padKernel(float *d_Dst, float *d_Src, int fftH, int fftW, int kernelH, int kerne
     checkCudaErrors(cudaCreateTextureObject(&texFloat, &texRes, &texDescr, NULL));
 #endif
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     padKernel_kernel<<<grid, threads>>>(d_Dst,
                                         d_Src,
                                         fftH,
@@ -86,6 +88,7 @@ padKernel(float *d_Dst, float *d_Src, int fftH, int fftW, int kernelH, int kerne
     getLastCudaError("padKernel_kernel<<<>>> execution failed\n");
 
 #if (USE_TEXTURE)
+    // JP: `cudaDestroyTextureObject`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaDestroyTextureObject(texFloat));
 #endif
 }

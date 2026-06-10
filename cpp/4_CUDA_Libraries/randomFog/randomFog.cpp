@@ -367,6 +367,7 @@ void reCreate(void)
 void cleanup(int code)
 {
     if (g_pRng) {
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         delete g_pRng;
         g_pRng = NULL;
     }
@@ -584,6 +585,7 @@ void showHelp(void)
     ss << "\nRandom number visualization\n\n";
     ss << "On creation, randomFog generates 200,000 random coordinates in "
           "spherical coordinate space (radius, angle rho, angle theta) with "
+          // JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
           "curand's XORWOW algorithm. The coordinates are normalized for a "
           "uniform distribution through the sphere.\n\n";
     ss << "The X axis is drawn with blue in the negative direction and yellow "
@@ -602,6 +604,7 @@ void showHelp(void)
           "surface (shEll)\n";
     ss << "\t" << setw(10) << "b"
        << "Generate a new set of random numbers and display as cartesian "
+          // JP: `cuBe`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
           "coordinates (cuBe/Box)\n";
     ss << "\t" << setw(10) << "p"
        << "Generate a new set of random numbers and display on a cartesian plane "
@@ -696,6 +699,7 @@ int main(int argc, char **argv)
             g_pCheckRender->setExecPath(argv[0]);
             g_pCheckRender->dumpBin(g_pVertices, g_nVerticesPopulated * sizeof(SVertex), "randomFog.bin");
 
+            // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
             if (g_pCheckRender->compareBin2BinFloat("randomFog.bin",
                                                     "ref_randomFog.bin",
                                                     g_nVerticesPopulated * sizeof(SVertex) / sizeof(float),

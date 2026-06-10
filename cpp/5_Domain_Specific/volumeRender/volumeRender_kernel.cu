@@ -129,6 +129,7 @@ __global__ void d_render(uint               *d_output,
     const float3 boxMin           = make_float3(-1.0f, -1.0f, -1.0f);
     const float3 boxMax           = make_float3(1.0f, 1.0f, 1.0f);
 
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     uint x = blockIdx.x * blockDim.x + threadIdx.x;
     uint y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -201,6 +202,7 @@ __global__ void d_render(uint               *d_output,
 extern "C" void setTextureFilterMode(bool bLinearFilter)
 {
     if (texObject) {
+        // JP: `cudaDestroyTextureObject`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         checkCudaErrors(cudaDestroyTextureObject(texObject));
     }
     cudaResourceDesc texRes;
@@ -236,6 +238,7 @@ extern "C" void initCuda(void *h_volume, cudaExtent volumeSize)
         make_cudaPitchedPtr(h_volume, volumeSize.width * sizeof(VolumeType), volumeSize.width, volumeSize.height);
     copyParams.dstArray = d_volumeArray;
     copyParams.extent   = volumeSize;
+    // JP: `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     copyParams.kind     = cudaMemcpyHostToDevice;
     checkCudaErrors(cudaMemcpy3D(&copyParams));
 
@@ -319,6 +322,7 @@ extern "C" void initCuda(void *h_volume, cudaExtent volumeSize)
 
     cudaChannelFormatDesc channelDesc2 = cudaCreateChannelDesc<float4>();
     cudaArray            *d_transferFuncArray;
+    // JP: `cudaMallocArray`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMallocArray(&d_transferFuncArray, &channelDesc2, sizeof(transferFunc) / sizeof(float4), 1));
     checkCudaErrors(cudaMemcpy2DToArray(
         d_transferFuncArray, 0, 0, transferFunc, 0, sizeof(transferFunc), 1, cudaMemcpyHostToDevice));
@@ -358,6 +362,7 @@ extern "C" void render_kernel(dim3  gridSize,
                               float transferOffset,
                               float transferScale)
 {
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     d_render<<<gridSize, blockSize>>>(
         d_output, imageW, imageH, density, brightness, transferOffset, transferScale, texObject, transferTex);
 }

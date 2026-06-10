@@ -66,6 +66,7 @@ __device__ uchar4 getPixel(int x, int y, cudaTextureObject_t inTex)
 #define SMEM(X, Y) sdata[(Y) * tilew + (X)]
 
 /*
+    // JP: shared_memory: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     2D convolution using shared memory
     - operates on 8-bit RGB data stored in 32-bit int
     - assumes kernel radius is less than or equal to block size
@@ -92,6 +93,7 @@ __global__ void cudaProcess(unsigned int       *g_odata,
                             cudaTextureObject_t inTex)
 {
     // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     cg::thread_block         cta = cg::this_thread_block();
     extern __shared__ uchar4 sdata[];
 
@@ -138,6 +140,7 @@ __global__ void cudaProcess(unsigned int       *g_odata,
     }
 
     // wait for loads to complete
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 
     // perform convolution
@@ -222,6 +225,7 @@ extern "C" void launch_cudaProcess(dim3          grid,
     checkCudaErrors(cudaCreateTextureObject(&inTexObject, &texRes, &texDescr, NULL));
 
 #if 0
+    // JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
     printf("CUDA Array channel descriptor, bits per component:\n");
     printf("X %d Y %d Z %d W %d, kind %d\n",
            desc.x,desc.y,desc.z,desc.w,desc.f);
@@ -245,6 +249,7 @@ extern "C" void launch_cudaProcess(dim3          grid,
 
 #endif
 
+        // JP: `cudaProcess`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         cudaProcess<<<grid, block, sbytes>>>(
             g_odata, imgw, imgh, block.x + (2 * radius), radius, 0.8f, 4.0f, inTexObject);
 

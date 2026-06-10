@@ -84,6 +84,7 @@ int main(int argc, char **argv)
 ////////////////////////////////////////////////////////////////////////////////
 void runTest(int argc, char **argv)
 {
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t stream;
     // This will pick the best possible CUDA capable device
     findCudaDevice(argc, (const char **)argv);
@@ -99,6 +100,7 @@ void runTest(int argc, char **argv)
 
     // allocate mem for the result on host side
     int *hOData;
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
     checkCudaErrors(cudaMallocHost(&hOData, memSize));
 
     // initialize the memory
@@ -111,15 +113,19 @@ void runTest(int argc, char **argv)
     checkCudaErrors(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
     // allocate device memory for result
     int *dOData;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&dOData, memSize));
     // copy host memory to device to initialize to zero
+    // JP: `cudaMemcpyAsync`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpyAsync(dOData, hOData, memSize, cudaMemcpyHostToDevice, stream));
 
     // execute the kernel
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     testKernel<<<numBlocks, numThreads, 0, stream>>>(dOData);
 
     // Copy result from device to host
     checkCudaErrors(cudaMemcpyAsync(hOData, dOData, memSize, cudaMemcpyDeviceToHost, stream));
+    // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaStreamSynchronize(stream));
 
     sdkStopTimer(&timer);
@@ -130,6 +136,7 @@ void runTest(int argc, char **argv)
     testResult = computeGold(hOData, numThreads * numBlocks);
 
     // Cleanup memory
+    // JP: `cudaFreeHost`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFreeHost(hOData));
     checkCudaErrors(cudaFree(dOData));
 }

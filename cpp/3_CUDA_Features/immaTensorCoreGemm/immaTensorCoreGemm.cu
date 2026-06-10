@@ -201,9 +201,11 @@ __host__ void init_host_matrices(uint8_t *a, uint8_t *b, int *c)
 
 __global__ void compute_gemm_imma(const uint8_t *A, const uint8_t *B, const int *C, int *D, int alpha, int beta)
 {
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     extern __shared__ uint8_t shmem[][CHUNK_K * K + SKEW_UINT8];
 
     // Warp and lane identification.
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     const unsigned int warpId = threadIdx.x / WARP_SIZE;
     const unsigned int laneId = threadIdx.x % WARP_SIZE;
 
@@ -249,6 +251,7 @@ __global__ void compute_gemm_imma(const uint8_t *A, const uint8_t *B, const int 
                 *((copy_t *)(src_gmem_warp_stream_ptr + GLOBAL_MEM_STRIDE * i) + laneId);
         }
 
+        // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         __syncthreads();
 
         // These fragments will accumulate the result of A and B matrix fragment
@@ -519,11 +522,13 @@ int main(int argc, char **argv)
     int     *C = NULL;
     int     *D = NULL;
 
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&A), sizeof(uint8_t) * M_GLOBAL * K_GLOBAL));
     checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&B), sizeof(uint8_t) * N_GLOBAL * K_GLOBAL));
     checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&C), sizeof(int) * M_GLOBAL * N_GLOBAL));
     checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&D), sizeof(int) * M_GLOBAL * N_GLOBAL));
 
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(((unsigned long long)A) % 128 == 0);
     assert(((unsigned long long)B) % 128 == 0);
     assert(((unsigned long long)C) % 128 == 0);
@@ -531,6 +536,7 @@ int main(int argc, char **argv)
 
     init_host_matrices(A_h, B_h, C_h);
 
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(A, A_h, sizeof(uint8_t) * M_GLOBAL * K_GLOBAL, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(B, B_h, sizeof(uint8_t) * N_GLOBAL * K_GLOBAL, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(C, C_h, sizeof(int) * M_GLOBAL * N_GLOBAL, cudaMemcpyHostToDevice));
@@ -559,6 +565,7 @@ int main(int argc, char **argv)
     int alpha = 1;
     int beta  = 1;
 
+    // JP: `cudaEvent_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaEvent_t start, stop;
 
     checkCudaErrors(cudaEventCreate(&start));
@@ -570,6 +577,7 @@ int main(int argc, char **argv)
         printf("Computing... using high performance kernel compute_gemm_imma \n");
 
         checkCudaErrors(cudaFuncSetAttribute(compute_gemm_imma, cudaFuncAttributeMaxDynamicSharedMemorySize, SHMEM_SZ));
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         checkKernelErrors((compute_gemm_imma<<<deviceProp.multiProcessorCount, THREADS_PER_BLOCK, SHMEM_SZ>>>(
             A, B, C, D, alpha, beta)));
 #if CPU_DEBUG
@@ -610,6 +618,7 @@ int main(int argc, char **argv)
             printf("mismatch i=%d result_hD=%d result_host=%d\n", i, result_hD[i], result_host[i]);
         }
     }
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(result_host);
     free(result_hD);
 #endif

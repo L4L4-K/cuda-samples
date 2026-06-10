@@ -80,9 +80,11 @@ template <typename T> struct Task
     {
         // allocate unified memory -- the operation performed in this example will
         // be a DGEMV
+        // JP: `cudaMallocManaged`: Unified Memory は CPU/GPU で同じ pointer を使います。prefetch や同期で移動タイミングを意識します。
         checkCudaErrors(cudaMallocManaged(&data, sizeof(T) * size * size));
         checkCudaErrors(cudaMallocManaged(&result, sizeof(T) * size));
         checkCudaErrors(cudaMallocManaged(&vector, sizeof(T) * size));
+        // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         checkCudaErrors(cudaDeviceSynchronize());
     }
 
@@ -90,6 +92,7 @@ template <typename T> struct Task
     {
         // ensure all memory is deallocated
         checkCudaErrors(cudaDeviceSynchronize());
+        // JP: `cudaFree`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。 ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         checkCudaErrors(cudaFree(data));
         checkCudaErrors(cudaFree(result));
         checkCudaErrors(cudaFree(vector));
@@ -122,7 +125,9 @@ struct threadData_t
 {
     int             tid;
     Task<double>   *TaskListPtr;
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t   *streams;
+    // JP: `cublasHandle_t`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
     cublasHandle_t *handles;
     int             taskSize;
 };

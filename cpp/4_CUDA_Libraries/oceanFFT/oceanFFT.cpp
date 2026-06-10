@@ -30,6 +30,7 @@
   FFT-based Ocean simulation
   based on original code by Yury Uralsky and Calvin Lin
 
+  // JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
   This sample demonstrates how to use CUFFT to synthesize and
   render an ocean surface in real-time.
 
@@ -89,6 +90,7 @@ const int frameCompare = 4;
 // OpenGL vertex buffers
 GLuint                       posVertexBuffer;
 GLuint                       heightVertexBuffer, slopeVertexBuffer;
+// JP: `cudaGraphicsResource`, `cuda_posVB_resource`, `cuda_heightVB_resource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
 struct cudaGraphicsResource *cuda_posVB_resource, *cuda_heightVB_resource,
     *cuda_slopeVB_resource; // handles OpenGL-CUDA exchange
 
@@ -228,9 +230,11 @@ void runAutoTest(int argc, char **argv)
 
     // allocate memory
     int spectrumSize = spectrumW * spectrumH * sizeof(float2);
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_h0, spectrumSize));
     h_h0 = (float2 *)malloc(spectrumSize);
     generate_h0(h_h0);
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(d_h0, h_h0, spectrumSize, cudaMemcpyHostToDevice));
 
     int outputSize = meshSize * meshSize * sizeof(float2);
@@ -243,6 +247,7 @@ void runAutoTest(int argc, char **argv)
 
     runCudaTest(argv[0]);
 
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_ht));
     checkCudaErrors(cudaFree(d_slope));
     checkCudaErrors(cudaFree(d_h0));
@@ -454,6 +459,7 @@ void runCudaTest(char *exec_path)
         cudaMemcpy((void *)hptr, (void *)g_hptr, meshSize * meshSize * sizeof(float), cudaMemcpyDeviceToHost);
         sdkDumpBin((void *)hptr, meshSize * meshSize * sizeof(float), "spatialDomain.bin");
 
+        // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         if (!sdkCompareBin2BinFloat(
                 "spatialDomain.bin", "ref_spatialDomain.bin", meshSize * meshSize, MAX_EPSILON, THRESHOLD, exec_path)) {
             g_TotalErrors++;

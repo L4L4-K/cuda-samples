@@ -47,6 +47,7 @@ __global__ void resizeBGRplanarBatchKernel(cudaTextureObject_t texSrc,
                                            int                 cropW,
                                            int                 cropH)
 {
+    // JP: `threadIdx`, `blockIdx`, `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int x = threadIdx.x + blockIdx.x * blockDim.x;
     int y = threadIdx.y + blockIdx.y * blockDim.y;
 
@@ -74,6 +75,7 @@ static void resizeBGRplanarBatchCore(float       *dpSrc,
                                      int          nDstWidth,
                                      int          nDstHeight,
                                      int          nBatchSize,
+                                     // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
                                      cudaStream_t stream,
                                      bool         whSameResizeRatio,
                                      int          cropX,
@@ -133,11 +135,13 @@ static void resizeBGRplanarBatchCore(float       *dpSrc,
                   (cropH * 1.0f / scaleY + block.y - 1) / block.y,
                   blockDimZ);
 
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         resizeBGRplanarBatchKernel<<<grid, block, 0, stream>>>(
             texSrc[iTile], dpDstNew, nDstPitch, nDstHeight, nSrcHeight, bs, scaleX, scaleY, cropX, cropY, cropW, cropH);
     }
 
     for (iTile = 0; iTile < nTiles; ++iTile)
+        // JP: `cudaDestroyTextureObject`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         checkCudaErrors(cudaDestroyTextureObject(texSrc[iTile]));
 }
 

@@ -93,6 +93,7 @@ bool g_bQAReadback = false;
 
 // Display Data
 static GLuint                pbo_buffer = 0;    // Front and back CA buffers
+// JP: `cudaGraphicsResource`, `cuda_pbo_resource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
 struct cudaGraphicsResource *cuda_pbo_resource; // CUDA Graphics Resource (to transfer PBO)
 
 static GLuint         texid      = 0;    // Texture for display
@@ -338,6 +339,7 @@ void loadDefaultImage(char *loc_exec)
     }
 
     initializeData(image_path);
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(image_path);
 }
 
@@ -367,6 +369,7 @@ void runAutoTest(int argc, char *argv[])
     loadDefaultImage(argv[0]);
 
     Pixel *d_result;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_result, imWidth * imHeight * sizeof(Pixel)));
 
     char *ref_file = NULL;
@@ -400,12 +403,15 @@ void runAutoTest(int argc, char *argv[])
 
     printf("AutoTest: %s <%s>\n", sSDKsample, filterMode[g_SobelDisplayMode]);
     sobelFilter(d_result, imWidth, imHeight, g_SobelDisplayMode, imageScale);
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
 
     unsigned char *h_result = (unsigned char *)malloc(imWidth * imHeight * sizeof(Pixel));
+    // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(h_result, d_result, imWidth * imHeight * sizeof(Pixel), cudaMemcpyDeviceToHost));
     sdkSavePGM(dump_file, h_result, imWidth, imHeight);
 
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     if (!sdkComparePGM(dump_file, sdkFindFilePath(ref_file, argv[0]), MAX_EPSILON_ERROR, 0.15f, false)) {
         g_TotalErrors++;
     }

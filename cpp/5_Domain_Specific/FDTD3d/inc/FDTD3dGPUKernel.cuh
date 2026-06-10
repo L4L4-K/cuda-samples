@@ -42,6 +42,7 @@ FiniteDifferencesKernel(float *output, const float *input, const int dimx, const
 {
     bool      validr = true;
     bool      validw = true;
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     const int gtidx  = blockIdx.x * blockDim.x + threadIdx.x;
     const int gtidy  = blockIdx.y * blockDim.y + threadIdx.y;
     const int ltidx  = threadIdx.x;
@@ -50,6 +51,7 @@ FiniteDifferencesKernel(float *output, const float *input, const int dimx, const
     const int worky  = blockDim.y;
     // Handle to thread block group
     cg::thread_block cta = cg::this_thread_block();
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ float tile[k_blockDimMaxY + 2 * RADIUS][k_blockDimX + 2 * RADIUS];
 
     const int stride_y = dimx + 2 * RADIUS;
@@ -119,6 +121,7 @@ FiniteDifferencesKernel(float *output, const float *input, const int dimx, const
 
         inputIndex += stride_z;
         outputIndex += stride_z;
+        // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         cg::sync(cta);
 
         // Note that for the work items on the boundary of the problem, the

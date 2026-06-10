@@ -35,6 +35,8 @@
 
 extern "C" __global__ void testKernel(int N)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int gtid = blockIdx.x * blockDim.x + threadIdx.x;
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(gtid < N);
 }

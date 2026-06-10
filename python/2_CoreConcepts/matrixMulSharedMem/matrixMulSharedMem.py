@@ -41,6 +41,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "Utilities"))
 
 try:
+    # JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
     import cupy as cp
     import numpy as np
     import nvmath.linalg.advanced as nvmath_advanced
@@ -126,6 +127,7 @@ def run_matmul_benchmark(
 
     # Compile custom kernel
     arch = f"sm_{device.arch}"
+    # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
     program = Program(MATMUL_KERNEL, code_type="c++", options=ProgramOptions(arch=arch))
     kernel = program.compile(target_type="cubin").get_kernel("matmul_shared")
     print("Custom kernel compiled [OK]")
@@ -152,9 +154,11 @@ def run_matmul_benchmark(
         # nvmath GEMM (cuBLASLt)
         # -------------------------------------------------------------------------
         print("\n" + "-" * 60)
+        # JP: `cuBLASLt`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。 CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
         print("NVMATH (cuBLASLt) - plan once, execute many")
         print("-" * 60)
 
+        # JP: streams_events: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
         with nvmath_advanced.Matmul(d_A, d_B, stream=int(stream.handle)) as mm:
             mm.plan()
             d_C_nvmath = mm.execute()
@@ -174,6 +178,7 @@ def run_matmul_benchmark(
         # Custom kernel (tiled + shared memory + unroll)
         # -------------------------------------------------------------------------
         print("\n" + "-" * 60)
+        # JP: shared_memory: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
         print("CUSTOM KERNEL (tiled + shared memory + unroll)")
         print("-" * 60)
 
@@ -181,6 +186,7 @@ def run_matmul_benchmark(
         grid = ((n + TILE_SIZE - 1) // TILE_SIZE, (m + TILE_SIZE - 1) // TILE_SIZE)
         config = LaunchConfig(grid=grid, block=block)
 
+        # JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         launch(
             stream,
             config,
@@ -228,6 +234,7 @@ def run_matmul_benchmark(
         ref_host = cp.asnumpy(d_C_ref)
         for name, d_C in [("nvmath", d_C_nvmath), ("custom", d_C_custom)]:
             print(f"{name}: ", end="")
+            # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
             passed = np.allclose(cp.asnumpy(d_C), ref_host, rtol=1e-4, atol=1e-4)
             print("Test PASSED" if passed else "Test FAILED")
             success = success and passed

@@ -50,6 +50,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "Utilities"))
 
 try:
+    # JP: `cuda.compute` は Python 側の lambda/operation 指定を device algorithm に渡す境界です。input/output buffer の型と寿命を合わせます。
     import cuda.compute
     import cupy as cp
     import numpy as np
@@ -82,6 +83,7 @@ def demo_reduce_lambda() -> bool:
     ok = got == expected
     print(
         f"reduce_into(lambda a,b: a+b) over 1..10 -> {got} "
+        # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         f"(expected {expected})  {'OK' if ok else 'FAIL'}"
     )
     return ok

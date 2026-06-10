@@ -80,6 +80,7 @@ void compileFileToCUBIN(char *filename, int argc, char **argv, char **cubinResul
   char deviceName[256];
 
   // Picks the best CUDA device available
+  // JP: `cuDevice`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
   CUdevice cuDevice = findCudaDeviceDRV(argc, (const char **)argv);
 
   // get compute capabilities and the devicename
@@ -147,6 +148,7 @@ void compileFileToCUBIN(char *filename, int argc, char **argv, char **cubinResul
   }
 
   // compile
+  // JP: `nvrtcProgram`: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
   nvrtcProgram prog;
   NVRTC_SAFE_CALL("nvrtcCreateProgram",
                   nvrtcCreateProgram(&prog, memBlock, filename, 0, NULL, NULL));
@@ -167,6 +169,7 @@ void compileFileToCUBIN(char *filename, int argc, char **argv, char **cubinResul
     std::cerr << "\n end log ---\n";
   }
 
+  // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
   free(log);
 
   NVRTC_SAFE_CALL("nvrtcCompileProgram", res);

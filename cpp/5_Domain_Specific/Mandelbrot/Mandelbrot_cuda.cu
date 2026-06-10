@@ -52,6 +52,7 @@ __global__ void Mandelbrot0(uchar4      *dst,
                             const bool   isJ)
 {
     // loop until all blocks completed
+    // JP: `blockIdx`, `gridDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     for (unsigned int blockIndex = blockIdx.x; blockIndex < numBlocks; blockIndex += gridDim.x) {
         unsigned int blockX = blockIndex % gridWidth;
         unsigned int blockY = blockIndex / gridWidth;
@@ -383,6 +384,7 @@ void RunMandelbrot0(uchar4      *dst,
     switch (mode) {
     default:
     case 0:
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         Mandelbrot0<float><<<numWorkerBlocks, threads>>>(dst,
                                                          imageW,
                                                          imageH,

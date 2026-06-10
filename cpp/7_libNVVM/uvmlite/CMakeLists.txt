@@ -31,6 +31,7 @@ set(CMAKE_INCLUDE_CURRENT_DIR YES)
 set_property(SOURCE uvmlite.c
              PROPERTY COMPILE_DEFINITIONS LIBCUDADEVRT="${CUDADEVRT_LIB}")
 
+# JP: `add_executable`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
 add_executable(uvmlite uvmlite.c)
 
 add_test(NAME uvmlite COMMAND uvmlite WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")

@@ -56,6 +56,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 import numpy as np
+# JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
 from cuda.core import (
     ContextOptions,
     Device,
@@ -320,6 +321,7 @@ def parse_split(arg: Optional[str], device: Device) -> Tuple[int, int]:
 
 def compile_kernels(device: Device):
     options = ProgramOptions(std="c++17", arch=f"sm_{device.arch}")
+    # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
     program = Program(KERNEL_SRC, code_type="c++", options=options)
     module = program.compile(
         "cubin",
@@ -376,6 +378,7 @@ def _run_one(
 
     # Start of timed region
     long_stream.record(e_long_start)
+    # JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     launch(long_stream, delay_cfg, delay_kernel, np.uint64(delay_cycles))
     long_stream.record(e_long_end)
 
@@ -418,6 +421,7 @@ def run_critical_alone(
     Establishes the pure compute time with every SM on the device available.
     """
     stream = device.create_stream()
+    # JP: streams_events: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     out = device.allocate(critical_n * 4, stream=stream)
     total_sm = device.resources.sm.sm_count
     try:
@@ -500,6 +504,7 @@ def run_green_context(
     long_count, critical_count = split
     sm = device.resources.sm
     groups, _remainder = sm.split(SMResourceOptions(count=(long_count, critical_count)))
+    # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert len(groups) == 2
     long_group, critical_group = groups
 

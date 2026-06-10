@@ -86,8 +86,10 @@ extern "C" cudaError_t CUDA_MallocArray(uchar4 **h_Src, int imageW, int imageH)
 {
     cudaError_t error;
 
+    // JP: `cudaMallocArray`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     error = cudaMallocArray(&a_Src, &uchar4tex, imageW, imageH);
     error = cudaMemcpy2DToArray(
+        // JP: `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         a_Src, 0, 0, *h_Src, sizeof(uchar4) * imageW, sizeof(uchar4) * imageW, imageH, cudaMemcpyHostToDevice);
 
     cudaResourceDesc texRes;
@@ -110,4 +112,5 @@ extern "C" cudaError_t CUDA_MallocArray(uchar4 **h_Src, int imageW, int imageH)
     return error;
 }
 
+// JP: `cudaError_t`, `cudaFreeArray`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
 extern "C" cudaError_t CUDA_FreeArray() { return cudaFreeArray(a_Src); }

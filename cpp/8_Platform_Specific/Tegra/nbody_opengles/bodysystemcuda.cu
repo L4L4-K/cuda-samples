@@ -43,6 +43,7 @@ __constant__ double softeningSquared_fp64;
 
 cudaError_t setSofteningSquared(float softeningSq)
 {
+    // JP: `cudaMemcpyToSymbol`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     return cudaMemcpyToSymbol(softeningSquared, &softeningSq, sizeof(float), 0, cudaMemcpyHostToDevice);
 }
 
@@ -51,6 +52,7 @@ cudaError_t setSofteningSquared(double softeningSq)
     return cudaMemcpyToSymbol(softeningSquared_fp64, &softeningSq, sizeof(double), 0, cudaMemcpyHostToDevice);
 }
 
+// JP: shared_memory: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
 template <class T> struct SharedMemory
 {
     __device__ inline operator T *()
@@ -84,6 +86,7 @@ template <typename T> struct DeviceData
 {
     T           *dPos[2]; // mapped host pointers
     T           *dVel;
+    // JP: `cudaEvent_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaEvent_t  event;
     unsigned int offset;
     unsigned int numBodies;
@@ -128,8 +131,10 @@ computeBodyAccel(typename vec4<T>::Type bodyPos, typename vec4<T>::Type *positio
     typename vec3<T>::Type acc = {0.0f, 0.0f, 0.0f};
 
     for (int tile = 0; tile < numTiles; tile++) {
+        // JP: `threadIdx`, `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
         sharedPos[threadIdx.x] = positions[tile * blockDim.x + threadIdx.x];
 
+        // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         __syncthreads();
 
         // This is the "tile_calculation" from the GPUG3 article.
@@ -192,6 +197,7 @@ __global__ void integrateBodies(typename vec4<T>::Type *__restrict__ newPos,
 
 template <typename T>
 void integrateNbodySystem(DeviceData<T>         *deviceData,
+                          // JP: `cudaGraphicsResource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
                           cudaGraphicsResource **pgres,
                           unsigned int           currentRead,
                           float                  deltaTime,
@@ -222,6 +228,7 @@ void integrateNbodySystem(DeviceData<T>         *deviceData,
         int sharedMemSize = blockSize * 4 * sizeof(T); // 4 floats for pos
 
         integrateBodies<T>
+            // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
             <<<numBlocks, blockSize, sharedMemSize>>>((typename vec4<T>::Type *)deviceData[dev].dPos[1 - currentRead],
                                                       (typename vec4<T>::Type *)deviceData[dev].dPos[currentRead],
                                                       (typename vec4<T>::Type *)deviceData[dev].dVel,

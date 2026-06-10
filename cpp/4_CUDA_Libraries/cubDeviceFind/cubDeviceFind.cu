@@ -76,6 +76,7 @@ static bool run_find_if()
                                             d_out.begin(),
                                             predicate,
                                             num_items));
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
 
     const int got = d_out[0];
@@ -86,6 +87,7 @@ static bool run_find_if()
     const int                expected   = static_cast<int>(host_it - h_in.begin());
 
     printf("cub::DeviceFind::FindIf(value > %d) over [0..%d)\n", predicate.threshold, num_items);
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     printf("  got index = %d, expected = %d  %s\n", got, expected, (got == expected ? "OK" : "FAIL"));
     return got == expected;
 }

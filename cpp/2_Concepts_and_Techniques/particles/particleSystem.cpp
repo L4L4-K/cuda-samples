@@ -145,6 +145,7 @@ void colorRamp(float t, float *r)
 
 void ParticleSystem::_initialize(int numParticles)
 {
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(!m_bInitialized);
 
     m_numParticles = numParticles;
@@ -169,6 +170,7 @@ void ParticleSystem::_initialize(int numParticles)
         registerGLBufferObject(m_posVbo, &m_cuda_posvbo_resource);
     }
     else {
+        // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
         checkCudaErrors(cudaMalloc((void **)&m_cudaPosVBO, memSize));
     }
 
@@ -243,6 +245,7 @@ void ParticleSystem::_finalize()
         glDeleteBuffers(1, (const GLuint *)&m_colorVBO);
     }
     else {
+        // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         checkCudaErrors(cudaFree(m_cudaPosVBO));
         checkCudaErrors(cudaFree(m_cudaColorVBO));
     }
@@ -351,6 +354,7 @@ float *ParticleSystem::getArray(ParticleArray array)
 
     float                       *hdata             = 0;
     float                       *ddata             = 0;
+    // JP: `cudaGraphicsResource`, `cuda_vbo_resource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
     struct cudaGraphicsResource *cuda_vbo_resource = 0;
 
     switch (array) {

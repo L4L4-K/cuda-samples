@@ -76,6 +76,7 @@ int main(int argc, char **argv)
     sdkCreateTimer(&hTimer);
 
     printf("Allocating GPU memory...\n");
+    // JP: `cuMemAlloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。 Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     checkCudaErrors(cuMemAlloc(&d_Output, QRNG_DIMENSIONS * N * sizeof(float)));
 
     printf("Allocating CPU memory...\n");
@@ -113,6 +114,7 @@ int main(int argc, char **argv)
 
     printf("\nReading GPU results...\n");
 
+    // JP: `cuMemcpyDtoH`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cuMemcpyDtoH(h_OutputGPU, d_Output, QRNG_DIMENSIONS * N * sizeof(float)));
 
     printf("Comparing to the CPU results...\n\n");
@@ -173,6 +175,7 @@ int main(int argc, char **argv)
     printf("Shutting down...\n");
 
     sdkDeleteTimer(&hTimer);
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(h_OutputGPU);
 
     checkCudaErrors(cuMemFree(d_Output));

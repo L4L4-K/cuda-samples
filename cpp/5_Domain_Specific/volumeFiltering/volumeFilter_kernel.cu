@@ -46,6 +46,7 @@ __global__ void d_filter_surface3d(int                 filterSize,
                                    cudaTextureObject_t volumeTexIn,
                                    cudaSurfaceObject_t volumeTexOut)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
     int z = blockIdx.z * blockDim.z + threadIdx.z;
@@ -99,6 +100,7 @@ extern "C" Volume *VolumeFilter_runFilter(Volume *input,
     checkCudaErrors(cudaMemcpyToSymbol(c_filterData, weights, sizeof(float4) * numWeights));
 
     for (int i = 0; i < iterations; i++) {
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         d_filter_surface3d<<<gridSize, blockSize>>>(
             numWeights, postWeightOffset, size, input->volumeTex, output0->volumeSurf);
 

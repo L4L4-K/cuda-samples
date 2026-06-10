@@ -232,6 +232,7 @@ inline bool sdkLoadPGM(const char *file, T **data, unsigned int *w,
   std::transform(idata, idata + size, *data,
                  helper_image_internal::ConverterFromUByte<T>());
 
+  // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
   free(idata);
 
   return true;
@@ -268,6 +269,7 @@ inline bool sdkLoadPPM4(const char *file, T **data, unsigned int *w,
 
 inline bool __savePPM(const char *file, unsigned char *data, unsigned int w,
                       unsigned int h, unsigned int channels) {
+  // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
   assert(NULL != data);
   assert(w > 0);
   assert(h > 0);

@@ -40,6 +40,7 @@ using namespace std;
 // a simple kernel that simply increments each array element by b
 __global__ void kernelAddConstant(int *g_a, const int b)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     g_a[idx] += b;
 }
@@ -132,12 +133,16 @@ int main(int argc, char *argv[])
         dim3         gpu_threads(128); // 128 threads per block
         dim3         gpu_blocks(n / (gpu_threads.x * num_cpu_threads));
 
+        // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
         checkCudaErrors(cudaMalloc((void **)&d_a, nbytes_per_kernel));
+        // JP: `cudaMemset`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         checkCudaErrors(cudaMemset(d_a, 0, nbytes_per_kernel));
         checkCudaErrors(cudaMemcpy(d_a, sub_a, nbytes_per_kernel, cudaMemcpyHostToDevice));
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         kernelAddConstant<<<gpu_blocks, gpu_threads>>>(d_a, b);
 
         checkCudaErrors(cudaMemcpy(sub_a, d_a, nbytes_per_kernel, cudaMemcpyDeviceToHost));
+        // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         checkCudaErrors(cudaFree(d_a));
     }
     printf("---------------------------\n");

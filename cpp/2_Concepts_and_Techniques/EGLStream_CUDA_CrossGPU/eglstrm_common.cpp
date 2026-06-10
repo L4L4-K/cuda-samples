@@ -156,6 +156,7 @@ int EGLStreamInit(bool isCrossDevice, int isConsumer, EGLNativeFileDescriptorKHR
     if (!isConsumer) { // Producer
 
         if (fileDesc == EGL_NO_FILE_DESCRIPTOR_KHR) {
+            // JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
             printf("Cuda Producer received bad file descriptor\n");
             eglStatus = EGL_FALSE;
             goto Done;
@@ -210,6 +211,7 @@ int EGLStreamInit(bool isCrossDevice, int isConsumer, EGLNativeFileDescriptorKHR
         }
 
         g_producerEglStream = eglCreateStreamFromFileDescriptorKHR(g_producerEglDisplay, fileDesc);
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         close(fileDesc);
 
         if (g_producerEglStream == EGL_NO_STREAM_KHR) {

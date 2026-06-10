@@ -34,6 +34,7 @@
 
 __global__ void sinewave_gen_kernel(Vertex *vertices, unsigned int width, unsigned int height, float time)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -98,6 +99,7 @@ void cudaImportKeyedMutex(void *sharedHandle, cudaExternalSemaphore_t &extSemaph
 void cudaAcquireSync(cudaExternalSemaphore_t &extSemaphore,
                      uint64_t                 key,
                      unsigned int             timeoutMs,
+                     // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
                      cudaStream_t             streamToRun)
 {
     cudaExternalSemaphoreWaitParams extSemWaitParams;
@@ -133,6 +135,7 @@ void RunSineWaveKernel(cudaExternalSemaphore_t &extSemaphore,
 
     dim3 block(16, 16, 1);
     dim3 grid(mesh_width / 16, mesh_height / 16, 1);
+    // JP: `cudaDevVertptr`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     sinewave_gen_kernel<<<grid, block, 0, streamToRun>>>(cudaDevVertptr, mesh_width, mesh_height, t);
     getLastCudaError("sinewave_gen_kernel execution failed.\n");
 

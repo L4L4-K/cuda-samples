@@ -11,6 +11,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "QNX")
     set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_LIBRARIES OFF)
 endif()
 
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
 find_package(CUDAToolkit REQUIRED)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)

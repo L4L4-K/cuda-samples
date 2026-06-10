@@ -142,6 +142,7 @@ template <typename T, bool floatKeys> bool testSort(int argc, char **argv)
     thrust::device_vector<unsigned int> d_values;
 
     // run multiple iterations to compute an average sort time
+    // JP: `cudaEvent_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaEvent_t start_event, stop_event;
     checkCudaErrors(cudaEventCreate(&start_event));
     checkCudaErrors(cudaEventCreate(&stop_event));
@@ -163,6 +164,7 @@ template <typename T, bool floatKeys> bool testSort(int argc, char **argv)
             thrust::sort_by_key(d_keys.begin(), d_keys.end(), d_values.begin());
 
         checkCudaErrors(cudaEventRecord(stop_event, 0));
+        // JP: `cudaEventSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         checkCudaErrors(cudaEventSynchronize(stop_event));
 
         float time = 0;
@@ -190,6 +192,7 @@ template <typename T, bool floatKeys> bool testSort(int argc, char **argv)
     // Check results
     bool bTestResult = thrust::is_sorted(h_keysSorted.begin(), h_keysSorted.end());
 
+    // JP: `cudaEventDestroy`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaEventDestroy(start_event));
     checkCudaErrors(cudaEventDestroy(stop_event));
 

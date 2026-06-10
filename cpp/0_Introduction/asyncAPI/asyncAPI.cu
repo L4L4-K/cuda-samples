@@ -48,6 +48,7 @@
 
 __global__ void increment_kernel(int *g_data, int inc_value)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int idx     = blockIdx.x * blockDim.x + threadIdx.x;
     g_data[idx] = g_data[idx] + inc_value;
 }
@@ -83,12 +84,15 @@ int main(int argc, char *argv[])
 
     // allocate host memory
     int *a = 0;
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
     checkCudaErrors(cudaMallocHost((void **)&a, nbytes));
     memset(a, 0, nbytes);
 
     // allocate device memory
     int *d_a = 0;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_a, nbytes));
+    // JP: `cudaMemset`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemset(d_a, 255, nbytes));
 
     // set kernel launch configuration
@@ -96,6 +100,7 @@ int main(int argc, char *argv[])
     dim3 blocks  = dim3(n / threads.x, 1);
 
     // create cuda event handles
+    // JP: `cudaEvent_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaEvent_t start, stop;
     checkCudaErrors(cudaEventCreate(&start));
     checkCudaErrors(cudaEventCreate(&stop));
@@ -104,6 +109,7 @@ int main(int argc, char *argv[])
     sdkCreateTimer(&timer);
     sdkResetTimer(&timer);
 
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
     float gpu_time = 0.0f;
 
@@ -112,6 +118,7 @@ int main(int argc, char *argv[])
     sdkStartTimer(&timer);
     cudaEventRecord(start, 0);
     cudaMemcpyAsync(d_a, a, nbytes, cudaMemcpyHostToDevice, 0);
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     increment_kernel<<<blocks, threads, 0, 0>>>(d_a, value);
     cudaMemcpyAsync(a, d_a, nbytes, cudaMemcpyDeviceToHost, 0);
     cudaEventRecord(stop, 0);
@@ -136,6 +143,7 @@ int main(int argc, char *argv[])
     bool bFinalResults = correct_output(a, n, value);
 
     // release resources
+    // JP: `cudaEventDestroy`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaEventDestroy(start));
     checkCudaErrors(cudaEventDestroy(stop));
     checkCudaErrors(cudaFreeHost(a));

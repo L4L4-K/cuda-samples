@@ -153,6 +153,7 @@ __device__ void d_render(uint               *d_output,
 
     density *= rayscale;
 
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     uint x = blockIdx.x * blockDim.x + threadIdx.x;
     uint y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -406,6 +407,7 @@ __global__ void d_preintegrate(int                 layer,
 void VolumeRender_setTextureFilterMode(bool bLinearFilter, Volume *vol)
 {
     if (vol->volumeTex) {
+        // JP: `cudaDestroyTextureObject`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         checkCudaErrors(cudaDestroyTextureObject(vol->volumeTex));
     }
     cudaResourceDesc texRes;
@@ -443,6 +445,7 @@ static unsigned int iDivUp(size_t a, size_t b)
 void VolumeRender_updateTF(int tfIdx, int numColors, float4 *colors)
 {
     if (d_transferFunc) {
+        // JP: `cudaFreeArray`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
         checkCudaErrors(cudaFreeArray(d_transferFunc));
         d_transferFunc = 0;
     }
@@ -450,6 +453,7 @@ void VolumeRender_updateTF(int tfIdx, int numColors, float4 *colors)
     cudaChannelFormatDesc channelFloat4 = cudaCreateChannelDesc<float4>();
     checkCudaErrors(cudaMallocArray(&d_transferFunc, &channelFloat4, numColors, 1));
     checkCudaErrors(
+        // JP: `cudaMemcpy2DToArray`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         cudaMemcpy2DToArray(d_transferFunc, 0, 0, colors, 0, sizeof(float4) * numColors, 1, cudaMemcpyHostToDevice));
 
     cudaResourceDesc texRes;
@@ -476,6 +480,7 @@ void VolumeRender_updateTF(int tfIdx, int numColors, float4 *colors)
         cudaExtent extent = {VOLUMERENDER_TF_PREINTSTEPS, 0, 0};
         dim3       blockSize(32, 1, 1);
         dim3       gridSize(iDivUp(extent.width, blockSize.x), 1, 1);
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         d_integrate_trapezoidal<<<gridSize, blockSize>>>(extent, transferTex, transferIntegrateSurf);
     }
 

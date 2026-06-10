@@ -40,6 +40,7 @@
 void printMemoryFootprint(int device)
 {
     size_t footprint;
+    // JP: `cudaDeviceGetGraphMemAttribute`, `cudaGraphMemAttributeType`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
     checkCudaErrors(cudaDeviceGetGraphMemAttribute(device, (cudaGraphMemAttributeType)0, &footprint));
     printf("    FOOTPRINT: %lu bytes\n", footprint);
 }
@@ -88,6 +89,7 @@ void createVirtAddrReuseGraph(cudaGraphExec_t *graphExec, size_t bytes, int devi
 
 void virtualAddressReuseSingleGraph(size_t bytes, int device)
 {
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t    stream;
     cudaGraphExec_t graphExec;
 
@@ -100,10 +102,12 @@ void virtualAddressReuseSingleGraph(size_t bytes, int device)
     checkCudaErrors(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
     checkCudaErrors(cudaGraphLaunch(graphExec, stream));
+    // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaStreamSynchronize(stream));
     printMemoryFootprint(device);
 
     checkCudaErrors(cudaGraphExecDestroy(graphExec));
+    // JP: `cudaStreamDestroy`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaStreamDestroy(stream));
 }
 
@@ -157,6 +161,7 @@ void createSimpleAllocFreeGraph(cudaGraphExec_t *graphExec, float **dPtr, size_t
     void *blockDeviceArgs[1] = {(void *)&time_clocks};
 
     size_t numBlocks                     = numElements / (size_t)THREADS_PER_BLOCK;
+    // JP: `gridDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     blockDeviceNodeParams.gridDim        = dim3(numBlocks, 1, 1);
     blockDeviceNodeParams.blockDim       = dim3(THREADS_PER_BLOCK, 1, 1);
     blockDeviceNodeParams.sharedMemBytes = 0;
@@ -325,6 +330,7 @@ void unfreedAllocations(size_t bytes, int device)
     printMemoryFootprint(device);
 
     for (int i = 0; i < NUM_GRAPHS; i++) {
+        // JP: `cudaFree`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
         checkCudaErrors(cudaFree(dPtrs[i]));
     }
     printf("\nFreeing the allocations does not shrink the footprint.\n");

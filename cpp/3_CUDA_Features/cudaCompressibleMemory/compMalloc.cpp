@@ -34,6 +34,7 @@
 
 cudaError_t setProp(CUmemAllocationProp *prop, bool UseCompressibleMemory)
 {
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     CUdevice currentDevice;
     if (cuCtxGetDevice(&currentDevice) != CUDA_SUCCESS)
         return cudaErrorMemoryAllocation;

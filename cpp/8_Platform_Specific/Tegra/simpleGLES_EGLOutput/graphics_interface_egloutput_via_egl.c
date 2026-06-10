@@ -293,6 +293,7 @@ int graphics_setup_window(int xpos, int ypos, int width, int height, const char 
     //   attached to the encoder. (Could make this more sophisticated
     //   by finding one not already bound to any other encoders. But
     //   this is just a basic test, so we don't really care that much.)
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(crtc_mask);
     for (i = 0; i < drm_res_info->count_crtcs; ++i) {
         if (crtc_mask & (1 << i)) {

@@ -58,6 +58,7 @@ static const char *_cudaGetErrorEnum(cudaError_t error) {
 
 #ifdef CUDA_DRIVER_API
 // CUDA Driver API errors
+// JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
 static const char *_cudaGetErrorEnum(CUresult error) {
   static char unknown[] = "<unknown>";
   const char *ret = NULL;
@@ -68,6 +69,7 @@ static const char *_cudaGetErrorEnum(CUresult error) {
 
 #ifdef CUBLAS_API_H_
 // cuBLAS API errors
+// JP: `cublasStatus_t`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
 static const char *_cudaGetErrorEnum(cublasStatus_t error) {
   switch (error) {
     case CUBLAS_STATUS_SUCCESS:

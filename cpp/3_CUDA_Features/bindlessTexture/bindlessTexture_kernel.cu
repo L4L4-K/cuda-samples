@@ -92,6 +92,7 @@ __device__ __inline__ uchar4 to_uchar4(float4 vec)
 
 __global__ void d_render(uchar4 *d_output, uint imageW, uint imageH, float lod, cudaTextureObject_t atlasTexture)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     uint x = blockIdx.x * blockDim.x + threadIdx.x;
     uint y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -127,6 +128,7 @@ extern "C" void renderAtlasImage(dim3 gridSize, dim3 blockSize, uchar4 *d_output
     lod = 0.0f;
 #endif
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     d_render<<<gridSize, blockSize>>>(d_output, imageW, imageH, lod, atlasImage.textureObject);
 
     checkCudaErrors(cudaGetLastError());
@@ -232,9 +234,11 @@ void generateMipMaps(cudaMipmappedArray_t mipmapArray, cudaExtent size)
 
         d_mipmap<<<gridSize, blockSize>>>(surfOutput, texInput, (uint)width, (uint)height);
 
+        // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         checkCudaErrors(cudaDeviceSynchronize());
         checkCudaErrors(cudaGetLastError());
 
+        // JP: `cudaDestroySurfaceObject`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         checkCudaErrors(cudaDestroySurfaceObject(surfOutput));
 
         checkCudaErrors(cudaDestroyTextureObject(texInput));
@@ -246,6 +250,7 @@ void generateMipMaps(cudaMipmappedArray_t mipmapArray, cudaExtent size)
         copyParams.srcArray          = levelTo;
         copyParams.extent            = make_cudaExtent(width, height, 1);
         copyParams.kind              = cudaMemcpyDeviceToDevice;
+        // JP: `cudaMemcpy3D`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         checkCudaErrors(cudaMemcpy3D(&copyParams));
 #endif
 
@@ -321,6 +326,7 @@ extern "C" void deinitAtlasAndImages()
     }
 
     if (atlasImage.dataArray) {
+        // JP: `cudaFreeArray`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
         checkCudaErrors(cudaFreeArray(atlasImage.dataArray));
     }
 }

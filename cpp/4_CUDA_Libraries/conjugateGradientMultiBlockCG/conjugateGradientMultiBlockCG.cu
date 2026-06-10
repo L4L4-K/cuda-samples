@@ -216,6 +216,7 @@ __device__ void gpuDotProduct(float                  *vecA,
                               const cg::thread_block &cta,
                               const cg::grid_group   &grid)
 {
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     extern __shared__ double tmp[];
 
     double temp_sum = 0.0;
@@ -231,6 +232,7 @@ __device__ void gpuDotProduct(float                  *vecA,
         tmp[tile32.meta_group_rank()] = temp_sum;
     }
 
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 
     if (tile32.meta_group_rank() == 0) {
@@ -270,6 +272,7 @@ extern "C" __global__ void gpuConjugateGradient(int    *I,
                                                 int     N,
                                                 float   tol)
 {
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     cg::thread_block cta  = cg::this_thread_block();
     cg::grid_group   grid = cg::this_grid();
 
@@ -370,6 +373,7 @@ int main(int argc, char **argv)
     float      *rhs;
     float       r1;
     float      *r, *p, *Ax;
+    // JP: `cudaEvent_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaEvent_t start, stop;
 
     printf("Starting [%s]...\n", sSDKname);
@@ -381,6 +385,7 @@ int main(int argc, char **argv)
 
     if (!deviceProp.managedMemory) {
         // This sample requires being run on a device that supports Unified Memory
+        // JP: managed_memory: Unified Memory は CPU/GPU で同じ pointer を使います。prefetch や同期で移動タイミングを意識します。
         fprintf(stderr, "Unified Memory not supported on this device\n");
         exit(EXIT_WAIVED);
     }
@@ -503,6 +508,7 @@ int main(int argc, char **argv)
         }
     }
 
+    // JP: `cudaFree`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。 ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(I));
     checkCudaErrors(cudaFree(J));
     checkCudaErrors(cudaFree(val));

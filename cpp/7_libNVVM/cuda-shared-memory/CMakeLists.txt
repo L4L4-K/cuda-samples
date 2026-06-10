@@ -29,6 +29,7 @@
 add_custom_target(clobber)
 add_custom_target(testrun)
 
+# JP: shared_memory: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
 add_test(NAME test-cuda-shared-memory-shared_memory
 	COMMAND "${CMAKE_CURRENT_BINARY_DIR}/../ptxgen/ptxgen" "${CMAKE_CURRENT_SOURCE_DIR}/shared_memory.ll"
 	WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")

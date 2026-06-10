@@ -46,6 +46,7 @@ public:
     SineWaveSimulation(size_t width, size_t height);
     ~SineWaveSimulation();
     void initSimulation(float *heightMap);
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     void stepSimulation(float time, cudaStream_t stream = 0);
     void initCudaLaunchConfig(int device);
     int  initCuda(uint8_t *vkDeviceUUID, size_t UUID_SIZE);

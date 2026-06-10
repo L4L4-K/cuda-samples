@@ -42,6 +42,7 @@
 // benchmark configuration
 // global settings for benchmark behavior, controllable via command line
 struct BenchmarkConfig {
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     bool use_validation = false;   // --validate enables CPU cross-validation
     int warmup_iters = 5;          // --warmup=N (0 to disable)
     int bench_iters = 20;          // --iters=N, -i N
@@ -130,11 +131,13 @@ inline void print_device_info() {
 class CudaTimer {
 public:
     CudaTimer() {
+        // JP: `cudaEventCreate`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
         CHECK_CUDA(cudaEventCreate(&start_));
         CHECK_CUDA(cudaEventCreate(&stop_));
     }
     
     ~CudaTimer() {
+        // JP: `cudaEventDestroy`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         cudaEventDestroy(start_);
         cudaEventDestroy(stop_);
     }
@@ -145,6 +148,7 @@ public:
     
     void stop() {
         CHECK_CUDA(cudaEventRecord(stop_));
+        // JP: `cudaEventSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         CHECK_CUDA(cudaEventSynchronize(stop_));
     }
     
@@ -165,6 +169,7 @@ inline double time_kernel(KernelFunc kernel_launch) {
     // warmup
     if (warmup_iters() > 0) {
         for (int i = 0; i < warmup_iters(); i++) {
+            // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
             kernel_launch();
         }
         CHECK_CUDA(cudaDeviceSynchronize());

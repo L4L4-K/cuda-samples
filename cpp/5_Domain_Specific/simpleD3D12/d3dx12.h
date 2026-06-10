@@ -780,6 +780,7 @@ struct CD3DX12_ROOT_PARAMETER : public D3D12_ROOT_PARAMETER
     {
         rootParam.ParameterType    = D3D12_ROOT_PARAMETER_TYPE_CBV;
         rootParam.ShaderVisibility = visibility;
+        // JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
         CD3DX12_ROOT_DESCRIPTOR::Init(rootParam.Descriptor, shaderRegister, registerSpace);
     }
 

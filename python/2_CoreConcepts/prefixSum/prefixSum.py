@@ -42,6 +42,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "Utilities"))
 
 try:
+    # JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
     import cupy as cp
     import numpy as np
     from cuda.compute import OpKind, exclusive_scan, inclusive_scan
@@ -95,6 +96,7 @@ def main() -> bool:
             op=OpKind.PLUS,
             init_value=None,
             num_items=len(h_input),
+            # JP: streams_events: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
             stream=stream,
         )
         stream.sync()

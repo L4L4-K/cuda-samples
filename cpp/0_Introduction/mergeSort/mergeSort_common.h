@@ -38,6 +38,7 @@ typedef unsigned int uint;
 // Extensive sort validation routine
 ////////////////////////////////////////////////////////////////////////////////
 extern "C" uint
+// JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
 validateSortedKeys(uint *resKey, uint *srcKey, uint batchSize, uint arrayLength, uint numValues, uint sortDir);
 
 extern "C" void fillValues(uint *val, uint N);

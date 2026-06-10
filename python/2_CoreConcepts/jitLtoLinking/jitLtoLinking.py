@@ -126,6 +126,7 @@ def link_ptx(device):
     prog_opts = ProgramOptions(
         std="c++17", arch=f"sm_{device.arch}", relocatable_device_code=True
     )
+    # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
     main_obj = Program(MAIN_SRC, "c++", options=prog_opts).compile("ptx")
     user_obj = Program(USER_SRC, "c++", options=prog_opts).compile("ptx")
 
@@ -149,6 +150,7 @@ def link_lto(device):
 def run_one_mode(mode, module, stream, d_in, d_out, size, expected):
     kernel = module.get_kernel("apply_transform")
     config = LaunchConfig(grid=(size + 255) // 256, block=256)
+    # JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     launch(
         stream,
         config,
@@ -159,6 +161,7 @@ def run_one_mode(mode, module, stream, d_in, d_out, size, expected):
     )
     stream.sync()
     actual = cp.asnumpy(d_out)
+    # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     if not np.allclose(actual, expected, rtol=1e-5, atol=1e-5):
         max_err = np.max(np.abs(actual - expected))
         print(f"  [{mode}] verification FAILED (max_err={max_err})")

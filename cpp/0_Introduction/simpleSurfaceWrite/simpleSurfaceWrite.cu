@@ -77,6 +77,7 @@ static const char *sampleName = "simpleSurfaceWrite";
 __global__ void surfaceWriteKernel(float *gIData, int width, int height, cudaSurfaceObject_t outputSurface)
 {
     // calculate surface coordinates
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -192,10 +193,12 @@ void runTest(int argc, char **argv)
 
     // Allocate device memory for result
     float *dData = NULL;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&dData, size));
 
     // Allocate array and copy image data
     cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc(32, 0, 0, 0, cudaChannelFormatKindFloat);
+    // JP: `cudaArray`, `cuArray`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     cudaArray            *cuArray;
     checkCudaErrors(cudaMallocArray(&cuArray, &channelDesc, width, height, cudaArraySurfaceLoadStore));
 
@@ -210,7 +213,9 @@ void runTest(int argc, char **argv)
 
     checkCudaErrors(cudaCreateSurfaceObject(&outputSurface, &surfRes));
 #if 1
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(dData, hData, size, cudaMemcpyHostToDevice));
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     surfaceWriteKernel<<<dimGrid, dimBlock>>>(dData, width, height, outputSurface);
 #else // This is what differs from the example simpleTexture
     checkCudaErrors(cudaMemcpyToArray(cuArray, 0, 0, hData, size, cudaMemcpyHostToDevice));
@@ -237,6 +242,7 @@ void runTest(int argc, char **argv)
     // Warmup
     transformKernel<<<dimGrid, dimBlock, 0>>>(dData, width, height, angle, tex);
 
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
 
     StopWatchInterface *timer = NULL;
@@ -279,9 +285,11 @@ void runTest(int argc, char **argv)
         printf("Comparing files\n");
         printf("\toutput:    <%s>\n", outputFilename);
         printf("\treference: <%s>\n", refPath);
+        // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         testResult = compareData(hOData, hDataRef, width * height, MIN_EPSILON_ERROR, 0.0f);
     }
 
+    // JP: `cudaDestroySurfaceObject`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaDestroySurfaceObject(outputSurface));
     checkCudaErrors(cudaDestroyTextureObject(tex));
     checkCudaErrors(cudaFree(dData));

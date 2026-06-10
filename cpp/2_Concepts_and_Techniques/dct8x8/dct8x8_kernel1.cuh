@@ -67,6 +67,7 @@ __constant__ float DCTv8matrix[] = {
     0.3535533905932733f,  -0.2777851165098008f, 0.1913417161825431f,  -0.0975451610080625f};
 
 // Temporary blocks
+// JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
 __shared__ float CurBlockLocal1[BLOCK_SIZE2];
 __shared__ float CurBlockLocal2[BLOCK_SIZE2];
 
@@ -89,6 +90,7 @@ __global__ void
 CUDAkernel1DCT(float *Dst, int ImgWidth, int OffsetXBlocks, int OffsetYBlocks, cudaTextureObject_t TexSrc)
 {
     // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     cg::thread_block cta = cg::this_thread_block();
     // Block index
     const int bx = blockIdx.x + OffsetXBlocks;
@@ -106,6 +108,7 @@ CUDAkernel1DCT(float *Dst, int ImgWidth, int OffsetXBlocks, int OffsetYBlocks, c
     CurBlockLocal1[(ty << BLOCK_SIZE_LOG2) + tx] = tex2D<float>(TexSrc, tex_x, tex_y);
 
     // synchronize threads to make sure the block is copied
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 
     // calculate the multiplication of DCTv8matrixT * A and place it in the second

@@ -44,6 +44,7 @@
 #include <helper_cuda.h>
 #include <helper_functions.h>
 
+// JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
 float compareResults(int rand_n, float *h_RandGPU, float *h_RandCPU);
 
 const int          DEFAULT_RAND_N = 2400000;
@@ -79,12 +80,15 @@ int main(int argc, char **argv)
 
     printf("Seeding with %i ...\n", seed);
 
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t stream;
     checkCudaErrors(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
     float *d_Rand;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_Rand, rand_n * sizeof(float)));
 
+    // JP: `curandGenerator_t`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
     curandGenerator_t prngGPU;
     checkCudaErrors(curandCreateGenerator(&prngGPU, CURAND_RNG_PSEUDO_MTGP32));
     checkCudaErrors(curandSetStream(prngGPU, stream));
@@ -97,12 +101,14 @@ int main(int argc, char **argv)
     //
     // Example 1: Compare random numbers generated on GPU and CPU
     float *h_RandGPU;
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
     checkCudaErrors(cudaMallocHost(&h_RandGPU, rand_n * sizeof(float)));
 
     printf("Generating random numbers on GPU...\n\n");
     checkCudaErrors(curandGenerateUniform(prngGPU, (float *)d_Rand, rand_n));
 
     printf("\nReading back the results...\n");
+    // JP: `cudaMemcpyAsync`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpyAsync(h_RandGPU, d_Rand, rand_n * sizeof(float), cudaMemcpyDeviceToHost, stream));
 
     float *h_RandCPU = (float *)malloc(rand_n * sizeof(float));
@@ -110,6 +116,7 @@ int main(int argc, char **argv)
     printf("Generating random numbers on CPU...\n\n");
     checkCudaErrors(curandGenerateUniform(prngCPU, (float *)h_RandCPU, rand_n));
 
+    // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaStreamSynchronize(stream));
     printf("Comparing CPU/GPU random numbers...\n\n");
     float L1norm = compareResults(rand_n, h_RandGPU, h_RandCPU);
@@ -143,6 +150,7 @@ int main(int argc, char **argv)
 
     checkCudaErrors(curandDestroyGenerator(prngGPU));
     checkCudaErrors(curandDestroyGenerator(prngCPU));
+    // JP: `cudaStreamDestroy`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaStreamDestroy(stream));
     checkCudaErrors(cudaFree(d_Rand));
     sdkDeleteTimer(&hTimer);

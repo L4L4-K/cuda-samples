@@ -46,6 +46,7 @@ import sys
 import time
 
 try:
+    # JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
     import cupy as cp
     import numpy as np
     from cuda.core import (
@@ -224,6 +225,7 @@ def run(
     print("\n" + "=" * 70)
     print("Fast Array Sum using Shared Memory - Two-Stage Reduction")
     print("=" * 70)
+    # JP: shared_memory: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     print("\nDemonstrates: Efficient parallel reduction using shared memory")
 
     # Map datatype
@@ -265,6 +267,7 @@ def run(
     # Compile kernel
     print("\nCompiling CUDA kernel...")
     program_options = ProgramOptions(std="c++17", arch=f"sm_{device.arch}")
+    # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
     prog = Program(REDUCTION_KERNEL, code_type="c++", options=program_options)
     mod = prog.compile("cubin")
     kernel_name = f"blockReduceKernel_{datatype}"
@@ -304,6 +307,7 @@ def run(
 
         # Warm-up
         print("\n> Warming up GPU...")
+        # JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         launch(
             stream,
             config,

@@ -35,6 +35,7 @@ extern "C" __device__ void mandelbrot(float *Data)
 {
 
     // Which pixel am I?
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     unsigned DataX  = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned DataY  = blockIdx.y * blockDim.y + threadIdx.y;
     unsigned Width  = gridDim.x * blockDim.x;

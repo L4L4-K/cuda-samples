@@ -44,8 +44,10 @@ typedef struct callBackData
 
 __global__ void reduce(float *inputVec, double *outputVec, size_t inputSize, size_t outputSize)
 {
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ double tmp[THREADS_PER_BLOCK];
 
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     cg::thread_block cta       = cg::this_thread_block();
     size_t           globaltid = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -55,6 +57,7 @@ __global__ void reduce(float *inputVec, double *outputVec, size_t inputSize, siz
     }
     tmp[cta.thread_rank()] = temp_sum;
 
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 
     cg::thread_block_tile<32> tile32 = cg::tiled_partition<32>(cta);
@@ -149,6 +152,7 @@ void CUDART_CB myHostNodeCallback(void *data)
     *result = 0.0; // reset the result
 }
 
+// JP: `cudaGraphsManual`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
 void cudaGraphsManual(float  *inputVec_h,
                       float  *inputVec_d,
                       double *outputVec_d,
@@ -156,6 +160,7 @@ void cudaGraphsManual(float  *inputVec_h,
                       size_t  inputSize,
                       size_t  numOfBlocks)
 {
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t                 streamForGraph;
     cudaGraph_t                  graph;
     std::vector<cudaGraphNode_t> nodeDependencies;
@@ -175,6 +180,7 @@ void cudaGraphsManual(float  *inputVec_h,
     memcpyParams.dstPos   = make_cudaPos(0, 0, 0);
     memcpyParams.dstPtr   = make_cudaPitchedPtr(inputVec_d, sizeof(float) * inputSize, inputSize, 1);
     memcpyParams.extent   = make_cudaExtent(sizeof(float) * inputSize, 1, 1);
+    // JP: `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     memcpyParams.kind     = cudaMemcpyHostToDevice;
 
     memsetParams.dst         = (void *)outputVec_d;
@@ -285,6 +291,7 @@ void cudaGraphsManual(float  *inputVec_h,
     checkCudaErrors(cudaGraphExecDestroy(clonedGraphExec));
     checkCudaErrors(cudaGraphDestroy(graph));
     checkCudaErrors(cudaGraphDestroy(clonedGraph));
+    // JP: `cudaStreamDestroy`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaStreamDestroy(streamForGraph));
 }
 
@@ -326,6 +333,7 @@ void cudaGraphsUsingStreamCapture(float  *inputVec_h,
 
     checkCudaErrors(cudaStreamWaitEvent(stream1, memsetEvent1, 0));
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     reduce<<<numOfBlocks, THREADS_PER_BLOCK, 0, stream1>>>(inputVec_d, outputVec_d, inputSize, numOfBlocks);
 
     checkCudaErrors(cudaStreamWaitEvent(stream1, memsetEvent2, 0));
@@ -390,7 +398,9 @@ int main(int argc, char **argv)
     float  *inputVec_d = NULL, *inputVec_h = NULL;
     double *outputVec_d = NULL, *result_d;
 
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
     checkCudaErrors(cudaMallocHost(&inputVec_h, sizeof(float) * size));
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc(&inputVec_d, sizeof(float) * size));
     checkCudaErrors(cudaMalloc(&outputVec_d, sizeof(double) * maxBlocks));
     checkCudaErrors(cudaMalloc(&result_d, sizeof(double)));

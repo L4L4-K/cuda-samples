@@ -36,6 +36,7 @@
 #include <npps.h>
 #include <cuda_runtime.h>
 
+// JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
 namespace npp
 {
 
@@ -70,6 +71,7 @@ namespace npp
             Copy1D(Npp8u *pDst, const Npp8u *pSrc, size_t nSize)
             {
                 cudaError_t eResult;
+                // JP: `cudaMemcpy`, `cudaMemcpyDeviceToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
                 eResult = cudaMemcpy(pDst, pSrc, nSize * sizeof(Npp8u),cudaMemcpyDeviceToDevice);
                 NPP_ASSERT(cudaSuccess == eResult);
             };

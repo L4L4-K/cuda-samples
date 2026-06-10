@@ -46,8 +46,10 @@ __global__ void
 oddEvenMergeSortShared(uint *d_DstKey, uint *d_DstVal, uint *d_SrcKey, uint *d_SrcVal, uint arrayLength, uint dir)
 {
     // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     cg::thread_block cta = cg::this_thread_block();
     // Shared memory storage for one or more small vectors
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ uint s_key[SHARED_SIZE_LIMIT];
     __shared__ uint s_val[SHARED_SIZE_LIMIT];
 
@@ -66,6 +68,7 @@ oddEvenMergeSortShared(uint *d_DstKey, uint *d_DstVal, uint *d_SrcKey, uint *d_S
         uint offset = threadIdx.x & (stride - 1);
 
         {
+            // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
             cg::sync(cta);
             uint pos = 2 * threadIdx.x - (threadIdx.x & (stride - 1));
             Comparator(s_key[pos + 0], s_val[pos + 0], s_key[pos + stride], s_val[pos + stride], dir);
@@ -159,6 +162,7 @@ extern "C" void oddEvenMergeSort(uint *d_DstKey,
     // Only power-of-two array lengths are supported by this implementation
     uint log2L;
     uint factorizationRemainder = factorRadix2(&log2L, arrayLength);
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(factorizationRemainder == 1);
 
     dir = (dir != 0);
@@ -168,6 +172,7 @@ extern "C" void oddEvenMergeSort(uint *d_DstKey,
 
     if (arrayLength <= SHARED_SIZE_LIMIT) {
         assert(SHARED_SIZE_LIMIT % arrayLength == 0);
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         oddEvenMergeSortShared<<<blockCount, threadCount>>>(d_DstKey, d_DstVal, d_SrcKey, d_SrcVal, arrayLength, dir);
     }
     else {

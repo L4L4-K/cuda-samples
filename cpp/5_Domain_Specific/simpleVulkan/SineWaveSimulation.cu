@@ -34,6 +34,7 @@
 __global__ void sinewave(float *heightMap, unsigned int width, unsigned int height, float time)
 {
     const float  freq   = 4.0f;
+    // JP: `gridDim`, `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     const size_t stride = gridDim.x * blockDim.x;
 
     // Iterate through the entire array in a way that is
@@ -134,8 +135,10 @@ SineWaveSimulation::~SineWaveSimulation() { m_heightMap = NULL; }
 
 void SineWaveSimulation::initSimulation(float *heights) { m_heightMap = heights; }
 
+// JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
 void SineWaveSimulation::stepSimulation(float time, cudaStream_t stream)
 {
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     sinewave<<<m_blocks, m_threads, 0, stream>>>(m_heightMap, m_width, m_height, time);
     getLastCudaError("Failed to launch CUDA simulation");
 }

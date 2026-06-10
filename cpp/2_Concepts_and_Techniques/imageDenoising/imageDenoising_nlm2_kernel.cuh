@@ -52,9 +52,11 @@ namespace cg = cooperative_groups;
 __global__ void NLM2(TColor *dst, int imageW, int imageH, float Noise, float lerpC, cudaTextureObject_t texImage)
 {
     // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     cg::thread_block cta = cg::this_thread_block();
 
     // Weights cache
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ float fWeights[BLOCKDIM_X * BLOCKDIM_Y];
 
     const int ix = blockDim.x * blockIdx.x + threadIdx.x;
@@ -83,6 +85,7 @@ __global__ void NLM2(TColor *dst, int imageW, int imageH, float Noise, float ler
         // Write the result to shared memory
         fWeights[threadIdx.y * BLOCKDIM_X + threadIdx.x] = weight;
         // Wait until all the weights are ready
+        // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         cg::sync(cta);
 
         // Normalized counter for the NLM weight threshold
@@ -138,6 +141,7 @@ extern "C" void cuda_NLM2(TColor *d_dst, int imageW, int imageH, float Noise, fl
     dim3 threads(BLOCKDIM_X, BLOCKDIM_Y);
     dim3 grid(iDivUp(imageW, BLOCKDIM_X), iDivUp(imageH, BLOCKDIM_Y));
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     NLM2<<<grid, threads>>>(d_dst, imageW, imageH, Noise, LerpC, texImage);
 }
 

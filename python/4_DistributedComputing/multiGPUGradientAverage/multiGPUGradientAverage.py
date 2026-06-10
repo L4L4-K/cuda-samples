@@ -152,6 +152,7 @@ def get_init_kernel(device: Device):
     key = device.pci_bus_id
     if key not in _kernel_cache:
         opts = ProgramOptions(std="c++17", arch=f"sm_{device.arch}")
+        # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
         prog = Program(INIT_KERNEL, code_type="c++", options=opts)
         mod = prog.compile("cubin")
         _kernel_cache[key] = mod.get_kernel("init_grad_kernel")
@@ -199,6 +200,7 @@ def compute_local_gradients(
     config = LaunchConfig(grid=blocks_per_grid, block=threads_per_block)
 
     # Launch kernel using cuda.core stream
+    # JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     launch(stream, config, kernel, grad.data.ptr, num_elements, rank)
 
     return grad
@@ -223,6 +225,7 @@ def average_gradients(
 
     This pattern is environment-agnostic and works on any MPI stack.
     """
+    # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert local_grad.dtype == cp.float32
 
     # GPU -> CPU

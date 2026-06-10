@@ -82,6 +82,7 @@ int main(int argc, char **argv)
     }
 
     printf("Allocating and initializing CUDA arrays...\n\n");
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     error = cudaMalloc((void **)&d_InputKey, N * sizeof(uint));
     checkCudaErrors(error);
     error = cudaMalloc((void **)&d_InputVal, N * sizeof(uint));
@@ -90,6 +91,7 @@ int main(int argc, char **argv)
     checkCudaErrors(error);
     error = cudaMalloc((void **)&d_OutputVal, N * sizeof(uint));
     checkCudaErrors(error);
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     error = cudaMemcpy(d_InputKey, h_InputKey, N * sizeof(uint), cudaMemcpyHostToDevice);
     checkCudaErrors(error);
     error = cudaMemcpy(d_InputVal, h_InputVal, N * sizeof(uint), cudaMemcpyHostToDevice);
@@ -100,6 +102,7 @@ int main(int argc, char **argv)
 
     for (uint arrayLength = 64; arrayLength <= N; arrayLength *= 2) {
         printf("Testing array length %u (%u arrays per batch)...\n", arrayLength, N / arrayLength);
+        // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         error = cudaDeviceSynchronize();
         checkCudaErrors(error);
 
@@ -135,6 +138,7 @@ int main(int argc, char **argv)
         error = cudaMemcpy(h_OutputValGPU, d_OutputVal, N * sizeof(uint), cudaMemcpyDeviceToHost);
         checkCudaErrors(error);
 
+        // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         int keysFlag   = validateSortedKeys(h_OutputKeyGPU, h_InputKey, N / arrayLength, arrayLength, numValues, DIR);
         int valuesFlag = validateValues(h_OutputKeyGPU, h_OutputValGPU, h_InputKey, N / arrayLength, arrayLength);
         flag           = flag && keysFlag && valuesFlag;
@@ -144,6 +148,7 @@ int main(int argc, char **argv)
 
     printf("Shutting down...\n");
     sdkDeleteTimer(&hTimer);
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     cudaFree(d_OutputVal);
     cudaFree(d_OutputKey);
     cudaFree(d_InputVal);

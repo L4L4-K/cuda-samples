@@ -89,6 +89,7 @@ bool test0(void)
 
     fComplex *d_DataSpectrum, *d_KernelSpectrum;
 
+    // JP: `cufftHandle`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
     cufftHandle fftPlanFwd, fftPlanInv;
 
     bool                bRetVal;
@@ -111,6 +112,7 @@ bool test0(void)
     h_ResultCPU = (float *)malloc(dataH * dataW * sizeof(float));
     h_ResultGPU = (float *)malloc(fftH * fftW * sizeof(float));
 
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_Data, dataH * dataW * sizeof(float)));
     checkCudaErrors(cudaMalloc((void **)&d_Kernel, kernelH * kernelW * sizeof(float)));
 
@@ -119,6 +121,7 @@ bool test0(void)
 
     checkCudaErrors(cudaMalloc((void **)&d_DataSpectrum, fftH * (fftW / 2 + 1) * sizeof(fComplex)));
     checkCudaErrors(cudaMalloc((void **)&d_KernelSpectrum, fftH * (fftW / 2 + 1) * sizeof(fComplex)));
+    // JP: `cudaMemset`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemset(d_KernelSpectrum, 0, fftH * (fftW / 2 + 1) * sizeof(fComplex)));
 
     printf("...generating random input data\n");
@@ -152,6 +155,7 @@ bool test0(void)
     checkCudaErrors(cufftExecR2C(fftPlanFwd, (cufftReal *)d_PaddedKernel, (cufftComplex *)d_KernelSpectrum));
 
     printf("...running GPU FFT convolution: ");
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
     sdkResetTimer(&hTimer);
     sdkStartTimer(&hTimer);
@@ -201,6 +205,7 @@ bool test0(void)
     checkCudaErrors(cufftDestroy(fftPlanInv));
     checkCudaErrors(cufftDestroy(fftPlanFwd));
 
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_DataSpectrum));
     checkCudaErrors(cudaFree(d_KernelSpectrum));
     checkCudaErrors(cudaFree(d_PaddedData));

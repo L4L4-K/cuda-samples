@@ -41,6 +41,7 @@
 EXTENSION_LIST(EXTLST_EXTERN)
 #endif
 
+// JP: `cudaProducerReadYUVFrame`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
 static CUresult cudaProducerReadYUVFrame(FILE          *file,
                                          unsigned int   frameNum,
                                          unsigned int   width,
@@ -211,6 +212,7 @@ CUresult cudaProducerTest(test_cuda_producer_s *cudaProducer, char *file)
     }
     if (cudaProducer->pitchLinearOutput) {
         for (i = 0; i < surfNum; i++) {
+            // JP: `cuStatus`, `cuMemcpy`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
             cuStatus = cuMemcpy(
                 cudaPtr[i], (CUdeviceptr)(cudaProducer->pBuff + uvOffset[i]), copyWidthInBytes[i] * copyHeight[i]);
 
@@ -323,6 +325,7 @@ CUresult cudaDeviceCreateProducer(test_cuda_producer_s *cudaProducer, CUdevice d
         return status;
     }
 
+    // JP: `cuMemAlloc`, `cudaProducer`, `cudaPtrARGB`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     status = cuMemAlloc(&cudaProducer->cudaPtrARGB[0], (WIDTH * HEIGHT * 4));
     if (status != CUDA_SUCCESS) {
         printf("Create CUDA pointer failed, cuStatus=%d\n", status);
@@ -405,6 +408,7 @@ void cudaProducerInit(test_cuda_producer_s *cudaProducer, EGLDisplay eglDisplay,
 CUresult cudaProducerDeinit(test_cuda_producer_s *cudaProducer)
 {
     if (cudaProducer->pBuff)
+        // JP: `cudaProducer`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         free(cudaProducer->pBuff);
 
     checkCudaErrors(cuMemFree(cudaProducer->cudaPtrARGB[0]));

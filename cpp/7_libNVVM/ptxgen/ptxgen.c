@@ -58,6 +58,7 @@ typedef enum { PTXGEN_INPUT_PROGRAM, PTXGEN_INPUT_LIBDEVICE } PTXGENInput;
 
 static PTXGenStatus getLibDevicePath(char **buffer)
 {
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(buffer);
 
     const char *libnvvmPath = getLibnvvmHome();
@@ -102,6 +103,7 @@ static PTXGenStatus addFileToProgram(const char *filename, nvvmProgram prog, PTX
     if (ferror(f)) {
         fprintf(stderr, "Failed to read %s\n", filename);
         fclose(f);
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         free(buffer);
         return PTXGEN_FILE_IO_ERROR;
     }

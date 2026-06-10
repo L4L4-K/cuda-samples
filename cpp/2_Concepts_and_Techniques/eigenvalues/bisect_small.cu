@@ -75,6 +75,7 @@ void computeEigenvaluesSmallMatrix(const InputData   &input,
         dim3 blocks(1, 1, 1);
         dim3 threads(MAX_THREADS_BLOCK_SMALL_MATRIX, 1, 1);
 
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         bisectKernel<<<blocks, threads>>>(input.g_a,
                                           input.g_b,
                                           mat_size,
@@ -89,6 +90,7 @@ void computeEigenvaluesSmallMatrix(const InputData   &input,
                                           precision);
     }
 
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
     sdkStopTimer(&timer);
     getLastCudaError("Kernel launch failed");
@@ -120,6 +122,7 @@ void initResultSmallMatrix(ResultDataSmall &result, const unsigned int mat_size)
         result.eigenvalues[i] = 0.0f;
     }
 
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&result.g_left, result.mat_size_f));
     checkCudaErrors(cudaMalloc((void **)&result.g_right, result.mat_size_f));
 
@@ -127,6 +130,7 @@ void initResultSmallMatrix(ResultDataSmall &result, const unsigned int mat_size)
     checkCudaErrors(cudaMalloc((void **)&result.g_right_count, result.mat_size_ui));
 
     // initialize result memory
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(result.g_left, result.zero_f, result.mat_size_f, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(result.g_right, result.zero_f, result.mat_size_f, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(result.g_right_count, result.zero_ui, result.mat_size_ui, cudaMemcpyHostToDevice));
@@ -143,6 +147,7 @@ void cleanupResultSmallMatrix(ResultDataSmall &result)
     freePtr(result.zero_f);
     freePtr(result.zero_ui);
 
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(result.g_left));
     checkCudaErrors(cudaFree(result.g_right));
     checkCudaErrors(cudaFree(result.g_left_count));

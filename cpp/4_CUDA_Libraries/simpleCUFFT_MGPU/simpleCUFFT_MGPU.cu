@@ -50,6 +50,7 @@ typedef float2 Complex;
 static __device__ __host__ inline Complex ComplexAdd(Complex, Complex);
 static __device__ __host__ inline Complex ComplexScale(Complex, float);
 static __device__ __host__ inline Complex ComplexMul(Complex, Complex);
+// JP: `cufftComplex`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
 static __global__ void                    ComplexPointwiseMulAndScale(cufftComplex *, cufftComplex *, int, float);
 
 // Kernel for GPU
@@ -117,6 +118,7 @@ int main(int argc, char **argv)
         }
     }
 
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(major_minor);
     if (!found2IdenticalGPUs) {
         printf("No Two GPUs with same architecture found\nWaiving simpleCUFFT_2d_MGPU "
@@ -214,6 +216,7 @@ int main(int argc, char **argv)
            (long)(d_out_signal->descriptor->size[1] / sizeof(cufftComplex)));
 
     // Multiply the coefficients together and normalize the result
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     printf("Launching ComplexPointwiseMulAndScale<<< >>>\n");
     multiplyCoefficient(d_out_signal, d_out_filter_kernel, new_size, 1.0f / new_size, nGPUs);
 
@@ -235,6 +238,7 @@ int main(int argc, char **argv)
 
     // Compare CPU and GPU result
     bool bTestResult =
+        // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         sdkCompareL2fe((float *)h_convolved_signal_ref, (float *)h_convolved_signal, 2 * SIGNAL_SIZE, 1e-5f);
     printf("\nvalue of TestResult %d\n", bTestResult);
 
@@ -341,6 +345,7 @@ void multiplyCoefficient(cudaLibXtDesc *d_signal, cudaLibXtDesc *d_filter_kernel
     for (int i = 0; i < nGPUs; i++) {
         device = d_signal->descriptor->GPUs[i];
         checkCudaErrors(cudaSetDevice(device));
+        // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         cudaDeviceSynchronize();
         // Check if kernel execution generated and error
         getLastCudaError("Kernel execution failed [ ComplexPointwiseMulAndScale ]");
@@ -380,6 +385,7 @@ static __device__ __host__ inline Complex ComplexMul(Complex a, Complex b)
 // Complex pointwise multiplication
 static __global__ void ComplexPointwiseMulAndScale(cufftComplex *a, cufftComplex *b, int size, float scale)
 {
+    // JP: `blockDim`, `gridDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     const int numThreads = blockDim.x * gridDim.x;
     const int threadID   = blockIdx.x * blockDim.x + threadIdx.x;
     for (int i = threadID; i < size; i += numThreads) {

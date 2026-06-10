@@ -80,6 +80,7 @@ ParticleSystem::~ParticleSystem()
 
 void ParticleSystem::_initialize(int numParticles, bool bUseGL)
 {
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(!m_bInitialized);
 
     createNoiseTexture(64, 64, 64);

@@ -49,6 +49,7 @@ static __global__ void
 transformKernel(unsigned int *outputData, int width, int height, float theta, cudaTextureObject_t tex)
 {
     // calculate normalized texture coordinates
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -84,17 +85,22 @@ void launchGrayScaleKernel(unsigned int *d_rgbaImage,
                            std::string   image_filename,
                            size_t        imageWidth,
                            size_t        imageHeight,
+                           // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
                            cudaStream_t  stream)
 {
     int numThreadsPerBlock = 1024;
     int numOfBlocks        = (imageWidth * imageHeight) / numThreadsPerBlock;
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     rgbToGrayscaleKernel<<<numOfBlocks, numThreadsPerBlock, 0, stream>>>(d_rgbaImage, imageWidth, imageHeight);
 
     unsigned int *outputData;
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
     checkCudaErrors(cudaMallocHost((void **)&outputData, sizeof(unsigned int) * imageWidth * imageHeight));
+    // JP: `cudaMemcpyAsync`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpyAsync(
         outputData, d_rgbaImage, sizeof(unsigned int) * imageWidth * imageHeight, cudaMemcpyDeviceToHost, stream));
+    // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaStreamSynchronize(stream));
 
     char outputFilename[1024];
@@ -103,6 +109,7 @@ void launchGrayScaleKernel(unsigned int *d_rgbaImage,
     sdkSavePPM4ub(outputFilename, (unsigned char *)outputData, imageWidth, imageHeight);
     printf("Wrote '%s'\n", outputFilename);
 
+    // JP: `cudaFreeHost`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFreeHost(outputData));
 }
 

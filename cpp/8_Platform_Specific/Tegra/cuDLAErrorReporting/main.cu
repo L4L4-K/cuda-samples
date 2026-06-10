@@ -61,6 +61,7 @@ typedef struct
     cudlaDevHandle               devHandle;
     cudlaModule                  moduleHandle;
     unsigned char               *loadableData;
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t                 stream;
     unsigned char               *inputBuffer;
     unsigned char               *outputBuffer;
@@ -75,6 +76,7 @@ void cleanUp(ResourceList *resourceList);
 void cleanUp(ResourceList *resourceList)
 {
     if (resourceList->inputTensorDesc != NULL) {
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         free(resourceList->inputTensorDesc);
         resourceList->inputTensorDesc = NULL;
     }
@@ -99,6 +101,7 @@ void cleanUp(ResourceList *resourceList)
     }
 
     if (resourceList->inputBufferGPU != 0) {
+        // JP: `cudaFree`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
         cudaFree(resourceList->inputBufferGPU);
         resourceList->inputBufferGPU = 0;
     }
@@ -142,6 +145,7 @@ int main(int argc, char **argv)
     memset(&resourceList, 0x00, sizeof(ResourceList));
 
     if (argc != 2) {
+        // JP: `cuDLAErrorReporting`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
         DPRINTF("Usage : ./cuDLAErrorReporting <loadable>\n");
         return 1;
     }
@@ -276,6 +280,7 @@ int main(int argc, char **argv)
     attribute.inputTensorDesc = inputTensorDesc;
     err                       = cudlaModuleGetAttributes(moduleHandle, CUDLA_INPUT_TENSOR_DESCRIPTORS, &attribute);
     if (err != cudlaSuccess) {
+        // JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
         DPRINTF("Error in getting input tensor descriptor = %d\n", err);
         cleanUp(&resourceList);
         return 1;
@@ -358,6 +363,7 @@ int main(int argc, char **argv)
     DPRINTF("ALL MEMORY REGISTERED SUCCESSFULLY\n");
 
     // Copy data from CPU buffers to GPU buffers.
+    // JP: `cudaMemcpyAsync`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     result = cudaMemcpyAsync(inputBufferGPU, inputBuffer, inputTensorDesc[0].size, cudaMemcpyHostToDevice, stream);
     if (result != cudaSuccess) {
         DPRINTF("Error in enqueueing memcpy for input\n");
@@ -404,6 +410,7 @@ int main(int argc, char **argv)
         }
     }
 
+    // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     result = cudaStreamSynchronize(stream);
     if (result != cudaSuccess) {
         DPRINTF("Error in synchronizing stream = %s\n", cudaGetErrorName(result));

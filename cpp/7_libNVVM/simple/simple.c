@@ -37,8 +37,10 @@
 
 // If 'err' is non-zero, emit an error message and exit.
 #define checkCudaErrors(err) __checkCudaErrors(err, __FILE__, __LINE__)
+// JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
 static void __checkCudaErrors(CUresult err, const char *filename, int line)
 {
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(filename);
     if (CUDA_SUCCESS != err) {
         const char    *ename = NULL;
@@ -158,6 +160,7 @@ static char *generatePTX(const char *ir, size_t size, const char *filename, int 
         assert(msg);
         nvvmGetProgramLog(program, msg);
         fprintf(stderr, "%s\n", msg);
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         free(msg);
         exit(EXIT_FAILURE);
     }
@@ -223,14 +226,17 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
     CUdeviceptr dData = 0;
+    // JP: `cuMemAlloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cuMemAlloc(&dData, memSize));
 
     // Launch the kernel.
     void *params[] = {&dData};
+    // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     checkCudaErrors(cuLaunchKernel(hKernel, nBlocks, 1, 1, nThreads, 1, 1, 0, NULL, params, NULL));
     fprintf(stdout, "CUDA kernel launched\n");
 
     // Copy the result back to the host.
+    // JP: `cuMemcpyDtoH`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cuMemcpyDtoH(hData, dData, memSize));
 
     // Print the result.

@@ -57,6 +57,7 @@ static void sig_handler(int sig)
 int main(int argc, char **argv)
 {
     TestArgs     args;
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     CUresult     curesult = CUDA_SUCCESS;
     unsigned int i, j;
     EGLint       streamState = 0;

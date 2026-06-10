@@ -80,6 +80,7 @@ class MonteCarloPiSimulation
 public:
     MonteCarloPiSimulation(size_t num_points);
     ~MonteCarloPiSimulation();
+    // JP: `cudaDevice`, `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     void        initSimulation(int cudaDevice, cudaStream_t stream = 0);
     void        stepSimulation(float time, cudaStream_t stream = 0);
     static void computePiCallback(void *args);

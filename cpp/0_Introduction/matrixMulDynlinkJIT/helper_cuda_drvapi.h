@@ -43,6 +43,7 @@ inline int ftoi(float value) { return (value >= 0 ? static_cast<int>(value + 0.5
 #ifndef checkCudaErrors
 #define checkCudaErrors(err) __checkCudaErrors(err, __FILE__, __LINE__)
 
+// JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
 extern "C" CUresult INIT_ERROR_FUNCTIONS(void);
 
 // These are the inline versions for all of the SDK helper functions

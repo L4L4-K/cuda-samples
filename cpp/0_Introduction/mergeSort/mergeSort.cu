@@ -110,7 +110,9 @@ template <uint sortDir>
 __global__ void mergeSortSharedKernel(uint *d_DstKey, uint *d_DstVal, uint *d_SrcKey, uint *d_SrcVal, uint arrayLength)
 {
     // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     cg::thread_block cta = cg::this_thread_block();
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ uint  s_key[SHARED_SIZE_LIMIT];
     __shared__ uint  s_val[SHARED_SIZE_LIMIT];
 
@@ -128,6 +130,7 @@ __global__ void mergeSortSharedKernel(uint *d_DstKey, uint *d_DstVal, uint *d_Sr
         uint *baseKey = s_key + 2 * (threadIdx.x - lPos);
         uint *baseVal = s_val + 2 * (threadIdx.x - lPos);
 
+        // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         cg::sync(cta);
         uint keyA = baseKey[lPos + 0];
         uint valA = baseVal[lPos + 0];
@@ -162,12 +165,14 @@ static void mergeSortShared(uint *d_DstKey,
         return;
     }
 
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(SHARED_SIZE_LIMIT % arrayLength == 0);
     assert(((batchSize * arrayLength) % SHARED_SIZE_LIMIT) == 0);
     uint blockCount  = batchSize * arrayLength / SHARED_SIZE_LIMIT;
     uint threadCount = SHARED_SIZE_LIMIT / 2;
 
     if (sortDir) {
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         mergeSortSharedKernel<1U><<<blockCount, threadCount>>>(d_DstKey, d_DstVal, d_SrcKey, d_SrcVal, arrayLength);
         getLastCudaError("mergeSortShared<1><<<>>> failed\n");
     }
@@ -455,6 +460,7 @@ static const uint MAX_SAMPLE_COUNT = 32768;
 
 extern "C" void initMergeSort(void)
 {
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_RanksA, MAX_SAMPLE_COUNT * sizeof(uint)));
     checkCudaErrors(cudaMalloc((void **)&d_RanksB, MAX_SAMPLE_COUNT * sizeof(uint)));
     checkCudaErrors(cudaMalloc((void **)&d_LimitsA, MAX_SAMPLE_COUNT * sizeof(uint)));
@@ -463,6 +469,7 @@ extern "C" void initMergeSort(void)
 
 extern "C" void closeMergeSort(void)
 {
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_RanksA));
     checkCudaErrors(cudaFree(d_RanksB));
     checkCudaErrors(cudaFree(d_LimitsB));
@@ -517,6 +524,7 @@ extern "C" void mergeSort(uint *d_DstKey,
         if (lastSegmentElements <= stride) {
             // Last merge segment consists of a single array which just needs to be
             // passed through
+            // JP: `cudaMemcpy`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
             checkCudaErrors(cudaMemcpy(okey + (N - lastSegmentElements),
                                        ikey + (N - lastSegmentElements),
                                        lastSegmentElements * sizeof(uint),

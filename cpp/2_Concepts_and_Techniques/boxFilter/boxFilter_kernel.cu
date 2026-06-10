@@ -164,6 +164,7 @@ __device__ void d_boxfilter_y(float *id, float *od, int w, int h, int r)
 
 __global__ void d_boxfilter_x_global(float *id, float *od, int w, int h, int r)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     unsigned int y = blockIdx.x * blockDim.x + threadIdx.x;
     d_boxfilter_x(&id[y * w], &od[y * w], w, h, r);
 }
@@ -314,10 +315,12 @@ extern "C" void initTexture(int width, int height, void *pImage, bool useRGBA)
     else {
         channelDesc = cudaCreateChannelDesc(32, 0, 0, 0, cudaChannelFormatKindFloat);
     }
+    // JP: `cudaMallocArray`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMallocArray(&d_array, &channelDesc, width, height));
 
     size_t bytesPerElem = (useRGBA ? sizeof(uchar4) : sizeof(float));
     checkCudaErrors(cudaMemcpy2DToArray(
+        // JP: `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         d_array, 0, 0, pImage, width * bytesPerElem, width * bytesPerElem, height, cudaMemcpyHostToDevice));
 
     checkCudaErrors(cudaMallocArray(&d_tempArray, &channelDesc, width, height));
@@ -388,6 +391,7 @@ extern "C" void initTexture(int width, int height, void *pImage, bool useRGBA)
 
 extern "C" void freeTextures()
 {
+    // JP: `cudaDestroyTextureObject`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaDestroyTextureObject(tex));
     checkCudaErrors(cudaDestroyTextureObject(texTempArray));
     checkCudaErrors(cudaDestroyTextureObject(rgbaTex));
@@ -421,12 +425,14 @@ extern "C" double boxFilter(float              *d_temp,
     double dKernelTime = 0.0;
 
     // sync host and start computation timer_kernel
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
 
     for (int i = 0; i < iterations; i++) {
         sdkResetTimer(&timer);
         // use texture for horizontal pass
         if (iterations > 1) {
+            // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
             d_boxfilter_x_tex<<<height / nthreads, nthreads, 0>>>(d_temp, width, height, radius, texTempArray);
         }
         else {

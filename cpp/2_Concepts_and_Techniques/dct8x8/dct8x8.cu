@@ -195,6 +195,7 @@ float WrapperCUDA1(byte *ImgSrc, byte *ImgDst, int Stride, ROI Size)
     cudaArray *Src;
     float     *Dst;
     size_t     DstStride;
+    // JP: `cudaMallocArray`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMallocArray(&Src, &floattex, Size.width, Size.height));
     checkCudaErrors(cudaMallocPitch((void **)(&Dst), &DstStride, Size.width * sizeof(float), Size.height));
     DstStride /= sizeof(float);
@@ -213,6 +214,7 @@ float WrapperCUDA1(byte *ImgSrc, byte *ImgDst, int Stride, ROI Size)
                                         ImgSrcFStride * sizeof(float),
                                         Size.width * sizeof(float),
                                         Size.height,
+                                        // JP: `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
                                         cudaMemcpyHostToDevice));
 
     // setup execution parameters
@@ -245,7 +247,9 @@ float WrapperCUDA1(byte *ImgSrc, byte *ImgDst, int Stride, ROI Size)
 
     for (int i = 0; i < BENCHMARK_SIZE; i++) {
         sdkStartTimer(&timerCUDA);
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         CUDAkernel1DCT<<<grid, threads>>>(Dst, (int)DstStride, 0, 0, TexSrc);
+        // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         checkCudaErrors(cudaDeviceSynchronize());
         sdkStopTimer(&timerCUDA);
     }
@@ -282,6 +286,7 @@ float WrapperCUDA1(byte *ImgSrc, byte *ImgDst, int Stride, ROI Size)
     CopyFloat2Byte(ImgSrcF, ImgSrcFStride, ImgDst, Stride, Size);
 
     // clean up memory
+    // JP: `cudaDestroyTextureObject`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaDestroyTextureObject(TexSrc));
     checkCudaErrors(cudaFreeArray(Src));
     checkCudaErrors(cudaFree(Dst));

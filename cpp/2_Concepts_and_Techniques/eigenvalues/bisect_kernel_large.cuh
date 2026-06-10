@@ -188,11 +188,13 @@ __global__ void bisectKernelLarge(float             *g_d,
                                   unsigned int      *g_blocks_mult_sum)
 {
     // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     cg::thread_block   cta = cg::this_thread_block();
     const unsigned int tid = threadIdx.x;
 
     // intervals (store left and right because the subdivision tree is in general
     // not dense
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ float s_left[2 * MAX_THREADS_BLOCK + 1];
     __shared__ float s_right[2 * MAX_THREADS_BLOCK + 1];
 
@@ -240,6 +242,7 @@ __global__ void bisectKernelLarge(float             *g_d,
     s_left_count[tid]      = 0;
     s_right_count[tid]     = 0;
 
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 
     // set up initial configuration

@@ -63,6 +63,7 @@ static bool run_n_to_one_transform()
 
     checkCudaErrors(cub::DeviceTransform::Transform(
         cuda::std::tuple{a.begin(), b.begin(), counting}, result.begin(), a.size(), op));
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
 
     thrust::host_vector<int>   ha  = a;
@@ -85,6 +86,7 @@ static bool run_n_to_one_transform()
     printf(" }\n  expected = {");
     for (size_t i = 0; i < expected.size(); ++i)
         printf(" %d", expected[i]);
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     printf(" }  %s\n", ok ? "OK" : "FAIL");
     return ok;
 }

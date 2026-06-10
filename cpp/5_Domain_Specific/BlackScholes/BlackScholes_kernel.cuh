@@ -93,6 +93,7 @@ __launch_bounds__(128) __global__ void BlackScholesGPU(float2 *__restrict d_Call
     ////Total number of threads in execution grid
     // const int THREAD_N = blockDim.x * gridDim.x;
 
+    // JP: `blockDim`, `blockIdx`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     const int opt = blockDim.x * blockIdx.x + threadIdx.x;
 
     // Calculating 2 options per thread to increase ILP (instruction level

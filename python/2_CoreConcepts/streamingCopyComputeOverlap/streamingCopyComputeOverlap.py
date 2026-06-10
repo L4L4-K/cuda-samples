@@ -45,6 +45,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "Utilities"))
 
 try:
     import numpy as np
+    # JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
     from cuda.core import (
         Device,
         DeviceMemoryResource,
@@ -102,6 +103,7 @@ def main():
     program = Program(
         VECTOR_SCALE_KERNEL, code_type="c++", options=ProgramOptions(arch=arch)
     )
+    # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
     kernel = program.compile(target_type="cubin").get_kernel("vector_scale")
     print("Kernel compiled [OK]")
 
@@ -143,6 +145,7 @@ def main():
 
         # Warm up
         h_in.copy_to(d_in, stream=default_stream)
+        # JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         launch(
             default_stream,
             config,
@@ -185,6 +188,7 @@ def main():
         expected = np_in.astype(np.float32) * scale
         for _ in range(50):
             expected = np.sqrt(expected * expected + 1.0).astype(np.float32)
+        # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         if np.allclose(np_out, expected, rtol=1e-4, atol=1e-4):
             print("Verification: PASSED")
         else:
@@ -303,6 +307,7 @@ def main():
                 s.close()
 
     print("\n" + "=" * 60)
+    # JP: pinned_memory: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
     print("Key: Pinned memory + multiple streams = overlap transfers with compute")
     print("\nNote: Speedup depends on hardware characteristics. This technique")
     print("benefits most when transfer time is significant relative to compute.")

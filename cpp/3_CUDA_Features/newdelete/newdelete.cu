@@ -68,6 +68,7 @@ __global__ void containerFill(Container<int> **g_container)
 {
     // All threads of the grid cooperatively populate the shared Container object
     // with data.
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     if (threadIdx.x == 0) {
         (*g_container)->push(blockIdx.x);
     }
@@ -108,6 +109,7 @@ __global__ void placementNew(int *d_result)
 {
     // Handle to thread block group
     cg::thread_block         cta = cg::this_thread_block();
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ unsigned char __align__(8) s_buffer[sizeof(Vector<int>)];
     __shared__ int           __align__(8) s_data[1024];
     __shared__ Vector<int> *s_vector;
@@ -119,6 +121,7 @@ __global__ void placementNew(int *d_result)
         s_vector = new (s_buffer) Vector<int>(1024, s_data);
     }
 
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 
     if ((threadIdx.x & 1) == 0) {
@@ -198,11 +201,13 @@ __global__ void complexVector(int *d_result)
 //
 ////////////////////////////////////////////////////////////////////////////////
 
+// JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
 bool checkResult(int *d_result, int N)
 {
     std::vector<int> h_result;
     h_result.resize(N);
 
+    // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(&h_result[0], d_result, N * sizeof(int), cudaMemcpyDeviceToHost));
     std::sort(h_result.begin(), h_result.end());
 
@@ -227,8 +232,10 @@ bool checkResult(int *d_result, int N)
 bool testContainer(Container<int> **d_container, int blocks, int threads)
 {
     int *d_result;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     cudaMalloc(&d_result, blocks * threads * sizeof(int));
 
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     containerFill<<<blocks, threads>>>(d_container);
     containerConsume<<<blocks, threads>>>(d_container, d_result);
     containerDelete<<<1, 1>>>(d_container);
@@ -236,6 +243,7 @@ bool testContainer(Container<int> **d_container, int blocks, int threads)
 
     bool success = checkResult(d_result, blocks * threads);
 
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     cudaFree(d_result);
 
     return success;

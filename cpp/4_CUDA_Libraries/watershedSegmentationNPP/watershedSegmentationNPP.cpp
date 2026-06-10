@@ -53,6 +53,7 @@
 
 #define NUMBER_OF_IMAGES 3
 
+// JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
 Npp8u  *pInputImageDev[NUMBER_OF_IMAGES];
 Npp8u  *pInputImageHost[NUMBER_OF_IMAGES];
 Npp8u  *pSegmentationScratchBufferDev[NUMBER_OF_IMAGES];
@@ -65,6 +66,7 @@ void tearDown() // Clean up and tear down
 {
     for (int j = 0; j < NUMBER_OF_IMAGES; j++) {
         if (pSegmentLabelsOutputBufferDev[j] != 0)
+            // JP: `cudaFree`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。 ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
             cudaFree(pSegmentLabelsOutputBufferDev[j]);
         if (pSegmentationScratchBufferDev[j] != 0)
             cudaFree(pSegmentationScratchBufferDev[j]);
@@ -217,6 +219,7 @@ int main(int argc, char **argv)
     if (cudaError != cudaSuccess)
         return NPP_NOT_SUFFICIENT_COMPUTE_CAPABILITY;
 
+    // JP: `cudaError`, `cudaStreamGetFlags`, `nppStreamCtx`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaError = cudaStreamGetFlags(nppStreamCtx.hStream, &nppStreamCtx.nStreamFlags);
 
     cudaDeviceProp oDeviceProperties;
@@ -284,6 +287,7 @@ int main(int argc, char **argv)
         if (loadRaw8BitImage(
                 pInputImageHost[nImage], oSizeROI[nImage].width * sizeof(Npp8u), oSizeROI[nImage].height, nImage)
             == 0) {
+            // JP: `cudaError`, `cudaMemcpy2DAsync`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
             cudaError = cudaMemcpy2DAsync(pInputImageDev[nImage],
                                           oSizeROI[nImage].width * sizeof(Npp8u),
                                           pInputImageHost[nImage],
@@ -380,6 +384,7 @@ int main(int argc, char **argv)
                                           nppStreamCtx.hStream);
 
             // Wait host image read backs to complete, not necessary if no need to synchronize
+            // JP: `cudaError`, `cudaStreamSynchronize`, `nppStreamCtx`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
             if ((cudaError = cudaStreamSynchronize(nppStreamCtx.hStream)) != cudaSuccess) {
                 printf("Post segmentation cudaStreamSynchronize failed\n");
                 tearDown();

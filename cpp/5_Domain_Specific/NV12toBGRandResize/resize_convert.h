@@ -43,6 +43,7 @@ extern "C" void resizeNV12Batch(uint8_t     *dpSrc,
                                 int          nDstWidth,
                                 int          nDstHeight,
                                 int          nBatchSize,
+                                // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
                                 cudaStream_t stream = 0);
 
 // bgr resize

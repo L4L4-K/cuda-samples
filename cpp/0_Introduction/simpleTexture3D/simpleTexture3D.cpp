@@ -77,6 +77,7 @@ const dim3 gridSize(width / blockSize.x, height / blockSize.y);
 float w = 0.5; // texture coordinate in z
 
 GLuint                       pbo;               // OpenGL pixel buffer object
+// JP: `cudaGraphicsResource`, `cuda_pbo_resource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
 struct cudaGraphicsResource *cuda_pbo_resource; // CUDA Graphics Resource (to transfer PBO)
 
 bool linearFiltering = true;
@@ -298,18 +299,22 @@ void initGL(int *argc, char **argv)
 
 void runAutoTest(const char *ref_file, char *exec_path)
 {
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&d_output, width * height * sizeof(GLubyte) * 4));
 
     // render the volumeData
     render_kernel(gridSize, blockSize, d_output, width, height, w);
 
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
     getLastCudaError("render_kernel failed");
 
     void *h_output = malloc(width * height * sizeof(GLubyte) * 4);
+    // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpy(h_output, d_output, width * height * sizeof(GLubyte) * 4, cudaMemcpyDeviceToHost));
     sdkDumpBin(h_output, width * height * sizeof(GLubyte) * 4, "simpleTexture3D.bin");
 
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     bool bTestResult = sdkCompareBin2BinFloat("simpleTexture3D.bin",
                                               sdkFindFilePath(ref_file, exec_path),
                                               width * height,
@@ -317,6 +322,7 @@ void runAutoTest(const char *ref_file, char *exec_path)
                                               THRESHOLD,
                                               exec_path);
 
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_output));
     free(h_output);
 

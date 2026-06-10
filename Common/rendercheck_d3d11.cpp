@@ -121,5 +121,6 @@ bool CheckRenderD3D11::PPMvsPPM(const char *src_file, const char *ref_file, cons
         return false;
     }
 
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     return sdkComparePPM(src_file,ref_file_path,epsilon,threshold,true) == true;
 }

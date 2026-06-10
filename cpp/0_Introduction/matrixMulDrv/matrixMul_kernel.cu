@@ -46,6 +46,7 @@ template <int block_size, typename size_type>
 __device__ void matrixMul(float *C, float *A, float *B, size_type wA, size_type wB)
 {
     // Block index
+    // JP: `blockIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     size_type bx = blockIdx.x;
     size_type by = blockIdx.y;
 
@@ -77,6 +78,7 @@ __device__ void matrixMul(float *C, float *A, float *B, size_type wA, size_type 
     for (size_type a = aBegin, b = bBegin; a <= aEnd; a += aStep, b += bStep) {
         // Declaration of the shared memory array As used to
         // store the sub-matrix of A
+        // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
         __shared__ float As[block_size][block_size];
 
         // Declaration of the shared memory array Bs used to
@@ -90,6 +92,7 @@ __device__ void matrixMul(float *C, float *A, float *B, size_type wA, size_type 
         BS(ty, tx) = B[b + wB * ty + tx];
 
         // Synchronize to make sure the matrices are loaded
+        // JP: `__syncthreads`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         __syncthreads();
 
         // Multiply the two matrices together;

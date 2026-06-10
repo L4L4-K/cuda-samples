@@ -87,6 +87,7 @@ private:
     size_t                       m_size;
     T                           *m_dptr[2];
     GLuint                       m_vbo[2];
+    // JP: `cudaGraphicsResource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
     struct cudaGraphicsResource *m_cuda_vbo_resource[2]; // handles OpenGL-CUDA exchange
 
     T *m_hptr;
@@ -161,6 +162,7 @@ template <class T> void GpuArray<T>::freeHost()
 
 template <class T> void GpuArray<T>::allocDevice()
 {
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc((void **)&m_dptr[0], m_size * sizeof(T)));
 
     if (m_doubleBuffer) {
@@ -171,6 +173,7 @@ template <class T> void GpuArray<T>::allocDevice()
 template <class T> void GpuArray<T>::freeDevice()
 {
     if (m_dptr[0]) {
+        // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         checkCudaErrors(cudaFree(m_dptr[0]));
         m_dptr[0] = 0;
     }
@@ -267,6 +270,7 @@ template <class T> void GpuArray<T>::copy(Direction dir, uint start, uint count)
 
     switch (dir) {
     case HOST_TO_DEVICE:
+        // JP: `cudaMemcpy`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         checkCudaErrors(cudaMemcpy((void *)(m_dptr[m_currentRead] + start),
                                    (void *)(m_hptr + start),
                                    count * sizeof(T),

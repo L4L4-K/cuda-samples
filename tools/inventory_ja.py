@@ -63,86 +63,103 @@ class AnchorRule:
 ANCHOR_RULES: tuple[AnchorRule, ...] = (
     AnchorRule(
         "device_memory",
+        # JP: device allocation/free の anchor。確保と解放が対応しているかを近傍コメントで確認します。
         re.compile(r"\b(cudaMalloc(?:Pitch|3D|Array)?|cudaFree(?:Array)?|cuMemAlloc\w*|cuMemFree\w*|mem_alloc|DeviceMemory|device_buffer)\b"),
         "device allocation/free",
     ),
     AnchorRule(
         "pinned_memory",
+        # JP: pinned host memory の anchor。非同期転送と lifetime の説明が近くにあるかを見ます。
         re.compile(r"\b(cudaMallocHost|cudaFreeHost|cudaHostAlloc|cudaHostRegister|cudaHostUnregister|pinned|pagelocked)\b", re.I),
         "pinned host memory",
     ),
     AnchorRule(
         "managed_memory",
-        re.compile(r"\b(cudaMallocManaged|cudaMemPrefetchAsync|cudaMemAdvise|managed memory|UnifiedMemory|Unified Memory)\b"),
+        # JP: Unified Memory の anchor。移動タイミング、prefetch、同期の説明を求めます。
+        re.compile(r"\b(cudaMallocManaged|cudaMemPrefetchAsync|cudaMemAdvise|ManagedMemoryResource|managed_mr|managed memory|UnifiedMemory|Unified Memory)\b"),
         "unified memory",
     ),
     AnchorRule(
         "transfer",
+        # JP: host/device transfer の anchor。方向、Async の順序、同期境界の説明を求めます。
         re.compile(r"\b(cudaMemcpy(?:2D|3D)?(?:Async)?|cuMemcpy\w*|cudaMemset(?:Async)?|copy_to_host|copy_to_device|copy_from|cudaMemcpyHostToDevice|cudaMemcpyDeviceToHost|HostToDevice|DeviceToHost)\b"),
         "host/device transfer",
     ),
     AnchorRule(
         "kernel_launch",
+        # JP: kernel launch の anchor。grid/block/shared-memory/stream と完了確認の説明を求めます。
         re.compile(r"(<<<[^>]*>>>|\.launch\s*\(|launch\s*\(|cuLaunchKernel|LaunchKernel)"),
         "kernel launch",
     ),
     AnchorRule(
         "indexing",
+        # JP: indexing の anchor。担当要素の計算と境界チェックの説明を求めます。
         re.compile(r"\b(blockIdx|threadIdx|blockDim|gridDim|laneId|warpSize|cg::this_thread_block|this_grid)\b"),
         "thread/block indexing",
     ),
     AnchorRule(
         "shared_memory",
+        # JP: shared memory の anchor。block 内共有、tile、必要な同期の説明を求めます。
         re.compile(r"\b(__shared__|extern\s+__shared__|sharedMem|shared memory|SharedMemory|cuda.shared)\b"),
         "shared memory",
     ),
     AnchorRule(
         "sync",
+        # JP: synchronization の anchor。host が何を待つのか、block 内か device/stream 全体かを区別します。
         re.compile(r"\b(__syncthreads|__syncwarp|cudaDeviceSynchronize|cudaStreamSynchronize|cudaEventSynchronize|cudaThreadSynchronize|cooperative_groups::sync|cg::sync|synchronize\s*\(|Synchronize)\b"),
         "synchronization boundary",
     ),
     AnchorRule(
         "streams_events",
+        # JP: streams/events の anchor。非同期順序、overlap、計測範囲の説明を求めます。
         re.compile(r"\b(cudaStream\w*|cudaEvent\w*|CUstream|CUevent|Stream\(|Event\(|stream\s*=|streaming|event)\b", re.I),
         "streams/events",
     ),
     AnchorRule(
         "graphs",
+        # JP: CUDA Graph の anchor。node 依存、capture/replay、buffer lifetime の説明を求めます。
         re.compile(r"\b(cudaGraph\w*|cudaUserObject\w*|graphExec|Graph\(|graph\s*=)\b"),
         "CUDA Graph dependency",
     ),
     AnchorRule(
         "driver_api",
+        # JP: Driver API の anchor。CU* handle の所有、context/module/function の境界を説明します。
         re.compile(r"\b(cu[A-Z][A-Za-z0-9_]*|CUdevice|CUcontext|CUmodule|CUfunction|CUresult)\b"),
         "Driver API boundary",
     ),
     AnchorRule(
         "nvrtc",
+        # JP: NVRTC/JIT の anchor。compile/link した module と kernel launch の対応を説明します。
         re.compile(r"\b(nvrtc\w*|NVRTC|nvJitLink\w*|jitify|JIT compilation|compile\s*\(|Program\(|Linker\()\b"),
         "runtime compilation/JIT",
     ),
     AnchorRule(
         "library_resources",
+        # JP: CUDA library resource の anchor。handle/descriptor/workspace の作成と破棄を対応させます。
         re.compile(r"\b(cublas\w*|cufft\w*|cusparse\w*|cusolver\w*|curand\w*|npp\w*|nvjpeg\w*|nccl\w*|cudnn\w*|Create\w*Handle|Destroy\w*Handle|descriptor|workspace)\b", re.I),
         "CUDA library resources",
     ),
     AnchorRule(
         "validation",
+        # JP: validation の anchor。CPU/reference 比較と、失敗時に疑う境界を説明します。
         re.compile(r"\b(assert|sdkCompare\w*|compare\w*|checkResult|validate\w*|np\.allclose|cupy\.allclose|Result\s*=\s*PASS|PASS|FAIL)\b"),
         "validation/checking",
     ),
     AnchorRule(
         "cleanup",
+        # JP: cleanup の anchor。確保、作成、登録した resource の lifetime end を確認します。
         re.compile(r"\b(cudaFree\w*|cudaDestroy\w*|cudaEventDestroy|cudaStreamDestroy|Destroy\w*|destroy\s*\(|free\s*\(|delete\s+|cuMemFree\w*|release\s*\(|close\s*\()\b"),
         "cleanup/lifetime end",
     ),
     AnchorRule(
         "build_cuda",
+        # JP: CUDA build wiring の anchor。target、architecture、link dependency の意味を説明します。
         re.compile(r"\b(CUDA::|CUDAToolkit|cuda_add|target_link_libraries|add_executable|set_target_properties|CMAKE_CUDA|CUDA_ARCHITECTURES|find_package)\b"),
         "CMake CUDA build wiring",
     ),
     AnchorRule(
         "python_cuda",
+        # JP: Python CUDA の anchor。Python object と CUDA resource/context/stream の境界を説明します。
         re.compile(r"\b(cuda\.|cupy|cp\.|numba\.cuda|Device\(|Context\(|Module\(|Kernel\(|MemoryResource|mpi4py|torch|tensorflow)\b"),
         "Python CUDA boundary",
     ),
@@ -226,6 +243,46 @@ def is_comment_only(line: str) -> bool:
     return bool(COMMENT_ONLY_RE.match(line))
 
 
+def python_triple_string_lines(lines: list[str]) -> set[int]:
+    in_triple = False
+    quote = ""
+    inside: set[int] = set()
+    for index, line in enumerate(lines):
+        position = 0
+        if in_triple:
+            inside.add(index + 1)
+            end = line.find(quote, position)
+            if end < 0:
+                continue
+            in_triple = False
+            position = end + 3
+        while True:
+            candidates = [(line.find("'''", position), "'''"), (line.find('"""', position), '"""')]
+            candidates = [(offset, marker) for offset, marker in candidates if offset >= 0]
+            if not candidates:
+                break
+            start, marker = min(candidates, key=lambda item: item[0])
+            comment_at = line.find("#")
+            if comment_at >= 0 and comment_at < start:
+                break
+            end = line.find(marker, start + 3)
+            if end >= 0:
+                position = end + 3
+                continue
+            in_triple = True
+            quote = marker
+            inside.add(index + 1)
+            break
+    return inside
+
+
+def is_macro_continuation(lines: list[str], index: int) -> bool:
+    stripped = lines[index].rstrip()
+    if stripped.endswith("\\"):
+        return True
+    return index > 0 and lines[index - 1].rstrip().endswith("\\")
+
+
 def is_probably_generic_jp(line: str) -> bool:
     text = line.lower()
     generic_terms = (
@@ -261,10 +318,16 @@ def line_has_japanese(text: str) -> bool:
     return bool(re.search(r"[\u3040-\u30ff\u3400-\u9fff]", text))
 
 
-def detect_anchor_lines(lines: list[str]) -> list[dict[str, object]]:
+def detect_anchor_lines(lines: list[str], path: Path | None = None) -> list[dict[str, object]]:
     anchors: list[dict[str, object]] = []
-    for number, line in enumerate(lines, start=1):
+    ignored_python_lines = python_triple_string_lines(lines) if path and path.suffix.lower() == ".py" else set()
+    for index, line in enumerate(lines):
+        number = index + 1
         if "JP:" in line:
+            continue
+        if number in ignored_python_lines:
+            continue
+        if path and path.suffix.lower() in {".c", ".cc", ".cpp", ".cu", ".cuh", ".h", ".hpp"} and is_macro_continuation(lines, index):
             continue
         if is_comment_only(line):
             continue
@@ -294,7 +357,7 @@ def analyze_code_file(path: Path) -> dict[str, object]:
     lines = read_lines(path)
     jp_line_numbers = [i for i, line in enumerate(lines, start=1) if "JP:" in line]
     jp_lines = [lines[i - 1].strip() for i in jp_line_numbers]
-    anchors = detect_anchor_lines(lines)
+    anchors = detect_anchor_lines(lines, path)
     categories: dict[str, int] = {}
     categories_with_jp: set[str] = set()
     missing_details: list[dict[str, object]] = []

@@ -31,6 +31,7 @@ from pathlib import Path
 
 try:
     import numpy as np
+    # JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
     from cuda.core import (
         Device,
         DeviceMemoryResource,
@@ -162,6 +163,7 @@ def run(num_elements=1024 * 1024 * 16):
     dev0.set_current()
     mr0 = DeviceMemoryResource(dev0)
     mr0.peer_accessible_by = [gpuid[1]]  # Grant GPU 1 access to GPU 0's memory
+    # JP: streams_events: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     g0 = mr0.allocate(buf_size, stream=dev0.default_stream)
 
     # Allocate on GPU 1 and grant access to GPU 0
@@ -205,6 +207,7 @@ def run(num_elements=1024 * 1024 * 16):
                 if sync_event1 is not None:
                     stream0.wait(sync_event1)
                 # Copy g0 -> g1 on stream0
+                # JP: transfer: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
                 g1.copy_from(g0, stream=stream0)
                 # Record event on stream0 to signal completion of this copy
                 sync_event0 = stream0.record(options=EventOptions(timing_enabled=False))
@@ -251,6 +254,7 @@ def run(num_elements=1024 * 1024 * 16):
         print("\nCompiling CUDA kernel...")
         dev0.set_current()
         program_options = ProgramOptions(std="c++17", arch=f"sm_{dev0.arch}")
+        # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
         prog = Program(SIMPLE_P2P_KERNEL, code_type="c++", options=program_options)
         mod0 = prog.compile("cubin")
         kernel0 = mod0.get_kernel("SimpleKernel")
@@ -274,6 +278,7 @@ def run(num_elements=1024 * 1024 * 16):
             f"GPU{gpuid[0]} and writing to GPU{gpuid[1]}..."
         )
         dev1.set_current()
+        # JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         launch(stream1, config, kernel1, g0, g1, np.int32(num_elements))
         stream1.sync()
         print("  Kernel execution complete")
@@ -302,6 +307,7 @@ def run(num_elements=1024 * 1024 * 16):
 
         # Use utility function for verification (handles both numpy and cupy arrays)
         if verify_array_result(h0_array, expected, rtol=1e-5, atol=1e-6, verbose=True):
+            # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
             print("  [PASS] Validation PASSED")
             success = True
         else:

@@ -68,6 +68,7 @@ static void simple_sgemm(int n, float alpha, const float *A, const float *B, flo
 /* Main */
 int main(int argc, char **argv)
 {
+    // JP: `cublasStatus_t`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
     cublasStatus_t status;
     float         *h_A;
     float         *h_B;
@@ -131,6 +132,7 @@ int main(int argc, char **argv)
     }
 
     /* Allocate device memory for the matrices */
+    // JP: `cudaMalloc`, `cudaSuccess`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     if (cudaMalloc(reinterpret_cast<void **>(&d_A), n2 * sizeof(d_A[0])) != cudaSuccess) {
         fprintf(stderr, "!!!! device memory allocation error (allocate A)\n");
         return EXIT_FAILURE;
@@ -215,6 +217,7 @@ int main(int argc, char **argv)
     }
 
     /* Memory clean up */
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     free(h_A);
     free(h_B);
     free(h_C);

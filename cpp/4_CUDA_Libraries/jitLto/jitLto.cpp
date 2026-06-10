@@ -93,6 +93,7 @@ __device__  float compute(float a, float x, float y) {          \n\
 static void getLTOIR(const char *code, const char *name, char **ltoIR, size_t *ltoIRSize)
 {
     // Create an instance of nvrtcProgram with the code string.
+    // JP: `nvrtcProgram`: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
     nvrtcProgram prog;
     NVRTC_SAFE_CALL(nvrtcCreateProgram(&prog,  // prog
                                        code,   // buffer
@@ -147,6 +148,7 @@ int main(int argc, char *argv[])
     getLTOIR(lto_saxpy, "lto_saxpy.cu", &ltoIR1, &ltoIR1Size);
     getLTOIR(lto_compute, "lto_compute.cu", &ltoIR2, &ltoIR2Size);
 
+    // JP: `cuDevice`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     CUdevice          cuDevice;
     CUcontext         context;
     CUmodule          module;
@@ -188,6 +190,7 @@ int main(int argc, char *argv[])
         char *log = (char *)malloc(logSize + 1);
         NVJITLINK_SAFE_CALL(handle, nvJitLinkGetErrorLog(handle, log));
         std::cout << "Error log: " << log << std::endl;
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         free(log);
     }
 
@@ -215,13 +218,16 @@ int main(int argc, char *argv[])
         hY[i] = static_cast<float>(i * 2);
     }
     CUdeviceptr dX, dY, dOut;
+    // JP: `cuMemAlloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     CUDA_SAFE_CALL(cuMemAlloc(&dX, bufferSize));
     CUDA_SAFE_CALL(cuMemAlloc(&dY, bufferSize));
     CUDA_SAFE_CALL(cuMemAlloc(&dOut, bufferSize));
+    // JP: `cuMemcpyHtoD`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     CUDA_SAFE_CALL(cuMemcpyHtoD(dX, hX, bufferSize));
     CUDA_SAFE_CALL(cuMemcpyHtoD(dY, hY, bufferSize));
     // Execute SAXPY.
     void *args[] = {&a, &dX, &dY, &dOut, &n};
+    // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     CUDA_SAFE_CALL(cuLaunchKernel(kernel,
                                   NUM_BLOCKS,
                                   1,

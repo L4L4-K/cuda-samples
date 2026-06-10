@@ -35,6 +35,7 @@ template <typename T> struct DeviceData
 {
     T           *dPos[2]; // mapped host pointers
     T           *dVel;
+    // JP: `cudaEvent_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaEvent_t  event;
     unsigned int offset;
     unsigned int numBodies;
@@ -89,6 +90,7 @@ protected: // data
     T m_damping;
 
     unsigned int          m_pbo[2];
+    // JP: `cudaGraphicsResource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
     cudaGraphicsResource *m_pGRes[2];
     unsigned int          m_currentRead;
     unsigned int          m_currentWrite;

@@ -89,6 +89,7 @@ unsigned int  width, height;
 unsigned int *hImage = NULL;
 
 GLuint                       pbo;               // OpenGL pixel buffer object
+// JP: `cudaGraphicsResource`, `cuda_pbo_resource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
 struct cudaGraphicsResource *cuda_pbo_resource; // handles OpenGL-CUDA exchange
 GLuint                       texid;             // texture
 GLuint                       shader;
@@ -354,6 +355,7 @@ void cleanup()
     sdkDeleteTimer(&kernel_timer);
 
     if (hImage) {
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         free(hImage);
     }
 
@@ -426,11 +428,13 @@ int runBenchmark(int argc, char **argv)
 
     unsigned int *dResult;
     size_t        pitch;
+    // JP: `cudaMallocPitch`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMallocPitch((void **)&dResult, &pitch, width * sizeof(unsigned int), height));
     sdkStartTimer(&kernel_timer);
 
     // warm-up
     bilateralFilterRGBA(dResult, width, height, euclidean_delta, filter_radius, iterations, kernel_timer);
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     checkCudaErrors(cudaDeviceSynchronize());
 
     // Start round-trip timer and process iCycles loops on the GPU
@@ -516,6 +520,7 @@ int runSingleTest(char *ref_file, char *exec_path)
         checkCudaErrors(cudaDeviceSynchronize());
 
         // readback the results to system memory
+        // JP: `cudaMemcpy2D`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         cudaMemcpy2D(hResult,
                      sizeof(unsigned int) * width,
                      dResult,
@@ -528,6 +533,7 @@ int runSingleTest(char *ref_file, char *exec_path)
 
         sdkSavePPM4ub((const char *)dump_file, (unsigned char *)hResult, width, height);
 
+        // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         if (!sdkComparePPM(dump_file, sdkFindFilePath(ref_file, exec_path), MAX_EPSILON_ERROR, 0.15f, false)) {
             printf("Image is Different ");
             nTotalErrors++;

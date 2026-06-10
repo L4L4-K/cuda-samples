@@ -61,7 +61,9 @@ bool testResult = true;
 ////////////////////////////////////////////////////////////////////////////////
 __global__ void testKernel(int N)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int gtid = blockIdx.x * blockDim.x + threadIdx.x;
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     assert(gtid < N);
 }
 
@@ -113,10 +115,12 @@ void runTest(int argc, char **argv)
     dim3 dimBlock(Nthreads);
 
     printf("Launch kernel to generate assertion failures\n");
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     testKernel<<<dimGrid, dimBlock>>>(60);
 
     // Synchronize (flushes assert output).
     printf("\n-- Begin assert output\n\n");
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     error = cudaDeviceSynchronize();
     printf("\n-- End assert output\n\n");
 

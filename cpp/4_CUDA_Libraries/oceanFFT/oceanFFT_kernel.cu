@@ -55,6 +55,7 @@ __global__ void generateSpectrumKernel(float2      *h0,
                                        float        t,
                                        float        patchSize)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     unsigned int x         = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int y         = blockIdx.y * blockDim.y + threadIdx.y;
     unsigned int in_index  = y * in_width + x;
@@ -135,6 +136,7 @@ extern "C" void cudaGenerateSpectrumKernel(float2      *d_h0,
 {
     dim3 block(8, 8, 1);
     dim3 grid(cuda_iDivUp(out_width, block.x), cuda_iDivUp(out_height, block.y), 1);
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     generateSpectrumKernel<<<grid, block>>>(d_h0, d_ht, in_width, out_width, out_height, animTime, patchSize);
 }
 

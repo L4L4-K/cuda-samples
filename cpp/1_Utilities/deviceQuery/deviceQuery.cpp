@@ -48,6 +48,7 @@ char **pArgv = NULL;
 // This function wraps the CUDA Driver API into a template function
 template <class T> inline void getCudaAttribute(T *attribute, CUdevice_attribute device_attribute, int device)
 {
+    // JP: `cuDeviceGetAttribute`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     CUresult error = cuDeviceGetAttribute(attribute, device_attribute, device);
 
     if (CUDA_SUCCESS != error) {
@@ -77,6 +78,7 @@ int main(int argc, char **argv)
 
     if (error_id != cudaSuccess) {
         printf("cudaGetDeviceCount returned %d\n-> %s\n", static_cast<int>(error_id), cudaGetErrorString(error_id));
+        // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         printf("Result = FAIL\n");
         exit(EXIT_FAILURE);
     }
@@ -186,9 +188,11 @@ int main(int argc, char **argv)
                deviceProp.maxTexture2DLayered[2]);
 
         printf("  Total amount of constant memory:               %zu bytes\n", deviceProp.totalConstMem);
+        // JP: shared_memory: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
         printf("  Total amount of shared memory per block:       %zu bytes\n", deviceProp.sharedMemPerBlock);
         printf("  Total shared memory per multiprocessor:        %zu bytes\n", deviceProp.sharedMemPerMultiprocessor);
         printf("  Total number of registers available per block: %d\n", deviceProp.regsPerBlock);
+        // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
         printf("  Warp size:                                     %d\n", deviceProp.warpSize);
         printf("  Maximum number of threads per multiprocessor:  %d\n", deviceProp.maxThreadsPerMultiProcessor);
         printf("  Maximum number of threads per block:           %d\n", deviceProp.maxThreadsPerBlock);

@@ -44,13 +44,16 @@ using std::vector;
 
 __device__ unsigned int reduce_sum(unsigned int in, cg::thread_block cta)
 {
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     extern __shared__ unsigned int sdata[];
 
     // Perform first level of reduction:
     // - Write to shared memory
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     unsigned int ltid = threadIdx.x;
 
     sdata[ltid] = in;
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 
     // Do reduction in shared mem
@@ -180,6 +183,7 @@ template <typename Real> Real PiEstimator<Real>::operator()()
     // Allocate memory for points
     // Each simulation has two random numbers to give X and Y coordinate
     Real *d_points = 0;
+    // JP: `cudaResult`, `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     cudaResult     = cudaMalloc((void **)&d_points, 2 * m_numSims * sizeof(Real));
 
     if (cudaResult != cudaSuccess) {
@@ -200,6 +204,7 @@ template <typename Real> Real PiEstimator<Real>::operator()()
     }
 
     // Generate random points in unit square
+    // JP: `curandStatus_t`, `curandResult`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
     curandStatus_t    curandResult;
     curandGenerator_t qrng;
 
@@ -263,10 +268,12 @@ template <typename Real> Real PiEstimator<Real>::operator()()
     }
 
     // Count the points inside unit quarter-circle
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     computeValue<Real><<<grid, block, block.x * sizeof(unsigned int)>>>(d_results, d_points, m_numSims);
 
     // Copy partial results back
     vector<unsigned int> results(grid.x);
+    // JP: `cudaResult`, `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     cudaResult = cudaMemcpy(&results[0], d_results, grid.x * sizeof(unsigned int), cudaMemcpyDeviceToHost);
 
     if (cudaResult != cudaSuccess) {
@@ -290,6 +297,7 @@ template <typename Real> Real PiEstimator<Real>::operator()()
 
     // Cleanup
     if (d_points) {
+        // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         cudaFree(d_points);
         d_points = 0;
     }

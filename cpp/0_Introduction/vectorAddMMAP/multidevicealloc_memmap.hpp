@@ -64,6 +64,7 @@
 //! handle
 //!   is not needed after its mappings are set up.
 ////////////////////////////////////////////////////////////////////////////
+// JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
 CUresult simpleMallocMultiDeviceMmap(CUdeviceptr                 *dptr,
                                      size_t                      *allocationSize,
                                      size_t                       size,

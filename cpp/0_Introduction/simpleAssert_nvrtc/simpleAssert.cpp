@@ -87,6 +87,7 @@ void runTest(int argc, char **argv)
     kernel_file = sdkFindFilePath("simpleAssert_kernel.cu", argv[0]);
     compileFileToCUBIN(kernel_file, argc, argv, &cubin, &cubinSize, 0);
 
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
     CUmodule   module = loadCUBIN(cubin, argc, argv);
     CUfunction kernel_addr;
 
@@ -95,6 +96,7 @@ void runTest(int argc, char **argv)
     int   count  = 60;
     void *args[] = {(void *)&count};
 
+    // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     checkCudaErrors(cuLaunchKernel(kernel_addr,
                                    dimGrid.x,
                                    dimGrid.y,
@@ -108,6 +110,7 @@ void runTest(int argc, char **argv)
                                    0));
 
     // Synchronize (flushes assert output).
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
     printf("\n-- Begin assert output\n\n");
     CUresult res = cuCtxSynchronize();
 

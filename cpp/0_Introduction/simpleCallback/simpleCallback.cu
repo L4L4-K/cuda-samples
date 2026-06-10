@@ -54,6 +54,7 @@ const int N_elements_per_workload = 100000;
 
 CUTBarrier thread_barrier;
 
+// JP: `cudaStream_t`, `cudaError_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
 void CUDART_CB myStreamCallback(cudaStream_t event, cudaError_t status, void *data);
 
 struct heterogeneous_workload
@@ -70,12 +71,14 @@ struct heterogeneous_workload
 
 __global__ void incKernel(int *data, int N)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int i = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (i < N)
         data[i]++;
 }
 
+// JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
 CUT_THREADPROC launch(void *void_arg)
 {
     heterogeneous_workload *workload = (heterogeneous_workload *)void_arg;
@@ -85,7 +88,9 @@ CUT_THREADPROC launch(void *void_arg)
 
     // Allocate Resources
     checkCudaErrors(cudaStreamCreate(&workload->stream));
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc(&workload->d_data, N_elements_per_workload * sizeof(int)));
+    // JP: `cudaHostAlloc`, `cudaHostAllocPortable`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
     checkCudaErrors(cudaHostAlloc(&workload->h_data, N_elements_per_workload * sizeof(int), cudaHostAllocPortable));
 
     // CPU thread generates data
@@ -98,6 +103,7 @@ CUT_THREADPROC launch(void *void_arg)
     dim3 block(512);
     dim3 grid((N_elements_per_workload + block.x - 1) / block.x);
 
+    // JP: `cudaMemcpyAsync`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemcpyAsync(workload->d_data,
                                     workload->h_data,
                                     N_elements_per_workload * sizeof(int),
@@ -134,6 +140,7 @@ CUT_THREADPROC postprocess(void *void_arg)
     }
 
     // Free Resources
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(workload->d_data));
     checkCudaErrors(cudaFreeHost(workload->h_data));
     checkCudaErrors(cudaStreamDestroy(workload->stream));

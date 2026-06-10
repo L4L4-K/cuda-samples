@@ -62,7 +62,9 @@ static __global__ void
 JacobiMethod(const float *A, const double *b, const float conv_threshold, double *x, double *x_new, double *sum)
 {
     // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     cg::thread_block  cta = cg::this_thread_block();
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ double x_shared[N_ROWS]; // N_ROWS == n
     __shared__ double b_shared[ROWS_PER_CTA + 1];
 
@@ -78,6 +80,7 @@ JacobiMethod(const float *A, const double *b, const float conv_threshold, double
         }
     }
 
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 
     cg::thread_block_tile<32> tile32 = cg::tiled_partition<32>(cta);
@@ -172,17 +175,20 @@ double JacobiMethodGpuCudaGraphExecKernelSetParams(const float  *A,
                                                    const int     max_iter,
                                                    double       *x,
                                                    double       *x_new,
+                                                   // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
                                                    cudaStream_t  stream)
 {
     // CTA size
     dim3 nthreads(256, 1, 1);
     // grid size
     dim3            nblocks((N_ROWS / ROWS_PER_CTA) + 2, 1, 1);
+    // JP: `cudaGraph_t`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
     cudaGraph_t     graph;
     cudaGraphExec_t graphExec = NULL;
 
     double  sum   = 0.0;
     double *d_sum = NULL;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc(&d_sum, sizeof(double)));
 
     std::vector<cudaGraphNode_t> nodeDependencies;
@@ -225,6 +231,7 @@ double JacobiMethodGpuCudaGraphExecKernelSetParams(const float  *A,
     memcpyParams.dstPos   = make_cudaPos(0, 0, 0);
     memcpyParams.dstPtr   = make_cudaPitchedPtr(&sum, sizeof(double), 1, 1);
     memcpyParams.extent   = make_cudaExtent(sizeof(double), 1, 1);
+    // JP: `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     memcpyParams.kind     = cudaMemcpyDeviceToHost;
 
     checkCudaErrors(
@@ -253,6 +260,7 @@ double JacobiMethodGpuCudaGraphExecKernelSetParams(const float  *A,
             nblocks.x            = (N_ROWS / nthreads.x) + 1;
             size_t sharedMemSize = ((nthreads.x / 32) + 1) * sizeof(double);
             if ((k & 1) == 0) {
+                // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
                 finalError<<<nblocks, nthreads, sharedMemSize, stream>>>(x_new, d_sum);
             }
             else {
@@ -267,6 +275,7 @@ double JacobiMethodGpuCudaGraphExecKernelSetParams(const float  *A,
         }
     }
 
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(d_sum));
     return sum;
 }

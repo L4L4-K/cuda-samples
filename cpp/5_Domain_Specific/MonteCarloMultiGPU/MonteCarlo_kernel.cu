@@ -81,6 +81,7 @@ __device__ inline double endCallValue(double S, double X, double r, double MuByT
 // per option. It is fastest when the number of thread blocks times the work per
 // block is high enough to keep the GPU busy.
 ////////////////////////////////////////////////////////////////////////////////
+// JP: `curandState`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
 static __global__ void MonteCarloOneBlockPerOption(curandState *__restrict rngStates,
                                                    const __TOptionData *__restrict d_OptionData,
                                                    __TOptionValue *__restrict d_CallValue,
@@ -88,10 +89,12 @@ static __global__ void MonteCarloOneBlockPerOption(curandState *__restrict rngSt
                                                    int optionN)
 {
     // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     cg::thread_block          cta    = cg::this_thread_block();
     cg::thread_block_tile<32> tile32 = cg::tiled_partition<32>(cta);
 
     const int       SUM_N = THREAD_N;
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ real s_SumCall[SUM_N];
     __shared__ real s_Sum2Call[SUM_N];
 
@@ -126,6 +129,7 @@ static __global__ void MonteCarloOneBlockPerOption(curandState *__restrict rngSt
 
         // Reduce shared memory accumulators
         // and write final result to global memory
+        // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         cg::sync(cta);
         sumReduce<real, SUM_N, THREAD_N>(s_SumCall, s_Sum2Call, cta, tile32, &d_CallValue[optionIndex]);
     }
@@ -146,13 +150,16 @@ static __global__ void rngSetupStates(curandState *rngState, int device_id)
 
 extern "C" void initMonteCarloGPU(TOptionPlan *plan)
 {
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaMalloc(&plan->d_OptionData, sizeof(__TOptionData) * (plan->optionCount)));
     checkCudaErrors(cudaMalloc(&plan->d_CallValue, sizeof(__TOptionValue) * (plan->optionCount)));
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
     checkCudaErrors(cudaMallocHost(&plan->h_OptionData, sizeof(__TOptionData) * (plan->optionCount)));
     // Allocate internal device memory
     checkCudaErrors(cudaMallocHost(&plan->h_CallValue, sizeof(__TOptionValue) * (plan->optionCount)));
     // Allocate states for pseudo random number generators
     checkCudaErrors(cudaMalloc((void **)&plan->rngStates, plan->gridSize * THREAD_N * sizeof(curandState)));
+    // JP: `cudaMemset`, `curandState`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemset(plan->rngStates, 0, plan->gridSize * THREAD_N * sizeof(curandState)));
 
     // place each device pathN random numbers apart on the random number sequence
@@ -177,6 +184,7 @@ extern "C" void closeMonteCarloGPU(TOptionPlan *plan)
         plan->callValue[i].Confidence = (float)(exp(-RT) * 1.96 * stdDev / sqrt(pathN));
     }
 
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFree(plan->rngStates));
     checkCudaErrors(cudaFreeHost(plan->h_CallValue));
     checkCudaErrors(cudaFreeHost(plan->h_OptionData));
@@ -185,6 +193,7 @@ extern "C" void closeMonteCarloGPU(TOptionPlan *plan)
 }
 
 // Main computations
+// JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
 extern "C" void MonteCarloGPU(TOptionPlan *plan, cudaStream_t stream)
 {
     __TOptionValue *h_CallValue = plan->h_CallValue;

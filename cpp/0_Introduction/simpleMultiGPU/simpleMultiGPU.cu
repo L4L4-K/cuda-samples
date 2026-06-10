@@ -67,6 +67,7 @@ const int DATA_N        = 1048576 * 32;
 ////////////////////////////////////////////////////////////////////////////////
 __global__ static void reduceKernel(float *d_Result, float *d_Input, int N)
 {
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     const int tid     = blockIdx.x * blockDim.x + threadIdx.x;
     const int threadN = gridDim.x * blockDim.x;
     float     sum     = 0;
@@ -131,10 +132,13 @@ int main(int argc, char **argv)
     // (GPU and System page-locked)
     for (i = 0; i < GPU_N; i++) {
         checkCudaErrors(cudaSetDevice(i));
+        // JP: `cudaStreamCreate`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
         checkCudaErrors(cudaStreamCreate(&plan[i].stream));
         // Allocate memory
+        // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
         checkCudaErrors(cudaMalloc((void **)&plan[i].d_Data, plan[i].dataN * sizeof(float)));
         checkCudaErrors(cudaMalloc((void **)&plan[i].d_Sum, ACCUM_N * sizeof(float)));
+        // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
         checkCudaErrors(cudaMallocHost((void **)&plan[i].h_Sum_from_device, ACCUM_N * sizeof(float)));
         checkCudaErrors(cudaMallocHost((void **)&plan[i].h_Data, plan[i].dataN * sizeof(float)));
 
@@ -158,10 +162,12 @@ int main(int argc, char **argv)
         checkCudaErrors(cudaSetDevice(i));
 
         // Copy input data from CPU
+        // JP: `cudaMemcpyAsync`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
         checkCudaErrors(cudaMemcpyAsync(
             plan[i].d_Data, plan[i].h_Data, plan[i].dataN * sizeof(float), cudaMemcpyHostToDevice, plan[i].stream));
 
         // Perform GPU computations
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
         reduceKernel<<<BLOCK_N, THREAD_N, 0, plan[i].stream>>>(plan[i].d_Sum, plan[i].d_Data, plan[i].dataN);
         getLastCudaError("reduceKernel() execution failed.\n");
 
@@ -178,6 +184,7 @@ int main(int argc, char **argv)
         checkCudaErrors(cudaSetDevice(i));
 
         // Wait for all operations to finish
+        // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
         cudaStreamSynchronize(plan[i].stream);
 
         // Finalize GPU reduction for current subvector
@@ -190,6 +197,7 @@ int main(int argc, char **argv)
         *(plan[i].h_Sum) = (float)sum;
 
         // Shut down this GPU
+        // JP: `cudaFreeHost`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
         checkCudaErrors(cudaFreeHost(plan[i].h_Sum_from_device));
         checkCudaErrors(cudaFree(plan[i].d_Sum));
         checkCudaErrors(cudaFree(plan[i].d_Data));

@@ -46,8 +46,10 @@ __device__ int rgbToInt(float r, float g, float b)
 
 __global__ void cudaProcess(unsigned int *g_odata, int imgw)
 {
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     extern __shared__ uchar4 sdata[];
 
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     int tx = threadIdx.x;
     int ty = threadIdx.y;
     int bw = blockDim.x;
@@ -61,5 +63,6 @@ __global__ void cudaProcess(unsigned int *g_odata, int imgw)
 
 extern "C" void launch_cudaProcess(dim3 grid, dim3 block, int sbytes, unsigned int *g_odata, int imgw)
 {
+    // JP: `cudaProcess`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     cudaProcess<<<grid, block, sbytes>>>(g_odata, imgw);
 }

@@ -293,6 +293,7 @@ __device__ void gpuSaxpy(float *x, float *y, float a, int size, const PeerGroup 
 __device__ void
 gpuDotProduct(float *vecA, float *vecB, int size, const cg::thread_block &cta, const PeerGroup &peer_group)
 {
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     extern __shared__ double tmp[];
 
     double temp_sum = 0.0;
@@ -309,6 +310,7 @@ gpuDotProduct(float *vecA, float *vecB, int size, const cg::thread_block &cta, c
         tmp[tile32.meta_group_rank()] = temp_sum;
     }
 
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 
     if (tile32.meta_group_rank() == 0) {
@@ -348,6 +350,7 @@ extern "C" __global__ void multiGpuConjugateGradient(int            *I,
                                                      float           tol,
                                                      MultiDeviceData multi_device_data)
 {
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     cg::thread_block cta  = cg::this_thread_block();
     cg::grid_group   grid = cg::this_grid();
     PeerGroup        peer_group(multi_device_data, grid);
@@ -577,6 +580,7 @@ int main(int argc, char **argv)
     N  = 10485760 * 2;
     nz = (N - 2) * 3 + 4;
 
+    // JP: `cudaMallocManaged`: Unified Memory は CPU/GPU で同じ pointer を使います。prefetch や同期で移動タイミングを意識します。
     checkCudaErrors(cudaMallocManaged((void **)&I, sizeof(int) * (N + 1)));
     checkCudaErrors(cudaMallocManaged((void **)&J, sizeof(int) * nz));
     checkCudaErrors(cudaMallocManaged((void **)&val, sizeof(float) * nz));
@@ -598,6 +602,7 @@ int main(int argc, char **argv)
     double *dot_result;
     checkCudaErrors(cudaMallocManaged((void **)&dot_result, sizeof(double)));
 
+    // JP: `cudaMemset`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
     checkCudaErrors(cudaMemset(dot_result, 0, sizeof(double)));
 
     // temp memory for ConjugateGradient
@@ -606,6 +611,7 @@ int main(int argc, char **argv)
     checkCudaErrors(cudaMallocManaged((void **)&Ax, N * sizeof(float)));
 
     std::cout << "\nRunning on GPUs = " << kNumGpusRequired << std::endl;
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
     cudaStream_t nStreams[kNumGpusRequired];
 
     int  sMemSize       = sizeof(double) * ((THREADS_PER_BLOCK / 32) + 1);
@@ -711,6 +717,7 @@ int main(int argc, char **argv)
 
     // Structure used for cross-grid synchronization.
     MultiDeviceData multi_device_data;
+    // JP: `cudaHostAlloc`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
     checkCudaErrors(cudaHostAlloc(&multi_device_data.hostMemoryArrivedList,
                                   (kNumGpusRequired - 1) * sizeof(*multi_device_data.hostMemoryArrivedList),
                                   cudaHostAllocPortable));
@@ -789,7 +796,9 @@ int main(int argc, char **argv)
         }
     }
 
+    // JP: `cudaFreeHost`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
     checkCudaErrors(cudaFreeHost(multi_device_data.hostMemoryArrivedList));
+    // JP: `cudaFree`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
     checkCudaErrors(cudaFree(I));
     checkCudaErrors(cudaFree(J));
     checkCudaErrors(cudaFree(val));

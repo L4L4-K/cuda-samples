@@ -217,9 +217,11 @@ void run_with_size(int M, int N, int K) {
 
   __half *d_A, *d_B;
   float *d_C;
+  // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
   checkCudaErrors(cudaMalloc(&d_A, M * K * sizeof(__half)));
   checkCudaErrors(cudaMalloc(&d_B, K * N * sizeof(__half)));
   checkCudaErrors(cudaMalloc(&d_C, M * N * sizeof(float)));
+  // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
   checkCudaErrors(cudaMemcpy(d_A, h_A.data(), M * K * sizeof(__half), cudaMemcpyHostToDevice));
   checkCudaErrors(cudaMemcpy(d_B, h_B.data(), K * N * sizeof(__half), cudaMemcpyHostToDevice));
 
@@ -233,6 +235,7 @@ void run_with_size(int M, int N, int K) {
 
       BenchmarkResult result = run_benchmark(name,
           [&]() {
+            // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
             kernel_launch();
             checkCudaErrors(cudaGetLastError());
           },
@@ -268,6 +271,7 @@ void run_with_size(int M, int N, int K) {
     passed = false;
   }
 
+  // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
   checkCudaErrors(cudaFree(d_A));
   checkCudaErrors(cudaFree(d_B));
   checkCudaErrors(cudaFree(d_C));

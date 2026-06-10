@@ -49,6 +49,7 @@ bool fdtdReference(float       *output,
                    const int    dimz,
                    const int    radius,
                    const int    timesteps);
+// JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
 bool compareData(const float *output,
                  const float *reference,
                  const int    dimx,

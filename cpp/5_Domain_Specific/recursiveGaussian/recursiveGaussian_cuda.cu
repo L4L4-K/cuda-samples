@@ -71,6 +71,7 @@ extern "C" void transpose(uint *d_src, uint *d_dest, uint width, int height)
 {
     dim3 grid(iDivUp(width, BLOCK_DIM), iDivUp(height, BLOCK_DIM), 1);
     dim3 threads(BLOCK_DIM, BLOCK_DIM, 1);
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
     d_transpose<<<grid, threads>>>(d_dest, d_src, width, height);
     getLastCudaError("Kernel execution failed");
 }

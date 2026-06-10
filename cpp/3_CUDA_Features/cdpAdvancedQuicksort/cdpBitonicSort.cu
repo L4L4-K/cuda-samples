@@ -90,11 +90,14 @@ __device__ __forceinline__ int qcompare(unsigned &val1, unsigned &val2)
 static __device__ __forceinline__ void
 bitonicsort_kernel(unsigned *indata, unsigned *outdata, unsigned int offset, unsigned int len, cg::thread_block cta)
 {
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
     __shared__ unsigned sortbuf[1024]; // Max of 1024 elements - TODO: make this dynamic
 
     // First copy data into shared memory.
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
     unsigned int inside  = (threadIdx.x < len);
     sortbuf[threadIdx.x] = inside ? indata[threadIdx.x + offset] : 0xffffffffu;
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
     cg::sync(cta);
 
     // Now the sort loops
@@ -108,6 +111,7 @@ bitonicsort_kernel(unsigned *indata, unsigned *outdata, unsigned int offset, uns
     {
         for (unsigned int j = k >> 1; j > 0; j >>= 1) // Strides also in powers of to, up to <k
         {
+            // JP: `threadIdx`: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
             unsigned int swap_idx  = threadIdx.x ^ j; // Index of element we're compare-and-swapping with
             unsigned     my_elem   = sortbuf[threadIdx.x];
             unsigned     swap_elem = sortbuf[swap_idx];
