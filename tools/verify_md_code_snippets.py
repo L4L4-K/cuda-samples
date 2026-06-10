@@ -5,7 +5,6 @@ from __future__ import annotations
 
 # JP: Markdown に埋め込んだ実コード抜粋を、現在の source line と照合して stale 化を検出します。
 import datetime as _dt
-import datetime as _dt
 import json
 import re
 import subprocess
