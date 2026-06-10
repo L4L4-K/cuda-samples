@@ -44,6 +44,7 @@ VENDOR_PARTS = {
     "bin",
     "docs_ja",
     "__pycache__",
+    "cmake/CPM.cmake",
     "Common/GL",
     "cpp/2_Concepts_and_Techniques/interval/boost",
     "cpp/5_Domain_Specific/simpleD3D11Texture/d3dx11effect",

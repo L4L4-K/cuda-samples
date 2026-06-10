@@ -16,13 +16,14 @@ English manifest for the required individual source/build/script review.
 - whole_file_read_true: 1068
 - files_with_jp_comments: 923
 - jp_comments_assessed_total: 6036
-- files_edited_in_this_pass: 3
-- files_reviewed_with_no_edit: 1065
+- files_edited_in_this_pass: 4
+- files_reviewed_with_no_edit: 1064
 - read_only_vendor_generated_targets: 127
 - non_utf8_decode_notes: 28
 - branch: `ja-study/local-annotations`
-- source_state_head_at_generation: `8ccd87823bea840e52bd75051a6163fc827cd758`
-- commit hash note: files marked `PENDING_SOURCE_REVIEW_COMMIT` are refreshed after the source remediation commit.
+- review_pass_base: `8ccd87823bea840e52bd75051a6163fc827cd758`
+- source_state_head_at_generation: `e1f7a01d28f1d87369eeaded8cd44a5086fdb731`
+- commit hash note: files marked `PENDING_SOURCE_REVIEW_COMMIT` are refreshed after the next remediation commit.
 
 ## Target Selection
 
@@ -36,6 +37,7 @@ English manifest for the required individual source/build/script review.
 - `cmake/CPM.cmake`: Removed local JP learning comments from vendored CPM helper; behavior/build semantics restored/preserved.
 - `cpp/1_Utilities/deviceQueryDrv/deviceQueryDrv.cpp`: Replaced generic kernel/shared-memory/validation JP comments with Driver API device-property query notes.
 - `python/1_GettingStarted/deviceQuery/deviceQuery.py`: Replaced generic Python kernel/shared-memory JP comments with CUDA Python device-property query notes.
+- `tools/inventory_ja.py`: Excluded vendored CPM helper from anchor inventory so third-party code remains read-only after source review.
 
 ## Read-Only Vendor/Generated Targets
 
@@ -1250,6 +1252,6 @@ English manifest for the required individual source/build/script review.
 | 1063 | DONE | `python/Utilities/__init__.py` | 48 | 1 | no | host/helper source structure | DONE |
 | 1064 | DONE | `python/Utilities/cuda_samples_utils.py` | 148 | 4 | no | Python CUDA | DONE |
 | 1065 | DONE | `run_tests.py` | 327 | 1 | no | NVRTC/JIT/libNVVM/PTX | DONE |
-| 1066 | DONE | `tools/inventory_ja.py` | 1324 | 22 | no | CMake/build wiring, CUDA Runtime memory/transfer, CUDA kernel launch, thread/block indexing | DONE |
+| 1066 | DONE | `tools/inventory_ja.py` | 1325 | 22 | yes | CMake/build wiring, CUDA Runtime memory/transfer, CUDA kernel launch, thread/block indexing | DONE |
 | 1067 | DONE | `tools/regenerate_sample_readmes_ja.py` | 650 | 1 | no | CMake/build wiring, CUDA Runtime memory/transfer, CUDA kernel launch, thread/block indexing | DONE |
 | 1068 | DONE | `tools/regenerate_theme_guides_ja.py` | 237 | 2 | no | CUDA Runtime memory/transfer, CUDA kernel launch, thread/block indexing, shared memory | DONE |
