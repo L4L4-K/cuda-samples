@@ -250,7 +250,6 @@ def demo_vector_add_tuning(device, stream, mr, kernel):
             f"({best['mean_time_ms']:.4f} ms)"
         )
         print(
-            # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
             f"[FAIL] WORST: block_size={worst['block_size']} "
             f"({worst['mean_time_ms']:.4f} ms)"
         )
@@ -259,6 +258,7 @@ def demo_vector_add_tuning(device, stream, mr, kernel):
         # Verify result
         stream.sync()
         expected = np_a + np_b
+        # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
         if np.allclose(np_c, expected):
             print("\n[OK] Results verified correct!")
 

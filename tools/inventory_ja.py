@@ -18,6 +18,7 @@ DOCS_JA = ROOT / "docs_ja"
 TRANSLATED = DOCS_JA / "translated"
 STATUS = DOCS_JA / "_translation_status.md"
 ANNOTATION_JSON = DOCS_JA / "_annotation_inventory.json"
+SAMPLE_README_JSON = DOCS_JA / "_sample_readme_inventory.json"
 
 DOC_EXTS = {".md", ".txt", ".pdf", ".doc", ".docx"}
 CODE_EXTS = {
@@ -51,6 +52,20 @@ GENERATED_NAME_PARTS = {
 NEARBY_BEFORE = 4
 NEARBY_AFTER = 2
 TOP_LINE_LIMIT = 45
+REQUIRED_SAMPLE_SECTIONS = (
+    "## Purpose",
+    "## Prerequisites",
+    "## Files",
+    "## Execution Flow",
+    "## Concrete Reading Path",
+    "## Key APIs And Concepts",
+    "## Memory, Synchronization, And Performance Notes",
+    "## Build And Run",
+    "## Expected Behavior",
+    "## Common Mistakes",
+    "## Exercises",
+    "## Related Themes",
+)
 
 
 @dataclass(frozen=True)
@@ -276,6 +291,42 @@ def python_triple_string_lines(lines: list[str]) -> set[int]:
     return inside
 
 
+def strip_python_string_literals(line: str) -> str:
+    result: list[str] = []
+    index = 0
+    while index < len(line):
+        start = index
+        while index < len(line) and line[index] in "rRuUbBfF":
+            index += 1
+        if index < len(line) and line[index] in {"'", '"'}:
+            quote = line[index]
+            if index + 2 < len(line) and line[index : index + 3] == quote * 3:
+                index += 3
+                end_marker = quote * 3
+                while index < len(line) and line[index : index + 3] != end_marker:
+                    index += 1
+                index = min(len(line), index + 3)
+                result.append(" ")
+                continue
+            index += 1
+            escaped = False
+            while index < len(line):
+                char = line[index]
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    index += 1
+                    break
+                index += 1
+            result.append(" ")
+            continue
+        result.append(line[start])
+        index = start + 1
+    return "".join(result)
+
+
 def is_macro_continuation(lines: list[str], index: int) -> bool:
     stripped = lines[index].rstrip()
     if stripped.endswith("\\"):
@@ -331,10 +382,11 @@ def detect_anchor_lines(lines: list[str], path: Path | None = None) -> list[dict
             continue
         if is_comment_only(line):
             continue
+        search_line = strip_python_string_literals(line) if path and path.suffix.lower() == ".py" else line
         categories: list[str] = []
         labels: list[str] = []
         for rule in ANCHOR_RULES:
-            if rule.pattern.search(line):
+            if rule.pattern.search(search_line):
                 categories.append(rule.name)
                 labels.append(rule.label)
         if categories:
@@ -410,6 +462,49 @@ def analyze_code_file(path: Path) -> dict[str, object]:
     }
 
 
+def analyze_sample_readme(sample_dir: Path) -> dict[str, object]:
+    path = sample_dir / "README.ja.md"
+    reasons: list[str] = []
+    if not path.exists():
+        return {
+            "path": rel(path),
+            "sample": rel(sample_dir),
+            "status": "PARTIAL",
+            "line_count": 0,
+            "jp_blocks": 0,
+            "memo_blocks": 0,
+            "missing_sections": list(REQUIRED_SAMPLE_SECTIONS),
+            "reasons": ["missing README.ja.md"],
+        }
+
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    missing_sections = [section for section in REQUIRED_SAMPLE_SECTIONS if section not in text]
+    if missing_sections:
+        reasons.append("missing required learning-guide sections")
+    if "English anchor: this sample demonstrates" in text:
+        reasons.append("old template marker remains")
+    if "| API or concept |" not in text:
+        reasons.append("missing API/concept table")
+    if "> **日本語**" not in text or "> **学習メモ**" not in text:
+        reasons.append("missing Japanese comparison blocks")
+    if "Sample-Specific Notes" not in text and "Concrete Reading Path" not in text:
+        reasons.append("missing sample-specific reading path")
+    line_count = len(text.splitlines())
+    if line_count < 110:
+        reasons.append("guide is too short for required coverage")
+
+    return {
+        "path": rel(path),
+        "sample": rel(sample_dir),
+        "status": "DONE" if not reasons else "PARTIAL",
+        "line_count": line_count,
+        "jp_blocks": text.count("> **日本語**"),
+        "memo_blocks": text.count("> **学習メモ**"),
+        "missing_sections": missing_sections,
+        "reasons": reasons,
+    }
+
+
 def japanese_files() -> list[Path]:
     files = (
         [p for p in DOCS_JA.rglob("*") if p.is_file()]
@@ -425,10 +520,11 @@ def summarize() -> dict[str, object]:
     code = code_files()
     annotation_records = [analyze_code_file(path) for path in code]
     partial_annotations = [record for record in annotation_records if record["status"] != "DONE"]
+    sample_readme_records = [analyze_sample_readme(path) for path in samples]
+    partial_sample_readmes = [record for record in sample_readme_records if record["status"] != "DONE"]
     missing_companions = [p for p in docs if not companion_for(p).exists()]
-    missing_sample_readmes = [p for p in samples if not (p / "README.ja.md").exists()]
     status = "DONE"
-    if missing_companions or missing_sample_readmes or partial_annotations:
+    if missing_companions or partial_sample_readmes or partial_annotations:
         status = "PARTIAL"
 
     return {
@@ -442,7 +538,8 @@ def summarize() -> dict[str, object]:
             "source_docs": len(docs),
             "doc_companions_done": len(docs) - len(missing_companions),
             "sample_dirs": len(samples),
-            "sample_readme_ja_done": len(samples) - len(missing_sample_readmes),
+            "sample_readme_ja_done": len(samples) - len(partial_sample_readmes),
+            "sample_readme_ja_partial": len(partial_sample_readmes),
             "annotation_files": len(code),
             "annotation_files_done": len(code) - len(partial_annotations),
             "annotation_files_partial": len(partial_annotations),
@@ -452,15 +549,16 @@ def summarize() -> dict[str, object]:
         },
         "missing": {
             "doc_companions": [rel(p) for p in missing_companions[:200]],
-            "sample_readme_ja": [rel(p) for p in missing_sample_readmes[:200]],
+            "sample_readme_ja": [str(record["path"]) for record in partial_sample_readmes[:200]],
             "annotations": [str(record["path"]) for record in partial_annotations[:200]],
         },
         "overflow": {
             "doc_companions": max(0, len(missing_companions) - 200),
-            "sample_readme_ja": max(0, len(missing_sample_readmes) - 200),
+            "sample_readme_ja": max(0, len(partial_sample_readmes) - 200),
             "annotations": max(0, len(partial_annotations) - 200),
         },
         "annotation_records": annotation_records,
+        "sample_readme_records": sample_readme_records,
     }
 
 
@@ -482,6 +580,8 @@ def render_markdown(summary: dict[str, object]) -> str:
     records = list(summary["annotation_records"])
     partial_records = [record for record in records if record["status"] != "DONE"]
     done_records = [record for record in records if record["status"] == "DONE"]
+    sample_records = list(summary["sample_readme_records"])
+    partial_sample_records = [record for record in sample_records if record["status"] != "DONE"]
     lines = [
         "# Japanese Translation Status",
         "",
@@ -499,6 +599,7 @@ def render_markdown(summary: dict[str, object]) -> str:
         f"- Base commit: `{summary['base']}`",
         f"- Current commit: `{summary['head']}`",
         f"- Detailed annotation record: `{rel(ANNOTATION_JSON)}`",
+        f"- Detailed sample README record: `{rel(SAMPLE_README_JSON)}`",
         "",
         "## Counts",
         "",
@@ -542,6 +643,28 @@ def render_markdown(summary: dict[str, object]) -> str:
 
     lines.extend(
         [
+            "## Sample README Quality",
+            "",
+            f"- DONE guides: {len(sample_records) - len(partial_sample_records)}",
+            f"- PARTIAL guides: {len(partial_sample_records)}",
+            "- Required sections: " + ", ".join(f"`{section}`" for section in REQUIRED_SAMPLE_SECTIONS),
+            "",
+        ]
+    )
+    if partial_sample_records:
+        lines.extend(["### First PARTIAL Sample README Records", ""])
+        for record in partial_sample_records[:80]:
+            reason_text = "; ".join(str(reason) for reason in record.get("reasons", [])) or "needs review"
+            lines.append(
+                f"- `{record['path']}`: lines={record['line_count']}, "
+                f"jp_blocks={record['jp_blocks']}, memo_blocks={record['memo_blocks']}, reason={reason_text}"
+            )
+        if len(partial_sample_records) > 80:
+            lines.append(f"- ... plus {len(partial_sample_records) - 80} more PARTIAL guides")
+        lines.append("")
+
+    lines.extend(
+        [
             "## Policy Notes",
             "",
             "- English source text, file names, commands, APIs, expected output, license text, and attribution are preserved.",
@@ -565,6 +688,11 @@ def main() -> int:
         STATUS.parent.mkdir(parents=True, exist_ok=True)
         ANNOTATION_JSON.write_text(
             json.dumps(summary["annotation_records"], ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        SAMPLE_README_JSON.write_text(
+            json.dumps(summary["sample_readme_records"], ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
             newline="\n",
         )

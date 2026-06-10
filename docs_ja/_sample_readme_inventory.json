@@ -1,0 +1,2552 @@
+[
+  {
+    "path": "cpp/0_Introduction/README.ja.md",
+    "sample": "cpp/0_Introduction",
+    "status": "DONE",
+    "line_count": 520,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/UnifiedMemoryStreams/README.ja.md",
+    "sample": "cpp/0_Introduction/UnifiedMemoryStreams",
+    "status": "DONE",
+    "line_count": 202,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/asyncAPI/README.ja.md",
+    "sample": "cpp/0_Introduction/asyncAPI",
+    "status": "DONE",
+    "line_count": 195,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/clock/README.ja.md",
+    "sample": "cpp/0_Introduction/clock",
+    "status": "DONE",
+    "line_count": 186,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/clock_nvrtc/README.ja.md",
+    "sample": "cpp/0_Introduction/clock_nvrtc",
+    "status": "DONE",
+    "line_count": 209,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/cudaOpenMP/README.ja.md",
+    "sample": "cpp/0_Introduction/cudaOpenMP",
+    "status": "DONE",
+    "line_count": 179,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/fp16ScalarProduct/README.ja.md",
+    "sample": "cpp/0_Introduction/fp16ScalarProduct",
+    "status": "DONE",
+    "line_count": 186,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/matrixMul/README.ja.md",
+    "sample": "cpp/0_Introduction/matrixMul",
+    "status": "DONE",
+    "line_count": 209,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/matrixMulDrv/README.ja.md",
+    "sample": "cpp/0_Introduction/matrixMulDrv",
+    "status": "DONE",
+    "line_count": 214,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/matrixMulDynlinkJIT/README.ja.md",
+    "sample": "cpp/0_Introduction/matrixMulDynlinkJIT",
+    "status": "DONE",
+    "line_count": 247,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/matrixMul_nvrtc/README.ja.md",
+    "sample": "cpp/0_Introduction/matrixMul_nvrtc",
+    "status": "DONE",
+    "line_count": 216,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/mergeSort/README.ja.md",
+    "sample": "cpp/0_Introduction/mergeSort",
+    "status": "DONE",
+    "line_count": 192,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleAWBarrier/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleAWBarrier",
+    "status": "DONE",
+    "line_count": 193,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleAssert/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleAssert",
+    "status": "DONE",
+    "line_count": 175,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleAssert_nvrtc/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleAssert_nvrtc",
+    "status": "DONE",
+    "line_count": 201,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleAtomicIntrinsics/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleAtomicIntrinsics",
+    "status": "DONE",
+    "line_count": 189,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleAtomicIntrinsics_nvrtc/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleAtomicIntrinsics_nvrtc",
+    "status": "DONE",
+    "line_count": 209,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleAttributes/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleAttributes",
+    "status": "DONE",
+    "line_count": 192,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleCUDA2GL/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleCUDA2GL",
+    "status": "DONE",
+    "line_count": 200,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleCallback/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleCallback",
+    "status": "DONE",
+    "line_count": 189,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleCooperativeGroups/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleCooperativeGroups",
+    "status": "DONE",
+    "line_count": 179,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleCubemapTexture/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleCubemapTexture",
+    "status": "DONE",
+    "line_count": 179,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleDrvRuntime/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleDrvRuntime",
+    "status": "DONE",
+    "line_count": 201,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleHyperQ/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleHyperQ",
+    "status": "DONE",
+    "line_count": 192,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleIPC/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleIPC",
+    "status": "DONE",
+    "line_count": 201,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleLayeredTexture/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleLayeredTexture",
+    "status": "DONE",
+    "line_count": 179,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleMPI/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleMPI",
+    "status": "DONE",
+    "line_count": 198,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleMultiCopy/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleMultiCopy",
+    "status": "DONE",
+    "line_count": 185,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleMultiGPU/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleMultiGPU",
+    "status": "DONE",
+    "line_count": 201,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleOccupancy/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleOccupancy",
+    "status": "DONE",
+    "line_count": 190,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleP2P/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleP2P",
+    "status": "DONE",
+    "line_count": 203,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simplePitchLinearTexture/README.ja.md",
+    "sample": "cpp/0_Introduction/simplePitchLinearTexture",
+    "status": "DONE",
+    "line_count": 185,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simplePrintf/README.ja.md",
+    "sample": "cpp/0_Introduction/simplePrintf",
+    "status": "DONE",
+    "line_count": 175,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleStreams/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleStreams",
+    "status": "DONE",
+    "line_count": 195,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleSurfaceWrite/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleSurfaceWrite",
+    "status": "DONE",
+    "line_count": 181,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleTemplates/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleTemplates",
+    "status": "DONE",
+    "line_count": 188,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleTexture/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleTexture",
+    "status": "DONE",
+    "line_count": 182,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleTexture3D/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleTexture3D",
+    "status": "DONE",
+    "line_count": 197,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleTextureDrv/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleTextureDrv",
+    "status": "DONE",
+    "line_count": 198,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleVoteIntrinsics/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleVoteIntrinsics",
+    "status": "DONE",
+    "line_count": 177,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/simpleZeroCopy/README.ja.md",
+    "sample": "cpp/0_Introduction/simpleZeroCopy",
+    "status": "DONE",
+    "line_count": 181,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/systemWideAtomics/README.ja.md",
+    "sample": "cpp/0_Introduction/systemWideAtomics",
+    "status": "DONE",
+    "line_count": 183,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/template/README.ja.md",
+    "sample": "cpp/0_Introduction/template",
+    "status": "DONE",
+    "line_count": 186,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/vectorAdd/README.ja.md",
+    "sample": "cpp/0_Introduction/vectorAdd",
+    "status": "DONE",
+    "line_count": 189,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/vectorAddDrv/README.ja.md",
+    "sample": "cpp/0_Introduction/vectorAddDrv",
+    "status": "DONE",
+    "line_count": 197,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/vectorAddMMAP/README.ja.md",
+    "sample": "cpp/0_Introduction/vectorAddMMAP",
+    "status": "DONE",
+    "line_count": 209,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/0_Introduction/vectorAdd_nvrtc/README.ja.md",
+    "sample": "cpp/0_Introduction/vectorAdd_nvrtc",
+    "status": "DONE",
+    "line_count": 203,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/1_Utilities/README.ja.md",
+    "sample": "cpp/1_Utilities",
+    "status": "DONE",
+    "line_count": 212,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/1_Utilities/deviceQuery/README.ja.md",
+    "sample": "cpp/1_Utilities/deviceQuery",
+    "status": "DONE",
+    "line_count": 205,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/1_Utilities/deviceQueryDrv/README.ja.md",
+    "sample": "cpp/1_Utilities/deviceQueryDrv",
+    "status": "DONE",
+    "line_count": 208,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/1_Utilities/topologyQuery/README.ja.md",
+    "sample": "cpp/1_Utilities/topologyQuery",
+    "status": "DONE",
+    "line_count": 193,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques",
+    "status": "DONE",
+    "line_count": 672,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU",
+    "status": "DONE",
+    "line_count": 226,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/EGLStream_CUDA_Interop/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/EGLStream_CUDA_Interop",
+    "status": "DONE",
+    "line_count": 221,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/FunctionPointers/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/FunctionPointers",
+    "status": "DONE",
+    "line_count": 203,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineP/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineP",
+    "status": "DONE",
+    "line_count": 210,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineQ/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineQ",
+    "status": "DONE",
+    "line_count": 210,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/MC_EstimatePiP/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/MC_EstimatePiP",
+    "status": "DONE",
+    "line_count": 210,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/MC_EstimatePiQ/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/MC_EstimatePiQ",
+    "status": "DONE",
+    "line_count": 210,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/MC_SingleAsianOptionP/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/MC_SingleAsianOptionP",
+    "status": "DONE",
+    "line_count": 219,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/boxFilter/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/boxFilter",
+    "status": "DONE",
+    "line_count": 197,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/convolutionSeparable/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/convolutionSeparable",
+    "status": "DONE",
+    "line_count": 190,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/convolutionTexture/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/convolutionTexture",
+    "status": "DONE",
+    "line_count": 188,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/dct8x8/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/dct8x8",
+    "status": "DONE",
+    "line_count": 223,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/eigenvalues/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/eigenvalues",
+    "status": "DONE",
+    "line_count": 216,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/histogram/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/histogram",
+    "status": "DONE",
+    "line_count": 197,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/imageDenoising/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/imageDenoising",
+    "status": "DONE",
+    "line_count": 219,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/inlinePTX/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/inlinePTX",
+    "status": "DONE",
+    "line_count": 195,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/inlinePTX_nvrtc/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/inlinePTX_nvrtc",
+    "status": "DONE",
+    "line_count": 203,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/interval/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/interval",
+    "status": "DONE",
+    "line_count": 302,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/particles/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/particles",
+    "status": "DONE",
+    "line_count": 237,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/radixSortThrust/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/radixSortThrust",
+    "status": "DONE",
+    "line_count": 200,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/reduction/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/reduction",
+    "status": "DONE",
+    "line_count": 194,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/reductionMultiBlockCG/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/reductionMultiBlockCG",
+    "status": "DONE",
+    "line_count": 193,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/scalarProd/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/scalarProd",
+    "status": "DONE",
+    "line_count": 186,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/scan/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/scan",
+    "status": "DONE",
+    "line_count": 190,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/segmentationTreeThrust/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/segmentationTreeThrust",
+    "status": "DONE",
+    "line_count": 208,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/shfl_scan/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/shfl_scan",
+    "status": "DONE",
+    "line_count": 196,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/sortingNetworks/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/sortingNetworks",
+    "status": "DONE",
+    "line_count": 192,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/streamOrderedAllocation/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/streamOrderedAllocation",
+    "status": "DONE",
+    "line_count": 195,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/streamOrderedAllocationIPC/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/streamOrderedAllocationIPC",
+    "status": "DONE",
+    "line_count": 206,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/streamOrderedAllocationP2P/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/streamOrderedAllocationP2P",
+    "status": "DONE",
+    "line_count": 202,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/threadFenceReduction/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/threadFenceReduction",
+    "status": "DONE",
+    "line_count": 197,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/2_Concepts_and_Techniques/threadMigration/README.ja.md",
+    "sample": "cpp/2_Concepts_and_Techniques/threadMigration",
+    "status": "DONE",
+    "line_count": 185,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/3_CUDA_Features/README.ja.md",
+    "sample": "cpp/3_CUDA_Features",
+    "status": "DONE",
+    "line_count": 367,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/3_CUDA_Features/StreamPriorities/README.ja.md",
+    "sample": "cpp/3_CUDA_Features/StreamPriorities",
+    "status": "DONE",
+    "line_count": 195,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/3_CUDA_Features/bf16TensorCoreGemm/README.ja.md",
+    "sample": "cpp/3_CUDA_Features/bf16TensorCoreGemm",
+    "status": "DONE",
+    "line_count": 193,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/3_CUDA_Features/binaryPartitionCG/README.ja.md",
+    "sample": "cpp/3_CUDA_Features/binaryPartitionCG",
+    "status": "DONE",
+    "line_count": 189,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/3_CUDA_Features/bindlessTexture/README.ja.md",
+    "sample": "cpp/3_CUDA_Features/bindlessTexture",
+    "status": "DONE",
+    "line_count": 201,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/3_CUDA_Features/cdpAdvancedQuicksort/README.ja.md",
+    "sample": "cpp/3_CUDA_Features/cdpAdvancedQuicksort",
+    "status": "DONE",
+    "line_count": 197,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/3_CUDA_Features/cdpBezierTessellation/README.ja.md",
+    "sample": "cpp/3_CUDA_Features/cdpBezierTessellation",
+    "status": "DONE",
+    "line_count": 176,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/3_CUDA_Features/cdpQuadtree/README.ja.md",
+    "sample": "cpp/3_CUDA_Features/cdpQuadtree",
+    "status": "DONE",
+    "line_count": 204,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/3_CUDA_Features/cdpSimplePrint/README.ja.md",
+    "sample": "cpp/3_CUDA_Features/cdpSimplePrint",
+    "status": "DONE",
+    "line_count": 184,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/3_CUDA_Features/cdpSimpleQuicksort/README.ja.md",
+    "sample": "cpp/3_CUDA_Features/cdpSimpleQuicksort",
+    "status": "DONE",
+    "line_count": 183,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/3_CUDA_Features/cudaCompressibleMemory/README.ja.md",
+    "sample": "cpp/3_CUDA_Features/cudaCompressibleMemory",
+    "status": "DONE",
+    "line_count": 199,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/3_CUDA_Features/cudaTensorCoreGemm/README.ja.md",
+    "sample": "cpp/3_CUDA_Features/cudaTensorCoreGemm",
+    "status": "DONE",
+    "line_count": 193,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/3_CUDA_Features/dmmaTensorCoreGemm/README.ja.md",
+    "sample": "cpp/3_CUDA_Features/dmmaTensorCoreGemm",
+    "status": "DONE",
+    "line_count": 194,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/3_CUDA_Features/globalToShmemAsyncCopy/README.ja.md",
+    "sample": "cpp/3_CUDA_Features/globalToShmemAsyncCopy",
+    "status": "DONE",
+    "line_count": 203,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/3_CUDA_Features/graphConditionalNodes/README.ja.md",
+    "sample": "cpp/3_CUDA_Features/graphConditionalNodes",
+    "status": "DONE",
+    "line_count": 204,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/3_CUDA_Features/graphMemoryFootprint/README.ja.md",
+    "sample": "cpp/3_CUDA_Features/graphMemoryFootprint",
+    "status": "DONE",
+    "line_count": 204,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/3_CUDA_Features/graphMemoryNodes/README.ja.md",
+    "sample": "cpp/3_CUDA_Features/graphMemoryNodes",
+    "status": "DONE",
+    "line_count": 205,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/3_CUDA_Features/immaTensorCoreGemm/README.ja.md",
+    "sample": "cpp/3_CUDA_Features/immaTensorCoreGemm",
+    "status": "DONE",
+    "line_count": 193,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/3_CUDA_Features/jacobiCudaGraphs/README.ja.md",
+    "sample": "cpp/3_CUDA_Features/jacobiCudaGraphs",
+    "status": "DONE",
+    "line_count": 210,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/3_CUDA_Features/memMapIPCDrv/README.ja.md",
+    "sample": "cpp/3_CUDA_Features/memMapIPCDrv",
+    "status": "DONE",
+    "line_count": 209,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/3_CUDA_Features/newdelete/README.ja.md",
+    "sample": "cpp/3_CUDA_Features/newdelete",
+    "status": "DONE",
+    "line_count": 192,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/3_CUDA_Features/ptxjit/README.ja.md",
+    "sample": "cpp/3_CUDA_Features/ptxjit",
+    "status": "DONE",
+    "line_count": 207,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/3_CUDA_Features/simpleCudaGraphs/README.ja.md",
+    "sample": "cpp/3_CUDA_Features/simpleCudaGraphs",
+    "status": "DONE",
+    "line_count": 205,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/3_CUDA_Features/tf32TensorCoreGemm/README.ja.md",
+    "sample": "cpp/3_CUDA_Features/tf32TensorCoreGemm",
+    "status": "DONE",
+    "line_count": 193,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/3_CUDA_Features/warpAggregatedAtomicsCG/README.ja.md",
+    "sample": "cpp/3_CUDA_Features/warpAggregatedAtomicsCG",
+    "status": "DONE",
+    "line_count": 189,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries",
+    "status": "DONE",
+    "line_count": 483,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/FilterBorderControlNPP/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/FilterBorderControlNPP",
+    "status": "DONE",
+    "line_count": 204,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/MersenneTwisterGP11213/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/MersenneTwisterGP11213",
+    "status": "DONE",
+    "line_count": 197,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/batchCUBLAS/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/batchCUBLAS",
+    "status": "DONE",
+    "line_count": 205,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/boxFilterNPP/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/boxFilterNPP",
+    "status": "DONE",
+    "line_count": 204,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/cannyEdgeDetectorNPP/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/cannyEdgeDetectorNPP",
+    "status": "DONE",
+    "line_count": 206,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/conjugateGradient/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/conjugateGradient",
+    "status": "DONE",
+    "line_count": 198,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/conjugateGradientCudaGraphs/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/conjugateGradientCudaGraphs",
+    "status": "DONE",
+    "line_count": 212,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/conjugateGradientMultiBlockCG/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/conjugateGradientMultiBlockCG",
+    "status": "DONE",
+    "line_count": 209,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/conjugateGradientMultiDeviceCG/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/conjugateGradientMultiDeviceCG",
+    "status": "DONE",
+    "line_count": 214,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/conjugateGradientPrecond/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/conjugateGradientPrecond",
+    "status": "DONE",
+    "line_count": 198,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/conjugateGradientUM/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/conjugateGradientUM",
+    "status": "DONE",
+    "line_count": 200,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/cuSolverDn_LinearSolver/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/cuSolverDn_LinearSolver",
+    "status": "DONE",
+    "line_count": 209,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/cuSolverRf/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/cuSolverRf",
+    "status": "DONE",
+    "line_count": 214,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver",
+    "status": "DONE",
+    "line_count": 214,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/cuSolverSp_LowlevelCholesky/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/cuSolverSp_LowlevelCholesky",
+    "status": "DONE",
+    "line_count": 214,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/cuSolverSp_LowlevelQR/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/cuSolverSp_LowlevelQR",
+    "status": "DONE",
+    "line_count": 215,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/cubDeviceFind/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/cubDeviceFind",
+    "status": "DONE",
+    "line_count": 189,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/cubDeviceSegmentedScan/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/cubDeviceSegmentedScan",
+    "status": "DONE",
+    "line_count": 193,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/cubDeviceTransform/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/cubDeviceTransform",
+    "status": "DONE",
+    "line_count": 192,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/cudaNvSci/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/cudaNvSci",
+    "status": "DONE",
+    "line_count": 209,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/freeImageInteropNPP/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/freeImageInteropNPP",
+    "status": "DONE",
+    "line_count": 205,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/histEqualizationNPP/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/histEqualizationNPP",
+    "status": "DONE",
+    "line_count": 203,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/jitLto/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/jitLto",
+    "status": "DONE",
+    "line_count": 202,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/libcuxxMdspan/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/libcuxxMdspan",
+    "status": "DONE",
+    "line_count": 198,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/libcuxxRandom/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/libcuxxRandom",
+    "status": "DONE",
+    "line_count": 193,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/lineOfSight/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/lineOfSight",
+    "status": "DONE",
+    "line_count": 195,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/matrixMulCUBLAS/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/matrixMulCUBLAS",
+    "status": "DONE",
+    "line_count": 206,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/nvJPEG/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/nvJPEG",
+    "status": "DONE",
+    "line_count": 209,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/nvJPEG_encoder/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/nvJPEG_encoder",
+    "status": "DONE",
+    "line_count": 217,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/oceanFFT/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/oceanFFT",
+    "status": "DONE",
+    "line_count": 216,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/randomFog/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/randomFog",
+    "status": "DONE",
+    "line_count": 209,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/simpleCUBLAS/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/simpleCUBLAS",
+    "status": "DONE",
+    "line_count": 195,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/simpleCUBLASXT/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/simpleCUBLASXT",
+    "status": "DONE",
+    "line_count": 197,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/simpleCUBLAS_LU/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/simpleCUBLAS_LU",
+    "status": "DONE",
+    "line_count": 193,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/simpleCUFFT/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/simpleCUFFT",
+    "status": "DONE",
+    "line_count": 195,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/simpleCUFFT_2d_MGPU/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/simpleCUFFT_2d_MGPU",
+    "status": "DONE",
+    "line_count": 195,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/simpleCUFFT_MGPU/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/simpleCUFFT_MGPU",
+    "status": "DONE",
+    "line_count": 195,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/simpleCUFFT_callback/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/simpleCUFFT_callback",
+    "status": "DONE",
+    "line_count": 195,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/4_CUDA_Libraries/watershedSegmentationNPP/README.ja.md",
+    "sample": "cpp/4_CUDA_Libraries/watershedSegmentationNPP",
+    "status": "DONE",
+    "line_count": 203,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/README.ja.md",
+    "sample": "cpp/5_Domain_Specific",
+    "status": "DONE",
+    "line_count": 683,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/BlackScholes/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/BlackScholes",
+    "status": "DONE",
+    "line_count": 182,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/BlackScholes_nvrtc/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/BlackScholes_nvrtc",
+    "status": "DONE",
+    "line_count": 203,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/FDTD3d/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/FDTD3d",
+    "status": "DONE",
+    "line_count": 205,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/HSOpticalFlow/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/HSOpticalFlow",
+    "status": "DONE",
+    "line_count": 211,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/Mandelbrot/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/Mandelbrot",
+    "status": "DONE",
+    "line_count": 208,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/MonteCarloMultiGPU/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/MonteCarloMultiGPU",
+    "status": "DONE",
+    "line_count": 228,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/NV12toBGRandResize/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/NV12toBGRandResize",
+    "status": "DONE",
+    "line_count": 208,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/SobelFilter/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/SobelFilter",
+    "status": "DONE",
+    "line_count": 206,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/SobolQRNG/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/SobolQRNG",
+    "status": "DONE",
+    "line_count": 198,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/bicubicTexture/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/bicubicTexture",
+    "status": "DONE",
+    "line_count": 200,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/bilateralFilter/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/bilateralFilter",
+    "status": "DONE",
+    "line_count": 201,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/binomialOptions/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/binomialOptions",
+    "status": "DONE",
+    "line_count": 187,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/binomialOptions_nvrtc/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/binomialOptions_nvrtc",
+    "status": "DONE",
+    "line_count": 221,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/convolutionFFT2D/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/convolutionFFT2D",
+    "status": "DONE",
+    "line_count": 203,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/dwtHaar1D/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/dwtHaar1D",
+    "status": "DONE",
+    "line_count": 192,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/dxtc/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/dxtc",
+    "status": "DONE",
+    "line_count": 201,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/fastWalshTransform/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/fastWalshTransform",
+    "status": "DONE",
+    "line_count": 188,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/fluidsGL/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/fluidsGL",
+    "status": "DONE",
+    "line_count": 221,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/marchingCubes/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/marchingCubes",
+    "status": "DONE",
+    "line_count": 225,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/nbody/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/nbody",
+    "status": "DONE",
+    "line_count": 223,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/p2pBandwidthLatencyTest/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/p2pBandwidthLatencyTest",
+    "status": "DONE",
+    "line_count": 203,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/postProcessGL/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/postProcessGL",
+    "status": "DONE",
+    "line_count": 205,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/quasirandomGenerator/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/quasirandomGenerator",
+    "status": "DONE",
+    "line_count": 183,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/quasirandomGenerator_nvrtc/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/quasirandomGenerator_nvrtc",
+    "status": "DONE",
+    "line_count": 213,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/recursiveGaussian/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/recursiveGaussian",
+    "status": "DONE",
+    "line_count": 204,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/simpleD3D11/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/simpleD3D11",
+    "status": "DONE",
+    "line_count": 196,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/simpleD3D11Texture/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/simpleD3D11Texture",
+    "status": "DONE",
+    "line_count": 198,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/simpleD3D12/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/simpleD3D12",
+    "status": "DONE",
+    "line_count": 212,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/simpleGL/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/simpleGL",
+    "status": "DONE",
+    "line_count": 192,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/simpleVulkan/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/simpleVulkan",
+    "status": "DONE",
+    "line_count": 208,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/simpleVulkanMMAP/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/simpleVulkanMMAP",
+    "status": "DONE",
+    "line_count": 232,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/smokeParticles/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/smokeParticles",
+    "status": "DONE",
+    "line_count": 243,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/stereoDisparity/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/stereoDisparity",
+    "status": "DONE",
+    "line_count": 196,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/volumeFiltering/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/volumeFiltering",
+    "status": "DONE",
+    "line_count": 207,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/volumeRender/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/volumeRender",
+    "status": "DONE",
+    "line_count": 200,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/5_Domain_Specific/vulkanImageCUDA/README.ja.md",
+    "sample": "cpp/5_Domain_Specific/vulkanImageCUDA",
+    "status": "DONE",
+    "line_count": 201,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/6_Performance/README.ja.md",
+    "sample": "cpp/6_Performance",
+    "status": "DONE",
+    "line_count": 235,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/6_Performance/LargeKernelParameter/README.ja.md",
+    "sample": "cpp/6_Performance/LargeKernelParameter",
+    "status": "DONE",
+    "line_count": 175,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/6_Performance/UnifiedMemoryPerf/README.ja.md",
+    "sample": "cpp/6_Performance/UnifiedMemoryPerf",
+    "status": "DONE",
+    "line_count": 201,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/6_Performance/alignedTypes/README.ja.md",
+    "sample": "cpp/6_Performance/alignedTypes",
+    "status": "DONE",
+    "line_count": 182,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/6_Performance/cudaGraphsPerfScaling/README.ja.md",
+    "sample": "cpp/6_Performance/cudaGraphsPerfScaling",
+    "status": "DONE",
+    "line_count": 203,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/6_Performance/transpose/README.ja.md",
+    "sample": "cpp/6_Performance/transpose",
+    "status": "DONE",
+    "line_count": 192,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/7_libNVVM/README.ja.md",
+    "sample": "cpp/7_libNVVM",
+    "status": "DONE",
+    "line_count": 236,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/7_libNVVM/cuda-c-linking/README.ja.md",
+    "sample": "cpp/7_libNVVM/cuda-c-linking",
+    "status": "DONE",
+    "line_count": 197,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/7_libNVVM/device-side-launch/README.ja.md",
+    "sample": "cpp/7_libNVVM/device-side-launch",
+    "status": "DONE",
+    "line_count": 205,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/7_libNVVM/ptxgen/README.ja.md",
+    "sample": "cpp/7_libNVVM/ptxgen",
+    "status": "DONE",
+    "line_count": 188,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/7_libNVVM/simple/README.ja.md",
+    "sample": "cpp/7_libNVVM/simple",
+    "status": "DONE",
+    "line_count": 190,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/7_libNVVM/uvmlite/README.ja.md",
+    "sample": "cpp/7_libNVVM/uvmlite",
+    "status": "DONE",
+    "line_count": 203,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/8_Platform_Specific/Tegra/README.ja.md",
+    "sample": "cpp/8_Platform_Specific/Tegra",
+    "status": "DONE",
+    "line_count": 332,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/8_Platform_Specific/Tegra/EGLSync_CUDAEvent_Interop/README.ja.md",
+    "sample": "cpp/8_Platform_Specific/Tegra/EGLSync_CUDAEvent_Interop",
+    "status": "DONE",
+    "line_count": 200,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/8_Platform_Specific/Tegra/cuDLAErrorReporting/README.ja.md",
+    "sample": "cpp/8_Platform_Specific/Tegra/cuDLAErrorReporting",
+    "status": "DONE",
+    "line_count": 181,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/8_Platform_Specific/Tegra/cuDLAHybridMode/README.ja.md",
+    "sample": "cpp/8_Platform_Specific/Tegra/cuDLAHybridMode",
+    "status": "DONE",
+    "line_count": 181,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/8_Platform_Specific/Tegra/cuDLALayerwiseStatsHybrid/README.ja.md",
+    "sample": "cpp/8_Platform_Specific/Tegra/cuDLALayerwiseStatsHybrid",
+    "status": "DONE",
+    "line_count": 181,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/8_Platform_Specific/Tegra/cuDLALayerwiseStatsStandalone/README.ja.md",
+    "sample": "cpp/8_Platform_Specific/Tegra/cuDLALayerwiseStatsStandalone",
+    "status": "DONE",
+    "line_count": 183,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/8_Platform_Specific/Tegra/cuDLAStandaloneMode/README.ja.md",
+    "sample": "cpp/8_Platform_Specific/Tegra/cuDLAStandaloneMode",
+    "status": "DONE",
+    "line_count": 181,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/8_Platform_Specific/Tegra/cudaNvSciBufMultiplanar/README.ja.md",
+    "sample": "cpp/8_Platform_Specific/Tegra/cudaNvSciBufMultiplanar",
+    "status": "DONE",
+    "line_count": 199,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/8_Platform_Specific/Tegra/cudaNvSciNvMedia/README.ja.md",
+    "sample": "cpp/8_Platform_Specific/Tegra/cudaNvSciNvMedia",
+    "status": "DONE",
+    "line_count": 219,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/8_Platform_Specific/Tegra/fluidsGLES/README.ja.md",
+    "sample": "cpp/8_Platform_Specific/Tegra/fluidsGLES",
+    "status": "DONE",
+    "line_count": 220,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/8_Platform_Specific/Tegra/nbody_opengles/README.ja.md",
+    "sample": "cpp/8_Platform_Specific/Tegra/nbody_opengles",
+    "status": "DONE",
+    "line_count": 216,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/8_Platform_Specific/Tegra/simpleGLES/README.ja.md",
+    "sample": "cpp/8_Platform_Specific/Tegra/simpleGLES",
+    "status": "DONE",
+    "line_count": 196,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/8_Platform_Specific/Tegra/simpleGLES_EGLOutput/README.ja.md",
+    "sample": "cpp/8_Platform_Specific/Tegra/simpleGLES_EGLOutput",
+    "status": "DONE",
+    "line_count": 196,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/9_CUDA_Tile/README.ja.md",
+    "sample": "cpp/9_CUDA_Tile",
+    "status": "DONE",
+    "line_count": 242,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/9_CUDA_Tile/helloTile/README.ja.md",
+    "sample": "cpp/9_CUDA_Tile/helloTile",
+    "status": "DONE",
+    "line_count": 193,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/9_CUDA_Tile/tileBmm/README.ja.md",
+    "sample": "cpp/9_CUDA_Tile/tileBmm",
+    "status": "DONE",
+    "line_count": 196,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/9_CUDA_Tile/tileLayerNorm/README.ja.md",
+    "sample": "cpp/9_CUDA_Tile/tileLayerNorm",
+    "status": "DONE",
+    "line_count": 190,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/9_CUDA_Tile/tileMatmul/README.ja.md",
+    "sample": "cpp/9_CUDA_Tile/tileMatmul",
+    "status": "DONE",
+    "line_count": 203,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/9_CUDA_Tile/tileMatmulAutotuner/README.ja.md",
+    "sample": "cpp/9_CUDA_Tile/tileMatmulAutotuner",
+    "status": "DONE",
+    "line_count": 215,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/9_CUDA_Tile/tileRope/README.ja.md",
+    "sample": "cpp/9_CUDA_Tile/tileRope",
+    "status": "DONE",
+    "line_count": 194,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/9_CUDA_Tile/tileSpMV/README.ja.md",
+    "sample": "cpp/9_CUDA_Tile/tileSpMV",
+    "status": "DONE",
+    "line_count": 192,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/9_CUDA_Tile/tileTranspose/README.ja.md",
+    "sample": "cpp/9_CUDA_Tile/tileTranspose",
+    "status": "DONE",
+    "line_count": 186,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "cpp/9_CUDA_Tile/tileVectorAdd/README.ja.md",
+    "sample": "cpp/9_CUDA_Tile/tileVectorAdd",
+    "status": "DONE",
+    "line_count": 202,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/1_GettingStarted/blurImageUnifiedMemory/README.ja.md",
+    "sample": "python/1_GettingStarted/blurImageUnifiedMemory",
+    "status": "DONE",
+    "line_count": 206,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/1_GettingStarted/copyImageArraytoGPU/README.ja.md",
+    "sample": "python/1_GettingStarted/copyImageArraytoGPU",
+    "status": "DONE",
+    "line_count": 191,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/1_GettingStarted/deviceQuery/README.ja.md",
+    "sample": "python/1_GettingStarted/deviceQuery",
+    "status": "DONE",
+    "line_count": 207,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/1_GettingStarted/kernelNsysProfile/README.ja.md",
+    "sample": "python/1_GettingStarted/kernelNsysProfile",
+    "status": "DONE",
+    "line_count": 206,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/1_GettingStarted/numpyVsCupy/README.ja.md",
+    "sample": "python/1_GettingStarted/numpyVsCupy",
+    "status": "DONE",
+    "line_count": 195,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/1_GettingStarted/simplePrint/README.ja.md",
+    "sample": "python/1_GettingStarted/simplePrint",
+    "status": "DONE",
+    "line_count": 210,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/1_GettingStarted/systemInfo/README.ja.md",
+    "sample": "python/1_GettingStarted/systemInfo",
+    "status": "DONE",
+    "line_count": 194,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/1_GettingStarted/vectorAdd/README.ja.md",
+    "sample": "python/1_GettingStarted/vectorAdd",
+    "status": "DONE",
+    "line_count": 208,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/2_CoreConcepts/binarySearch/README.ja.md",
+    "sample": "python/2_CoreConcepts/binarySearch",
+    "status": "DONE",
+    "line_count": 185,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/2_CoreConcepts/blockwiseSum/README.ja.md",
+    "sample": "python/2_CoreConcepts/blockwiseSum",
+    "status": "DONE",
+    "line_count": 211,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/2_CoreConcepts/cudaComputeLambdas/README.ja.md",
+    "sample": "python/2_CoreConcepts/cudaComputeLambdas",
+    "status": "DONE",
+    "line_count": 196,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/2_CoreConcepts/cudaGraphs/README.ja.md",
+    "sample": "python/2_CoreConcepts/cudaGraphs",
+    "status": "DONE",
+    "line_count": 206,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/2_CoreConcepts/fftSignalAnalysis/README.ja.md",
+    "sample": "python/2_CoreConcepts/fftSignalAnalysis",
+    "status": "DONE",
+    "line_count": 202,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/2_CoreConcepts/greenContext/README.ja.md",
+    "sample": "python/2_CoreConcepts/greenContext",
+    "status": "DONE",
+    "line_count": 203,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/2_CoreConcepts/jitLtoLinking/README.ja.md",
+    "sample": "python/2_CoreConcepts/jitLtoLinking",
+    "status": "DONE",
+    "line_count": 207,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/2_CoreConcepts/launchConfigTuning/README.ja.md",
+    "sample": "python/2_CoreConcepts/launchConfigTuning",
+    "status": "DONE",
+    "line_count": 211,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/2_CoreConcepts/matrixMulSharedMem/README.ja.md",
+    "sample": "python/2_CoreConcepts/matrixMulSharedMem",
+    "status": "DONE",
+    "line_count": 219,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/2_CoreConcepts/memoryResources/README.ja.md",
+    "sample": "python/2_CoreConcepts/memoryResources",
+    "status": "DONE",
+    "line_count": 201,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/2_CoreConcepts/pageRank/README.ja.md",
+    "sample": "python/2_CoreConcepts/pageRank",
+    "status": "DONE",
+    "line_count": 205,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/2_CoreConcepts/parallelHistogram/README.ja.md",
+    "sample": "python/2_CoreConcepts/parallelHistogram",
+    "status": "DONE",
+    "line_count": 211,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/2_CoreConcepts/parallelReduction/README.ja.md",
+    "sample": "python/2_CoreConcepts/parallelReduction",
+    "status": "DONE",
+    "line_count": 210,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/2_CoreConcepts/prefixSum/README.ja.md",
+    "sample": "python/2_CoreConcepts/prefixSum",
+    "status": "DONE",
+    "line_count": 188,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/2_CoreConcepts/processCheckpoint/README.ja.md",
+    "sample": "python/2_CoreConcepts/processCheckpoint",
+    "status": "DONE",
+    "line_count": 204,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/2_CoreConcepts/reduction/README.ja.md",
+    "sample": "python/2_CoreConcepts/reduction",
+    "status": "DONE",
+    "line_count": 211,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/2_CoreConcepts/reductionMultiBlockCG/README.ja.md",
+    "sample": "python/2_CoreConcepts/reductionMultiBlockCG",
+    "status": "DONE",
+    "line_count": 212,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/2_CoreConcepts/simpleZeroCopy/README.ja.md",
+    "sample": "python/2_CoreConcepts/simpleZeroCopy",
+    "status": "DONE",
+    "line_count": 210,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/2_CoreConcepts/streamingCopyComputeOverlap/README.ja.md",
+    "sample": "python/2_CoreConcepts/streamingCopyComputeOverlap",
+    "status": "DONE",
+    "line_count": 204,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/2_CoreConcepts/tmaTensorMap/README.ja.md",
+    "sample": "python/2_CoreConcepts/tmaTensorMap",
+    "status": "DONE",
+    "line_count": 211,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/3_FrameworkInterop/customPyTorchKernel/README.ja.md",
+    "sample": "python/3_FrameworkInterop/customPyTorchKernel",
+    "status": "DONE",
+    "line_count": 206,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/3_FrameworkInterop/customTensorFlowKernel/README.ja.md",
+    "sample": "python/3_FrameworkInterop/customTensorFlowKernel",
+    "status": "DONE",
+    "line_count": 207,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/4_DistributedComputing/ipcMemoryPool/README.ja.md",
+    "sample": "python/4_DistributedComputing/ipcMemoryPool",
+    "status": "DONE",
+    "line_count": 195,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/4_DistributedComputing/multiGPUGradientAverage/README.ja.md",
+    "sample": "python/4_DistributedComputing/multiGPUGradientAverage",
+    "status": "DONE",
+    "line_count": 208,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/4_DistributedComputing/simpleP2P/README.ja.md",
+    "sample": "python/4_DistributedComputing/simpleP2P",
+    "status": "DONE",
+    "line_count": 211,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "python/Utilities/README.ja.md",
+    "sample": "python/Utilities",
+    "status": "DONE",
+    "line_count": 202,
+    "jp_blocks": 14,
+    "memo_blocks": 14,
+    "missing_sections": [],
+    "reasons": []
+  }
+]

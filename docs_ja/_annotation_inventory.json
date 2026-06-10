@@ -5160,18 +5160,11 @@
     ],
     "top_only": false,
     "generic_only": false,
-    "detected_anchors": [
-      {
-        "name": "driver_api",
-        "count": 1
-      }
-    ],
-    "anchors_with_nearby_jp": [
-      "driver_api"
-    ],
+    "detected_anchors": [],
+    "anchors_with_nearby_jp": [],
     "missing_anchors": [],
     "missing_anchor_examples": [],
-    "anchor_count": 1,
+    "anchor_count": 0,
     "reasons": []
   },
   {
@@ -67255,7 +67248,7 @@
       },
       {
         "name": "managed_memory",
-        "count": 4
+        "count": 2
       },
       {
         "name": "nvrtc",
@@ -67263,7 +67256,7 @@
       },
       {
         "name": "python_cuda",
-        "count": 4
+        "count": 2
       },
       {
         "name": "streams_events",
@@ -67290,28 +67283,6 @@
         "text": "mr = ManagedMemoryResource(options)"
       },
       {
-        "line": 206,
-        "categories": [
-          "managed_memory"
-        ],
-        "labels": [
-          "unified memory"
-        ],
-        "text": "\"This sample relies on ManagedMemoryResource with concurrent host \""
-      },
-      {
-        "line": 213,
-        "categories": [
-          "managed_memory",
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary",
-          "unified memory"
-        ],
-        "text": "print(\"Image Blur with Unified Memory (cuda.core)\")"
-      },
-      {
         "line": 217,
         "categories": [
           "python_cuda"
@@ -67320,19 +67291,9 @@
           "Python CUDA boundary"
         ],
         "text": "device = Device(0)"
-      },
-      {
-        "line": 227,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "print(\"\\nCompiling CUDA kernel with cuda.core.Program...\")"
       }
     ],
-    "anchor_count": 12,
+    "anchor_count": 9,
     "reasons": []
   },
   {
@@ -67530,31 +67491,15 @@
       {
         "name": "python_cuda",
         "count": 4
-      },
-      {
-        "name": "shared_memory",
-        "count": 2
       }
     ],
     "anchors_with_nearby_jp": [
       "driver_api",
-      "python_cuda",
-      "shared_memory"
+      "python_cuda"
     ],
     "missing_anchors": [],
-    "missing_anchor_examples": [
-      {
-        "line": 210,
-        "categories": [
-          "shared_memory"
-        ],
-        "labels": [
-          "shared memory"
-        ],
-        "text": "\"Total shared memory per multiprocessor:\","
-      }
-    ],
-    "anchor_count": 6,
+    "missing_anchor_examples": [],
+    "anchor_count": 4,
     "reasons": []
   },
   {
@@ -67579,7 +67524,7 @@
       },
       {
         "name": "python_cuda",
-        "count": 24
+        "count": 12
       }
     ],
     "anchors_with_nearby_jp": [
@@ -67620,16 +67565,6 @@
         "text": "from cuda.core import Program, ProgramOptions"
       },
       {
-        "line": 159,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "print(\"Profiling cuda.core Custom Kernels\")"
-      },
-      {
         "line": 166,
         "categories": [
           "python_cuda"
@@ -67660,57 +67595,67 @@
         "text": "b_gpu = rng.standard_normal(size, dtype=cp.float32)"
       },
       {
-        "line": 180,
+        "line": 219,
         "categories": [
           "python_cuda"
         ],
         "labels": [
           "Python CUDA boundary"
         ],
-        "text": "f\"  Array a - Mean: {float(cp.mean(a_gpu)):.4f}, \""
+        "text": "cp.uint64(size),"
       },
       {
-        "line": 181,
+        "line": 226,
         "categories": [
-          "python_cuda"
+          "kernel_launch"
         ],
         "labels": [
-          "Python CUDA boundary"
+          "kernel launch"
         ],
-        "text": "f\"Std: {float(cp.std(a_gpu)):.4f}\""
+        "text": "launch("
       },
       {
-        "line": 184,
+        "line": 233,
         "categories": [
           "python_cuda"
         ],
         "labels": [
           "Python CUDA boundary"
         ],
-        "text": "f\"  Array b - Mean: {float(cp.mean(b_gpu)):.4f}, \""
+        "text": "cp.uint64(size),"
       },
       {
-        "line": 185,
+        "line": 239,
         "categories": [
           "python_cuda"
         ],
         "labels": [
           "Python CUDA boundary"
         ],
-        "text": "f\"Std: {float(cp.std(b_gpu)):.4f}\\n\""
+        "text": "transform_cuda = cp.empty_like(a_gpu)"
       },
       {
-        "line": 191,
+        "line": 240,
+        "categories": [
+          "kernel_launch"
+        ],
+        "labels": [
+          "kernel launch"
+        ],
+        "text": "launch("
+      },
+      {
+        "line": 246,
         "categories": [
           "python_cuda"
         ],
         "labels": [
           "Python CUDA boundary"
         ],
-        "text": "with nvtx.annotate(\"cuda.core Custom Kernels\", color=\"purple\"):"
+        "text": "cp.uint64(size),"
       }
     ],
-    "anchor_count": 28,
+    "anchor_count": 16,
     "reasons": []
   },
   {
@@ -67726,7 +67671,7 @@
     "detected_anchors": [
       {
         "name": "python_cuda",
-        "count": 9
+        "count": 8
       }
     ],
     "anchors_with_nearby_jp": [
@@ -67734,16 +67679,6 @@
     ],
     "missing_anchors": [],
     "missing_anchor_examples": [
-      {
-        "line": 61,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "\"\"\"GPU timing context manager using cuda.core CUDA events.\"\"\""
-      },
       {
         "line": 76,
         "categories": [
@@ -67805,7 +67740,7 @@
         "text": "result_cp = cp.dot(a_cp, b_cp)"
       }
     ],
-    "anchor_count": 9,
+    "anchor_count": 8,
     "reasons": []
   },
   {
@@ -67836,7 +67771,7 @@
       },
       {
         "name": "python_cuda",
-        "count": 6
+        "count": 1
       }
     ],
     "anchors_with_nearby_jp": [
@@ -67866,59 +67801,9 @@
           "thread/block indexing"
         ],
         "text": "+ numba_cuda.threadIdx.x"
-      },
-      {
-        "line": 141,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "print(\"METHOD 1: CUDA C++ Kernel (via cuda.core.Program)\")"
-      },
-      {
-        "line": 208,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "print(\"Advantage: Uses numba.cuda.grid(3) for global indexing,\")"
-      },
-      {
-        "line": 210,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "print(\"           Uses cuda.core for stream management (interoperability).\")"
-      },
-      {
-        "line": 227,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "print(\"Uses numba.cuda.grid(3) to get global (x, y, z),\")"
-      },
-      {
-        "line": 229,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "print(\"Stream managed by cuda.core for consistency with C++ example.\\n\")"
       }
     ],
-    "anchor_count": 12,
+    "anchor_count": 7,
     "reasons": []
   },
   {
@@ -67934,7 +67819,7 @@
     "detected_anchors": [
       {
         "name": "python_cuda",
-        "count": 5
+        "count": 4
       }
     ],
     "anchors_with_nearby_jp": [
@@ -67942,16 +67827,6 @@
     ],
     "missing_anchors": [],
     "missing_anchor_examples": [
-      {
-        "line": 177,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "description=\"Print CUDA system / NVML information via cuda.core.system\""
-      },
       {
         "line": 199,
         "categories": [
@@ -67963,7 +67838,7 @@
         "text": "devices = [system.Device(index=i) for i in range(num_devices)]"
       }
     ],
-    "anchor_count": 5,
+    "anchor_count": 4,
     "reasons": []
   },
   {
@@ -68077,16 +67952,11 @@
     "detected_anchors": [
       {
         "name": "python_cuda",
-        "count": 13
-      },
-      {
-        "name": "validation",
-        "count": 2
+        "count": 12
       }
     ],
     "anchors_with_nearby_jp": [
-      "python_cuda",
-      "validation"
+      "python_cuda"
     ],
     "missing_anchors": [],
     "missing_anchor_examples": [
@@ -68171,26 +68041,6 @@
         "text": "got_ub = cp.asnumpy(d_ub)"
       },
       {
-        "line": 105,
-        "categories": [
-          "validation"
-        ],
-        "labels": [
-          "validation/checking"
-        ],
-        "text": "f\"expected {expected_ub.tolist()}  {'OK' if ok_ub else 'FAIL'}\""
-      },
-      {
-        "line": 114,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "description=\"Parallel upper_bound / lower_bound via cuda.compute\""
-      },
-      {
         "line": 119,
         "categories": [
           "python_cuda"
@@ -68201,7 +68051,7 @@
         "text": "device = Device(args.device)"
       }
     ],
-    "anchor_count": 15,
+    "anchor_count": 12,
     "reasons": []
   },
   {
@@ -68381,16 +68231,11 @@
     "detected_anchors": [
       {
         "name": "python_cuda",
-        "count": 14
-      },
-      {
-        "name": "validation",
-        "count": 3
+        "count": 13
       }
     ],
     "anchors_with_nearby_jp": [
-      "python_cuda",
-      "validation"
+      "python_cuda"
     ],
     "missing_anchors": [],
     "missing_anchor_examples": [
@@ -68455,16 +68300,6 @@
         "text": "cuda.compute.unary_transform("
       },
       {
-        "line": 110,
-        "categories": [
-          "validation"
-        ],
-        "labels": [
-          "validation/checking"
-        ],
-        "text": "f\"  expected = {expected.tolist()}  {'OK' if ok else 'FAIL'}\""
-      },
-      {
         "line": 122,
         "categories": [
           "python_cuda"
@@ -68495,27 +68330,17 @@
         "text": "cuda.compute.inclusive_scan("
       },
       {
-        "line": 147,
-        "categories": [
-          "validation"
-        ],
-        "labels": [
-          "validation/checking"
-        ],
-        "text": "f\"  expected = {expected.tolist()}  {'OK' if ok else 'FAIL'}\""
-      },
-      {
-        "line": 156,
+        "line": 161,
         "categories": [
           "python_cuda"
         ],
         "labels": [
           "Python CUDA boundary"
         ],
-        "text": "description=\"Drive cuda.compute device algorithms with Python lambdas / callables\""
+        "text": "device = Device(args.device)"
       }
     ],
-    "anchor_count": 17,
+    "anchor_count": 13,
     "reasons": []
   },
   {
@@ -68541,7 +68366,7 @@
       },
       {
         "name": "python_cuda",
-        "count": 19
+        "count": 18
       },
       {
         "name": "validation",
@@ -68627,16 +68452,6 @@
         "text": "graph.launch(stream)"
       },
       {
-        "line": 164,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "parser = argparse.ArgumentParser(description=\"CUDA Graphs demo with cuda.core\")"
-      },
-      {
         "line": 180,
         "categories": [
           "python_cuda"
@@ -68675,9 +68490,19 @@
           "Python CUDA boundary"
         ],
         "text": "a = rng.random(N, dtype=cp.float32)"
+      },
+      {
+        "line": 203,
+        "categories": [
+          "python_cuda"
+        ],
+        "labels": [
+          "Python CUDA boundary"
+        ],
+        "text": "b = rng.random(N, dtype=cp.float32)"
       }
     ],
-    "anchor_count": 28,
+    "anchor_count": 27,
     "reasons": []
   },
   {
@@ -68694,27 +68519,12 @@
     "generic_only": false,
     "detected_anchors": [
       {
-        "name": "driver_api",
-        "count": 2
-      },
-      {
-        "name": "library_resources",
-        "count": 2
-      },
-      {
         "name": "python_cuda",
         "count": 16
-      },
-      {
-        "name": "validation",
-        "count": 1
       }
     ],
     "anchors_with_nearby_jp": [
-      "driver_api",
-      "library_resources",
-      "python_cuda",
-      "validation"
+      "python_cuda"
     ],
     "missing_anchors": [],
     "missing_anchor_examples": [
@@ -68839,7 +68649,7 @@
         "text": "d_frequencies = cp.fft.rfftfreq(num_samples, 1 / sample_rate)"
       }
     ],
-    "anchor_count": 19,
+    "anchor_count": 16,
     "reasons": []
   },
   {
@@ -68964,7 +68774,7 @@
       },
       {
         "name": "python_cuda",
-        "count": 9
+        "count": 8
       },
       {
         "name": "validation",
@@ -69030,16 +68840,6 @@
         "text": "linker = Linker(main_obj, user_obj, options=linker_opts)"
       },
       {
-        "line": 177,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "description=\"JIT + LTO linking of two device modules with cuda.core\""
-      },
-      {
         "line": 188,
         "categories": [
           "python_cuda"
@@ -69090,7 +68890,7 @@
         "text": "cp.cuda.Stream.null.use()"
       }
     ],
-    "anchor_count": 17,
+    "anchor_count": 16,
     "reasons": []
   },
   {
@@ -69104,7 +68904,7 @@
       122,
       151,
       186,
-      253,
+      261,
       273
     ],
     "top_only": false,
@@ -69116,7 +68916,7 @@
       },
       {
         "name": "managed_memory",
-        "count": 3
+        "count": 2
       },
       {
         "name": "nvrtc",
@@ -69124,10 +68924,6 @@
       },
       {
         "name": "python_cuda",
-        "count": 5
-      },
-      {
-        "name": "shared_memory",
         "count": 2
       },
       {
@@ -69136,7 +68932,7 @@
       },
       {
         "name": "validation",
-        "count": 2
+        "count": 1
       }
     ],
     "anchors_with_nearby_jp": [
@@ -69144,22 +68940,11 @@
       "managed_memory",
       "nvrtc",
       "python_cuda",
-      "shared_memory",
       "streams_events",
       "validation"
     ],
     "missing_anchors": [],
     "missing_anchor_examples": [
-      {
-        "line": 119,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "\"\"\"Compile a CUDA kernel using cuda.core.Program.\"\"\""
-      },
       {
         "line": 162,
         "categories": [
@@ -69169,46 +68954,6 @@
           "kernel launch"
         ],
         "text": "launch(stream, config, kernel, *args)"
-      },
-      {
-        "line": 262,
-        "categories": [
-          "validation"
-        ],
-        "labels": [
-          "validation/checking"
-        ],
-        "text": "if np.allclose(np_c, expected):"
-      },
-      {
-        "line": 283,
-        "categories": [
-          "shared_memory"
-        ],
-        "labels": [
-          "shared memory"
-        ],
-        "text": "print(\"Note: Reduction uses shared memory - more sensitive to block size!\")"
-      },
-      {
-        "line": 354,
-        "categories": [
-          "managed_memory"
-        ],
-        "labels": [
-          "unified memory"
-        ],
-        "text": "\"This sample relies on ManagedMemoryResource with concurrent host \""
-      },
-      {
-        "line": 361,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "print(\"Launch Configuration Tuning (cuda.core)\")"
       },
       {
         "line": 366,
@@ -69229,19 +68974,9 @@
           "unified memory"
         ],
         "text": "mr = ManagedMemoryResource(mr_options)"
-      },
-      {
-        "line": 379,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "print(\"\\nCompiling CUDA kernels with cuda.core.Program...\")"
       }
     ],
-    "anchor_count": 17,
+    "anchor_count": 10,
     "reasons": []
   },
   {
@@ -69262,16 +68997,8 @@
     "generic_only": false,
     "detected_anchors": [
       {
-        "name": "driver_api",
-        "count": 1
-      },
-      {
         "name": "kernel_launch",
         "count": 2
-      },
-      {
-        "name": "library_resources",
-        "count": 1
       },
       {
         "name": "nvrtc",
@@ -69280,10 +69007,6 @@
       {
         "name": "python_cuda",
         "count": 11
-      },
-      {
-        "name": "shared_memory",
-        "count": 1
       },
       {
         "name": "streams_events",
@@ -69295,12 +69018,9 @@
       }
     ],
     "anchors_with_nearby_jp": [
-      "driver_api",
       "kernel_launch",
-      "library_resources",
       "nvrtc",
       "python_cuda",
-      "shared_memory",
       "streams_events",
       "validation"
     ],
@@ -69397,7 +69117,7 @@
         "text": "cp.cuda.Stream.null.use()"
       }
     ],
-    "anchor_count": 18,
+    "anchor_count": 16,
     "reasons": []
   },
   {
@@ -69433,19 +69153,15 @@
       },
       {
         "name": "managed_memory",
-        "count": 5
+        "count": 3
       },
       {
         "name": "nvrtc",
         "count": 1
       },
       {
-        "name": "pinned_memory",
-        "count": 1
-      },
-      {
         "name": "python_cuda",
-        "count": 8
+        "count": 7
       },
       {
         "name": "streams_events",
@@ -69462,7 +69178,6 @@
       "kernel_launch",
       "managed_memory",
       "nvrtc",
-      "pinned_memory",
       "python_cuda",
       "streams_events",
       "validation"
@@ -69502,16 +69217,6 @@
           "streams/events"
         ],
         "text": "device_buffer.copy_to(pinned_out, stream=stream)"
-      },
-      {
-        "line": 150,
-        "categories": [
-          "managed_memory"
-        ],
-        "labels": [
-          "unified memory"
-        ],
-        "text": "print(\"\\n[2] ManagedMemoryResource (unified memory)\")"
       },
       {
         "line": 154,
@@ -69594,9 +69299,19 @@
           "Python CUDA boundary"
         ],
         "text": "view[:] = cp.arange(size, dtype=cp.float32)"
+      },
+      {
+        "line": 200,
+        "categories": [
+          "kernel_launch"
+        ],
+        "labels": [
+          "kernel launch"
+        ],
+        "text": "launch("
       }
     ],
-    "anchor_count": 32,
+    "anchor_count": 28,
     "reasons": []
   },
   {
@@ -69613,10 +69328,6 @@
     "generic_only": false,
     "detected_anchors": [
       {
-        "name": "driver_api",
-        "count": 4
-      },
-      {
         "name": "graphs",
         "count": 1
       },
@@ -69626,7 +69337,6 @@
       }
     ],
     "anchors_with_nearby_jp": [
-      "driver_api",
       "graphs",
       "python_cuda"
     ],
@@ -69643,16 +69353,6 @@
         "text": "device = Device(0)"
       },
       {
-        "line": 232,
-        "categories": [
-          "driver_api"
-        ],
-        "labels": [
-          "Driver API boundary"
-        ],
-        "text": "f\"RAPIDS cuGraph does not yet ship kernels for sm_{device.arch}, \""
-      },
-      {
         "line": 239,
         "categories": [
           "python_cuda"
@@ -69661,26 +69361,6 @@
           "Python CUDA boundary"
         ],
         "text": "cp.cuda.Stream.from_external(stream).use()"
-      },
-      {
-        "line": 258,
-        "categories": [
-          "driver_api"
-        ],
-        "labels": [
-          "Driver API boundary"
-        ],
-        "text": "print(\"GPU PageRank (RAPIDS cuGraph)\")"
-      },
-      {
-        "line": 323,
-        "categories": [
-          "driver_api"
-        ],
-        "labels": [
-          "Driver API boundary"
-        ],
-        "text": "print(f\"GPU (cuGraph): {gpu_time_ms:.3f} ms\")"
       },
       {
         "line": 357,
@@ -69693,7 +69373,7 @@
         "text": "cp.cuda.Stream.null.use()"
       }
     ],
-    "anchor_count": 10,
+    "anchor_count": 6,
     "reasons": []
   },
   {
@@ -69719,7 +69399,7 @@
       },
       {
         "name": "python_cuda",
-        "count": 12
+        "count": 10
       }
     ],
     "anchors_with_nearby_jp": [
@@ -69729,16 +69409,6 @@
     ],
     "missing_anchors": [],
     "missing_anchor_examples": [
-      {
-        "line": 107,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "print(\"Parallel Histogram with Atomics (cuda.core)\")"
-      },
       {
         "line": 111,
         "categories": [
@@ -69768,16 +69438,6 @@
           "Python CUDA boundary"
         ],
         "text": "cp.cuda.Stream.null.use()  # Restore CuPy to default stream before closing"
-      },
-      {
-        "line": 132,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "print(\"\\nCompiling CUDA kernels with cuda.core.Program...\")"
       },
       {
         "line": 146,
@@ -69848,9 +69508,19 @@
           "kernel launch"
         ],
         "text": "launch("
+      },
+      {
+        "line": 221,
+        "categories": [
+          "kernel_launch"
+        ],
+        "labels": [
+          "kernel launch"
+        ],
+        "text": "launch("
       }
     ],
-    "anchor_count": 17,
+    "anchor_count": 15,
     "reasons": []
   },
   {
@@ -69877,7 +69547,7 @@
       },
       {
         "name": "python_cuda",
-        "count": 21
+        "count": 18
       },
       {
         "name": "streams_events",
@@ -69943,16 +69613,6 @@
         "text": "d_input: cp.ndarray,"
       },
       {
-        "line": 215,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "\"\"\"Benchmark custom reduction kernel using cuda.core events.\"\"\""
-      },
-      {
         "line": 217,
         "categories": [
           "python_cuda"
@@ -69971,16 +69631,6 @@
           "Python CUDA boundary"
         ],
         "text": "d_input: cp.ndarray,"
-      },
-      {
-        "line": 255,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "\"\"\"Benchmark cuda.compute.reduce_into() using cuda.core events.\"\"\""
       },
       {
         "line": 259,
@@ -70011,9 +69661,29 @@
           "streams/events"
         ],
         "text": "stream=stream,"
+      },
+      {
+        "line": 304,
+        "categories": [
+          "python_cuda"
+        ],
+        "labels": [
+          "Python CUDA boundary"
+        ],
+        "text": "device = Device(0)"
+      },
+      {
+        "line": 307,
+        "categories": [
+          "python_cuda"
+        ],
+        "labels": [
+          "Python CUDA boundary"
+        ],
+        "text": "cp_stream = cp.cuda.Stream.from_external(stream)"
       }
     ],
-    "anchor_count": 26,
+    "anchor_count": 23,
     "reasons": []
   },
   {
@@ -70030,7 +69700,7 @@
     "detected_anchors": [
       {
         "name": "python_cuda",
-        "count": 18
+        "count": 13
       },
       {
         "name": "streams_events",
@@ -70043,16 +69713,6 @@
     ],
     "missing_anchors": [],
     "missing_anchor_examples": [
-      {
-        "line": 61,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "print(\"Prefix Sum (Scan) - Using cuda.compute\")"
-      },
       {
         "line": 64,
         "categories": [
@@ -70124,16 +69784,6 @@
         "text": "stream=stream,"
       },
       {
-        "line": 131,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "print(f\"Output: {cp.asnumpy(d_output).tolist()}\")"
-      },
-      {
         "line": 134,
         "categories": [
           "python_cuda"
@@ -70162,9 +69812,29 @@
           "Python CUDA boundary"
         ],
         "text": "d_large_out = cp.empty_like(d_large_in)"
+      },
+      {
+        "line": 155,
+        "categories": [
+          "streams_events"
+        ],
+        "labels": [
+          "streams/events"
+        ],
+        "text": "stream=stream,"
+      },
+      {
+        "line": 172,
+        "categories": [
+          "streams_events"
+        ],
+        "labels": [
+          "streams/events"
+        ],
+        "text": "stream=stream,"
       }
     ],
-    "anchor_count": 22,
+    "anchor_count": 17,
     "reasons": []
   },
   {
@@ -70207,7 +69877,7 @@
       },
       {
         "name": "python_cuda",
-        "count": 4
+        "count": 3
       },
       {
         "name": "streams_events",
@@ -70216,10 +69886,6 @@
       {
         "name": "transfer",
         "count": 1
-      },
-      {
-        "name": "validation",
-        "count": 2
       }
     ],
     "anchors_with_nearby_jp": [
@@ -70230,21 +69896,10 @@
       "nvrtc",
       "python_cuda",
       "streams_events",
-      "transfer",
-      "validation"
+      "transfer"
     ],
     "missing_anchors": [],
     "missing_anchor_examples": [
-      {
-        "line": 165,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "description=\"CUDA process checkpoint sample using cuda.core\","
-      },
       {
         "line": 196,
         "categories": [
@@ -70276,7 +69931,7 @@
         "text": "hash_after = hash_device_buffer(device_buffer, host)"
       }
     ],
-    "anchor_count": 15,
+    "anchor_count": 12,
     "reasons": []
   },
   {
@@ -70304,17 +69959,12 @@
       {
         "name": "python_cuda",
         "count": 6
-      },
-      {
-        "name": "shared_memory",
-        "count": 1
       }
     ],
     "anchors_with_nearby_jp": [
       "kernel_launch",
       "nvrtc",
-      "python_cuda",
-      "shared_memory"
+      "python_cuda"
     ],
     "missing_anchors": [],
     "missing_anchor_examples": [
@@ -70369,7 +70019,7 @@
         "text": "h_blockSums = cp.asnumpy(d_blockSums)"
       }
     ],
-    "anchor_count": 10,
+    "anchor_count": 9,
     "reasons": []
   },
   {
@@ -70391,7 +70041,7 @@
       },
       {
         "name": "nvrtc",
-        "count": 2
+        "count": 1
       },
       {
         "name": "python_cuda",
@@ -70454,19 +70104,9 @@
           "Python CUDA boundary"
         ],
         "text": "h_result = cp.asnumpy(d_odata[:1])"
-      },
-      {
-        "line": 439,
-        "categories": [
-          "nvrtc"
-        ],
-        "labels": [
-          "runtime compilation/JIT"
-        ],
-        "text": "\"CUDA include directory for NVRTC. \""
       }
     ],
-    "anchor_count": 10,
+    "anchor_count": 9,
     "reasons": []
   },
   {
@@ -70499,7 +70139,7 @@
       },
       {
         "name": "pinned_memory",
-        "count": 7
+        "count": 3
       },
       {
         "name": "python_cuda",
@@ -70521,46 +70161,6 @@
     "missing_anchors": [],
     "missing_anchor_examples": [
       {
-        "line": 67,
-        "categories": [
-          "pinned_memory"
-        ],
-        "labels": [
-          "pinned host memory"
-        ],
-        "text": "raise RuntimeError(f\"cudaHostAlloc failed: {err}\")"
-      },
-      {
-        "line": 136,
-        "categories": [
-          "pinned_memory"
-        ],
-        "labels": [
-          "pinned host memory"
-        ],
-        "text": "\"\\n> Memory: mapped pinned host \""
-      },
-      {
-        "line": 137,
-        "categories": [
-          "pinned_memory"
-        ],
-        "labels": [
-          "pinned host memory"
-        ],
-        "text": "\"(cudaHostAlloc + cudaHostGetDevicePointer)\""
-      },
-      {
-        "line": 154,
-        "categories": [
-          "pinned_memory"
-        ],
-        "labels": [
-          "pinned host memory"
-        ],
-        "text": "print(\"\\n> Allocating mapped pinned host memory...\")"
-      },
-      {
         "line": 228,
         "categories": [
           "cleanup",
@@ -70573,7 +70173,7 @@
         "text": "cuda_rt.cudaFreeHost(h)"
       }
     ],
-    "anchor_count": 12,
+    "anchor_count": 8,
     "reasons": []
   },
   {
@@ -70600,16 +70200,12 @@
         "count": 1
       },
       {
-        "name": "pinned_memory",
-        "count": 1
-      },
-      {
         "name": "python_cuda",
-        "count": 4
+        "count": 2
       },
       {
         "name": "streams_events",
-        "count": 17
+        "count": 16
       },
       {
         "name": "validation",
@@ -70619,43 +70215,12 @@
     "anchors_with_nearby_jp": [
       "kernel_launch",
       "nvrtc",
-      "pinned_memory",
       "python_cuda",
       "streams_events",
       "validation"
     ],
     "missing_anchors": [],
     "missing_anchor_examples": [
-      {
-        "line": 85,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "\"\"\"Create numpy view of cuda.core Buffer via DLPack.\"\"\""
-      },
-      {
-        "line": 91,
-        "categories": [
-          "streams_events"
-        ],
-        "labels": [
-          "streams/events"
-        ],
-        "text": "print(\"Streaming Copy + Compute Overlap\")"
-      },
-      {
-        "line": 92,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "print(\"Using pure cuda.core APIs\")"
-      },
       {
         "line": 96,
         "categories": [
@@ -70745,9 +70310,39 @@
           "streams/events"
         ],
         "text": "d_out.copy_to(h_out, stream=default_stream)  # Async D2H"
+      },
+      {
+        "line": 222,
+        "categories": [
+          "streams_events"
+        ],
+        "labels": [
+          "streams/events"
+        ],
+        "text": "h_ins.append(pinned_mr.allocate(chunk_bytes, stream=streams[i]))"
+      },
+      {
+        "line": 223,
+        "categories": [
+          "streams_events"
+        ],
+        "labels": [
+          "streams/events"
+        ],
+        "text": "h_outs.append(pinned_mr.allocate(chunk_bytes, stream=streams[i]))"
+      },
+      {
+        "line": 224,
+        "categories": [
+          "streams_events"
+        ],
+        "labels": [
+          "streams/events"
+        ],
+        "text": "d_ins.append(device_mr.allocate(chunk_bytes, stream=streams[i]))"
       }
     ],
-    "anchor_count": 29,
+    "anchor_count": 25,
     "reasons": []
   },
   {
@@ -70768,17 +70363,12 @@
         "count": 2
       },
       {
-        "name": "library_resources",
-        "count": 1
-      },
-      {
         "name": "python_cuda",
-        "count": 12
+        "count": 11
       }
     ],
     "anchors_with_nearby_jp": [
       "kernel_launch",
-      "library_resources",
       "python_cuda"
     ],
     "missing_anchors": [],
@@ -70802,16 +70392,6 @@
           "Python CUDA boundary"
         ],
         "text": "from cuda.pathfinder import find_nvidia_header_directory, get_cuda_path_or_home"
-      },
-      {
-        "line": 171,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "\"Tried cuda.pathfinder (pip/conda/system installs) and \""
       },
       {
         "line": 200,
@@ -70894,7 +70474,7 @@
         "text": "if not cp.array_equal(output2, replacement):"
       }
     ],
-    "anchor_count": 15,
+    "anchor_count": 13,
     "reasons": []
   },
   {
@@ -70920,18 +70500,13 @@
       },
       {
         "name": "python_cuda",
-        "count": 21
-      },
-      {
-        "name": "validation",
-        "count": 8
+        "count": 18
       }
     ],
     "anchors_with_nearby_jp": [
       "kernel_launch",
       "nvrtc",
-      "python_cuda",
-      "validation"
+      "python_cuda"
     ],
     "missing_anchors": [],
     "missing_anchor_examples": [
@@ -70954,16 +70529,6 @@
           "Python CUDA boundary"
         ],
         "text": "from cuda.core import Device, LaunchConfig, Program, ProgramOptions, launch"
-      },
-      {
-        "line": 48,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "print(\"Please install: pip install torch cuda-python cuda-core\")"
       },
       {
         "line": 127,
@@ -71006,16 +70571,6 @@
         "text": "y = torch.empty_like(x)"
       },
       {
-        "line": 263,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "description=\"Custom PyTorch Square Operator using cuda.core\""
-      },
-      {
         "line": 291,
         "categories": [
           "python_cuda"
@@ -71054,9 +70609,29 @@
           "Python CUDA boundary"
         ],
         "text": "args.size, dtype=torch.float32, device=\"cuda\", requires_grad=True"
+      },
+      {
+        "line": 329,
+        "categories": [
+          "python_cuda"
+        ],
+        "labels": [
+          "Python CUDA boundary"
+        ],
+        "text": "grad_output = torch.randn_like(y_custom)"
+      },
+      {
+        "line": 336,
+        "categories": [
+          "python_cuda"
+        ],
+        "labels": [
+          "Python CUDA boundary"
+        ],
+        "text": "max_grad_error = torch.max(torch.abs(x_custom.grad - x_reference.grad)).item()"
       }
     ],
-    "anchor_count": 31,
+    "anchor_count": 20,
     "reasons": []
   },
   {
@@ -71083,31 +70658,16 @@
       },
       {
         "name": "python_cuda",
-        "count": 12
-      },
-      {
-        "name": "validation",
-        "count": 8
+        "count": 10
       }
     ],
     "anchors_with_nearby_jp": [
       "kernel_launch",
       "nvrtc",
-      "python_cuda",
-      "validation"
+      "python_cuda"
     ],
     "missing_anchors": [],
     "missing_anchor_examples": [
-      {
-        "line": 68,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "print(\"Please install: pip install tensorflow cupy cuda-python cuda-core\")"
-      },
       {
         "line": 163,
         "categories": [
@@ -71187,39 +70747,9 @@
           "Python CUDA boundary"
         ],
         "text": "return cp.asnumpy(grad_x_cp)"
-      },
-      {
-        "line": 297,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "description=\"Custom TensorFlow ReLU Operator using cuda.core\""
-      },
-      {
-        "line": 376,
-        "categories": [
-          "validation"
-        ],
-        "labels": [
-          "validation/checking"
-        ],
-        "text": "print(\"[PASS] Backward pass PASSED\")"
-      },
-      {
-        "line": 378,
-        "categories": [
-          "validation"
-        ],
-        "labels": [
-          "validation/checking"
-        ],
-        "text": "print(\"[FAIL] Backward pass FAILED\")"
       }
     ],
-    "anchor_count": 23,
+    "anchor_count": 13,
     "reasons": []
   },
   {
@@ -71371,11 +70901,11 @@
       },
       {
         "name": "python_cuda",
-        "count": 19
+        "count": 16
       },
       {
         "name": "validation",
-        "count": 3
+        "count": 1
       }
     ],
     "anchors_with_nearby_jp": [
@@ -71415,16 +70945,6 @@
           "Python CUDA boundary"
         ],
         "text": "from mpi4py import MPI"
-      },
-      {
-        "line": 80,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "print(\"Please install: pip install mpi4py cupy-cuda12x cuda-python cuda-core\")"
       },
       {
         "line": 109,
@@ -71505,9 +71025,19 @@
           "Python CUDA boundary"
         ],
         "text": ") -> cp.ndarray:"
+      },
+      {
+        "line": 242,
+        "categories": [
+          "python_cuda"
+        ],
+        "labels": [
+          "Python CUDA boundary"
+        ],
+        "text": "avg_grad = cp.asarray(avg_host)"
       }
     ],
-    "anchor_count": 23,
+    "anchor_count": 18,
     "reasons": []
   },
   {
@@ -71545,10 +71075,6 @@
       {
         "name": "transfer",
         "count": 3
-      },
-      {
-        "name": "validation",
-        "count": 2
       }
     ],
     "anchors_with_nearby_jp": [
@@ -71556,8 +71082,7 @@
       "nvrtc",
       "python_cuda",
       "streams_events",
-      "transfer",
-      "validation"
+      "transfer"
     ],
     "missing_anchors": [],
     "missing_anchor_examples": [
@@ -71646,7 +71171,7 @@
         "text": "g0.copy_to(h0, stream=stream0)"
       }
     ],
-    "anchor_count": 15,
+    "anchor_count": 13,
     "reasons": []
   },
   {
@@ -71679,7 +71204,7 @@
     "detected_anchors": [
       {
         "name": "python_cuda",
-        "count": 8
+        "count": 7
       },
       {
         "name": "validation",
@@ -71713,16 +71238,6 @@
         "text": "is_cp = isinstance(result, cp.ndarray) and isinstance(expected, cp.ndarray)"
       },
       {
-        "line": 118,
-        "categories": [
-          "python_cuda"
-        ],
-        "labels": [
-          "Python CUDA boundary"
-        ],
-        "text": "\"numpy.ndarray or cupy.ndarray\""
-      },
-      {
         "line": 121,
         "categories": [
           "python_cuda"
@@ -71753,7 +71268,7 @@
         "text": "max_ = cp.max"
       }
     ],
-    "anchor_count": 9,
+    "anchor_count": 8,
     "reasons": []
   },
   {
@@ -71777,154 +71292,52 @@
     "status": "DONE",
     "jp_count": 22,
     "jp_lines": [
-      66,
-      72,
-      78,
-      84,
-      90,
-      96,
-      102,
-      108,
-      114,
-      120,
-      126,
-      132,
-      138,
-      144,
-      150,
-      156,
-      162,
-      326,
-      358,
-      491,
-      494,
-      548
+      81,
+      87,
+      93,
+      99,
+      105,
+      111,
+      117,
+      123,
+      129,
+      135,
+      141,
+      147,
+      153,
+      159,
+      165,
+      171,
+      177,
+      377,
+      410,
+      591,
+      594,
+      671
     ],
     "top_only": false,
     "generic_only": false,
-    "detected_anchors": [
-      {
-        "name": "build_cuda",
-        "count": 1
-      },
-      {
-        "name": "cleanup",
-        "count": 4
-      },
-      {
-        "name": "device_memory",
-        "count": 2
-      },
-      {
-        "name": "driver_api",
-        "count": 5
-      },
-      {
-        "name": "graphs",
-        "count": 1
-      },
-      {
-        "name": "indexing",
-        "count": 1
-      },
-      {
-        "name": "kernel_launch",
-        "count": 1
-      },
-      {
-        "name": "library_resources",
-        "count": 3
-      },
-      {
-        "name": "managed_memory",
-        "count": 1
-      },
-      {
-        "name": "nvrtc",
-        "count": 19
-      },
-      {
-        "name": "pinned_memory",
-        "count": 2
-      },
-      {
-        "name": "python_cuda",
-        "count": 3
-      },
-      {
-        "name": "shared_memory",
-        "count": 2
-      },
-      {
-        "name": "streams_events",
-        "count": 3
-      },
-      {
-        "name": "sync",
-        "count": 1
-      },
-      {
-        "name": "transfer",
-        "count": 1
-      },
-      {
-        "name": "validation",
-        "count": 1
-      }
-    ],
-    "anchors_with_nearby_jp": [
-      "build_cuda",
-      "cleanup",
-      "device_memory",
-      "driver_api",
-      "graphs",
-      "indexing",
-      "kernel_launch",
-      "library_resources",
-      "managed_memory",
-      "nvrtc",
-      "pinned_memory",
-      "python_cuda",
-      "shared_memory",
-      "streams_events",
-      "sync",
-      "transfer",
-      "validation"
-    ],
+    "detected_anchors": [],
+    "anchors_with_nearby_jp": [],
     "missing_anchors": [],
-    "missing_anchor_examples": [
-      {
-        "line": 168,
-        "categories": [
-          "nvrtc"
-        ],
-        "labels": [
-          "runtime compilation/JIT"
-        ],
-        "text": "COMMENT_ONLY_RE = re.compile(r\"^\\s*(//|#|\\*|/\\*|\\*/|<!--)\")"
-      },
-      {
-        "line": 308,
-        "categories": [
-          "library_resources"
-        ],
-        "labels": [
-          "CUDA library resources"
-        ],
-        "text": "\"workspace\","
-      },
-      {
-        "line": 309,
-        "categories": [
-          "library_resources"
-        ],
-        "labels": [
-          "CUDA library resources"
-        ],
-        "text": "\"descriptor\","
-      }
+    "missing_anchor_examples": [],
+    "anchor_count": 0,
+    "reasons": []
+  },
+  {
+    "path": "tools/regenerate_sample_readmes_ja.py",
+    "status": "DONE",
+    "jp_count": 1,
+    "jp_lines": [
+      6
     ],
-    "anchor_count": 23,
+    "top_only": true,
+    "generic_only": false,
+    "detected_anchors": [],
+    "anchors_with_nearby_jp": [],
+    "missing_anchors": [],
+    "missing_anchor_examples": [],
+    "anchor_count": 0,
     "reasons": []
   }
 ]
