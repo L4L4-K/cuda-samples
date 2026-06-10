@@ -4,40 +4,75 @@ Original English document: [`README.md`](../../README.md)
 
 ## English Reference
 
-CUDA Samples provides sample programs for CUDA developers and this branch tracks CUDA Toolkit 13.3. The original README explains prerequisites, cloning, CMake-based builds on Linux and Windows, on-GPU debugging, and sample execution.
+CUDA Samples provides sample programs for CUDA developers. The root README explains prerequisites, repository cloning, CMake-based builds on Linux and Windows, on-GPU debugging, and sample execution.
 
 > **日本語**
-> CUDA Samples は CUDA Toolkit の機能を学ぶためのサンプル集です。元の README は、CUDA Toolkit の導入、repository の取得、CMake による Linux/Windows build、on-GPU debugging、各 sample の実行方法を説明しています。
+> CUDA Samples は CUDA Toolkit の機能を学ぶための sample collection です。root README は「何を install するか」「どう clone するか」「Linux/Windows でどう configure/build するか」「debug option をどう扱うか」「生成した sample をどう実行するか」を説明します。
 >
 > **学習メモ**
-> この companion ではコマンド名や target 名を翻訳しません。実際に入力するコマンドは英語 README を source of truth とし、日本語側では「なぜその手順が必要か」を補います。
+> command、target、directory name は英語のまま読みます。日本語側では「その手順が何を決めるか」を補います。
 
-## Build Flow
+## Prerequisites And Environment
 
-English flow: install CUDA Toolkit and CMake, create a build directory, configure with CMake, build, then run samples from the build output or individual sample directories.
+English anchor: the original README names CUDA Toolkit, CMake, compiler, OS, and platform requirements.
 
 > **日本語**
-> build は「CUDA Toolkit と CMake を用意する」「source tree とは別に build directory を作る」「CMake で generator と設定を確定する」「build tool で target を作る」「生成物を実行する」という流れです。
+> prerequisites は build と実行の前提です。CUDA Toolkit は compiler、headers、libraries、tools を提供し、driver と GPU capability は実行可能性を決めます。CMake と host compiler は sample target を生成するために必要です。
 >
 > **学習メモ**
-> CMake configure は project の構成を決める段階、build は実際に compile/link する段階です。CUDA architecture、optional library、platform-specific sample の有無は configure 時に影響します。
+> build が失敗した場合、source code の前に Toolkit version、driver、CMake version、host compiler、optional dependency、platform-specific guard を確認します。
 
-## CUDA Debugging Note
+## Clone And Repository Layout
 
-English reference: on-GPU debugging can be enabled through cuda-gdb and the `ENABLE_CUDA_DEBUG` CMake option, but it can significantly affect performance.
+English anchor: the README describes obtaining the repository and using the directory structure.
 
 > **日本語**
-> device 側 debug を有効にすると、最適化が制限されるため性能が大きく変わります。debug build の計測値を performance 判断に使わないようにします。
+> repository layout は学習 map です。`cpp/` は C++/CUDA samples、`python/` は CUDA Python samples、`Common/` は helper utilities、`cmake/` は build support、`docs_ja/` はこの fork の日本語 companion です。
 >
 > **学習メモ**
-> correctness を見る debug 実行と、性能を見る profiling 実行は分けて考えます。
+> sample directory では `README.md`、`README.ja.md`、`CMakeLists.txt` または `requirements.txt`、source files を一緒に読みます。
 
-## Local Study Overlay
+## CMake Build Flow
 
-English source files remain unchanged except for `JP:` comments. Japanese sample guides live beside sample READMEs as `README.ja.md`; cross-cutting explanations live under `docs_ja/`.
+English anchor: the README shows configure and build commands through CMake.
+
+```bash
+cmake -S . -B build
+cmake --build build
+```
 
 > **日本語**
-> この fork の日本語化は、元の英語を置き換えず横に追加する方式です。sample ごとの読み方は各 directory の `README.ja.md`、共通知識は `docs_ja/themes/` と `docs_ja/glossary/` を参照します。
+> configure は build graph を作る段階、build は compile/link する段階です。source tree と build tree を分けることで、生成物を削除しても original source や日本語 companion を壊しにくくなります。
 >
 > **学習メモ**
-> 元 README、`README.ja.md`、source code の順に読むと、目的、実行手順、実装詳細を段階的に追えます。
+> CMake option、CUDA architecture、optional library、platform guard は configure 時に効きます。実際の target name は各 sample の `CMakeLists.txt` を確認します。
+
+## Running Samples And Tests
+
+English anchor: generated binaries or Python scripts are run according to each sample README.
+
+> **日本語**
+> 実行は sample ごとに前提が違います。console sample は validation message を出し、graphics/interop sample は window や external API を必要とし、performance sample は hardware-dependent な timing を出します。
+>
+> **学習メモ**
+> output strings は test runner や README と対応するため翻訳しません。`PASS`、`FAIL`、timing label、error string は source と同じ文字列で確認します。
+
+## Debugging And Profiling
+
+English anchor: the README references on-GPU debugging and CMake debug options.
+
+> **日本語**
+> debugging option は correctness を調べるためのものです。optimization や timing が変わるため、debug build の数値を performance 判断に使わないようにします。
+>
+> **学習メモ**
+> correctness debugging、profiling、benchmarking は別の目的です。`docs_ja/themes/debugging_profiling_testing.md` と `docs_ja/themes/performance.md` を分けて読みます。
+
+## Local Japanese Overlay
+
+English anchor: original files remain authoritative; Japanese files are companion study material.
+
+> **日本語**
+> この fork の日本語資料は sample behavior を変えません。英語 source、identifier、API、command、target、expected output、LICENSE、attribution を維持し、説明だけを追加します。
+>
+> **学習メモ**
+> 迷った場合は original README と source を優先し、日本語 companion は理解を補う secondary material として扱います。

@@ -9,18 +9,21 @@ English inventory for the local Japanese learning overlay.
 > `DONE` は対象ファイルがそろい、重要な CUDA/API アンカーの近くに具体的な `JP:` 注釈がある状態です。`PARTIAL` は、トップだけの一般コメントやアンカー不足が残っている状態です。
 
 - Status: DONE
-- Updated: 2026-06-10 03:15:20 UTC
+- Updated: 2026-06-10 03:20:49 UTC
 - Branch: `ja-study/local-annotations`
 - Base commit: `b7c5481c556c3fe98db060207ecaa41a4b9a9abc`
-- Current commit: `f1c7bc7290d6b1b1694f8ed1b4b9e7d15cffc080`
+- Current commit: `f9535091b79cb2e97d329674e0560033900b60b0`
 - Detailed annotation record: `docs_ja/_annotation_inventory.json`
 - Detailed sample README record: `docs_ja/_sample_readme_inventory.json`
 - Detailed theme guide record: `docs_ja/_theme_inventory.json`
+- Detailed companion record: `docs_ja/_companion_inventory.json`
 
 ## Counts
 
 - source_docs: 557
 - doc_companions_done: 557
+- major_companions_done: 5
+- major_companions_partial: 0
 - sample_dirs: 255
 - sample_readme_ja_done: 255
 - sample_readme_ja_partial: 0
@@ -32,11 +35,14 @@ English inventory for the local Japanese learning overlay.
 - annotation_files_partial: 0
 - annotation_anchor_files: 708
 - annotation_anchor_instances: 13750
-- japanese_files: 839
+- japanese_files: 841
 
 ## Missing Or Partial Items
 
 ### doc_companions
+- None
+
+### major_companions
 - None
 
 ### sample_readme_ja
@@ -65,6 +71,11 @@ English inventory for the local Japanese learning overlay.
 - DONE guides: 16
 - PARTIAL guides: 0
 - Required sections: `## Concept`, `## Why It Matters`, `## Mental Model`, `## API Map`, `## Sample References`, `## Reading Steps`, `## Common Mistakes`, `## Performance Notes`, `## Exercises`, `## Cross-Theme Links`, `## Review Checklist`
+
+## Major Companion Quality
+
+- DONE companions: 5
+- PARTIAL companions: 0
 
 ## Policy Notes
 

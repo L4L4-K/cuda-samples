@@ -20,6 +20,7 @@ STATUS = DOCS_JA / "_translation_status.md"
 ANNOTATION_JSON = DOCS_JA / "_annotation_inventory.json"
 SAMPLE_README_JSON = DOCS_JA / "_sample_readme_inventory.json"
 THEME_GUIDE_JSON = DOCS_JA / "_theme_inventory.json"
+COMPANION_JSON = DOCS_JA / "_companion_inventory.json"
 
 DOC_EXTS = {".md", ".txt", ".pdf", ".doc", ".docx"}
 CODE_EXTS = {
@@ -79,6 +80,13 @@ REQUIRED_THEME_SECTIONS = (
     "## Exercises",
     "## Cross-Theme Links",
     "## Review Checklist",
+)
+MAJOR_COMPANION_TARGETS = (
+    ROOT / "README.md",
+    ROOT / "CHANGELOG.md",
+    ROOT / "CONTRIBUTING.md",
+    ROOT / "CMakeLists.txt",
+    DOCS_JA / "README.md",
 )
 
 
@@ -545,6 +553,33 @@ def analyze_theme_guide(path: Path) -> dict[str, object]:
     }
 
 
+def analyze_major_companion(path: Path) -> dict[str, object]:
+    companion = path if path == DOCS_JA / "README.md" else companion_for(path)
+    text = companion.read_text(encoding="utf-8", errors="ignore") if companion.exists() else ""
+    reasons: list[str] = []
+    if not companion.exists():
+        reasons.append("missing companion")
+    if "English anchor:" not in text and "## English Reference" not in text:
+        reasons.append("missing English anchor/reference")
+    if "> **日本語**" not in text or "> **学習メモ**" not in text:
+        reasons.append("missing Japanese learning blocks")
+    if text.count("## ") < 5:
+        reasons.append("not section-level enough")
+    line_count = len(text.splitlines())
+    if line_count < 45:
+        reasons.append("too short for major companion")
+    return {
+        "source": rel(path),
+        "path": rel(companion),
+        "status": "DONE" if not reasons else "PARTIAL",
+        "line_count": line_count,
+        "jp_blocks": text.count("> **日本語**"),
+        "memo_blocks": text.count("> **学習メモ**"),
+        "section_count": text.count("## "),
+        "reasons": reasons,
+    }
+
+
 def theme_guides() -> list[Path]:
     theme_dir = DOCS_JA / "themes"
     if not theme_dir.exists():
@@ -571,9 +606,11 @@ def summarize() -> dict[str, object]:
     partial_sample_readmes = [record for record in sample_readme_records if record["status"] != "DONE"]
     theme_records = [analyze_theme_guide(path) for path in theme_guides()]
     partial_theme_guides = [record for record in theme_records if record["status"] != "DONE"]
+    companion_records = [analyze_major_companion(path) for path in MAJOR_COMPANION_TARGETS]
+    partial_companions = [record for record in companion_records if record["status"] != "DONE"]
     missing_companions = [p for p in docs if not companion_for(p).exists()]
     status = "DONE"
-    if missing_companions or partial_sample_readmes or partial_annotations or partial_theme_guides:
+    if missing_companions or partial_companions or partial_sample_readmes or partial_annotations or partial_theme_guides:
         status = "PARTIAL"
 
     return {
@@ -586,6 +623,8 @@ def summarize() -> dict[str, object]:
         "counts": {
             "source_docs": len(docs),
             "doc_companions_done": len(docs) - len(missing_companions),
+            "major_companions_done": len(companion_records) - len(partial_companions),
+            "major_companions_partial": len(partial_companions),
             "sample_dirs": len(samples),
             "sample_readme_ja_done": len(samples) - len(partial_sample_readmes),
             "sample_readme_ja_partial": len(partial_sample_readmes),
@@ -601,12 +640,14 @@ def summarize() -> dict[str, object]:
         },
         "missing": {
             "doc_companions": [rel(p) for p in missing_companions[:200]],
+            "major_companions": [str(record["path"]) for record in partial_companions[:200]],
             "sample_readme_ja": [str(record["path"]) for record in partial_sample_readmes[:200]],
             "theme_guides": [str(record["path"]) for record in partial_theme_guides[:200]],
             "annotations": [str(record["path"]) for record in partial_annotations[:200]],
         },
         "overflow": {
             "doc_companions": max(0, len(missing_companions) - 200),
+            "major_companions": max(0, len(partial_companions) - 200),
             "sample_readme_ja": max(0, len(partial_sample_readmes) - 200),
             "theme_guides": max(0, len(partial_theme_guides) - 200),
             "annotations": max(0, len(partial_annotations) - 200),
@@ -614,6 +655,7 @@ def summarize() -> dict[str, object]:
         "annotation_records": annotation_records,
         "sample_readme_records": sample_readme_records,
         "theme_records": theme_records,
+        "companion_records": companion_records,
     }
 
 
@@ -639,6 +681,8 @@ def render_markdown(summary: dict[str, object]) -> str:
     partial_sample_records = [record for record in sample_records if record["status"] != "DONE"]
     theme_records = list(summary["theme_records"])
     partial_theme_records = [record for record in theme_records if record["status"] != "DONE"]
+    companion_records = list(summary["companion_records"])
+    partial_companion_records = [record for record in companion_records if record["status"] != "DONE"]
     lines = [
         "# Japanese Translation Status",
         "",
@@ -658,6 +702,7 @@ def render_markdown(summary: dict[str, object]) -> str:
         f"- Detailed annotation record: `{rel(ANNOTATION_JSON)}`",
         f"- Detailed sample README record: `{rel(SAMPLE_README_JSON)}`",
         f"- Detailed theme guide record: `{rel(THEME_GUIDE_JSON)}`",
+        f"- Detailed companion record: `{rel(COMPANION_JSON)}`",
         "",
         "## Counts",
         "",
@@ -743,6 +788,25 @@ def render_markdown(summary: dict[str, object]) -> str:
 
     lines.extend(
         [
+            "## Major Companion Quality",
+            "",
+            f"- DONE companions: {len(companion_records) - len(partial_companion_records)}",
+            f"- PARTIAL companions: {len(partial_companion_records)}",
+            "",
+        ]
+    )
+    if partial_companion_records:
+        lines.extend(["### PARTIAL Major Companion Records", ""])
+        for record in partial_companion_records:
+            reason_text = "; ".join(str(reason) for reason in record.get("reasons", [])) or "needs review"
+            lines.append(
+                f"- `{record['path']}`: lines={record['line_count']}, "
+                f"sections={record['section_count']}, jp_blocks={record['jp_blocks']}, reason={reason_text}"
+            )
+        lines.append("")
+
+    lines.extend(
+        [
             "## Policy Notes",
             "",
             "- English source text, file names, commands, APIs, expected output, license text, and attribution are preserved.",
@@ -776,6 +840,11 @@ def main() -> int:
         )
         THEME_GUIDE_JSON.write_text(
             json.dumps(summary["theme_records"], ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        COMPANION_JSON.write_text(
+            json.dumps(summary["companion_records"], ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
             newline="\n",
         )

@@ -1,0 +1,52 @@
+[
+  {
+    "source": "README.md",
+    "path": "docs_ja/translated/README.md.ja.md",
+    "status": "DONE",
+    "line_count": 78,
+    "jp_blocks": 7,
+    "memo_blocks": 7,
+    "section_count": 7,
+    "reasons": []
+  },
+  {
+    "source": "CHANGELOG.md",
+    "path": "docs_ja/translated/CHANGELOG.md.ja.md",
+    "status": "DONE",
+    "line_count": 53,
+    "jp_blocks": 5,
+    "memo_blocks": 5,
+    "section_count": 5,
+    "reasons": []
+  },
+  {
+    "source": "CONTRIBUTING.md",
+    "path": "docs_ja/translated/CONTRIBUTING.md.ja.md",
+    "status": "DONE",
+    "line_count": 53,
+    "jp_blocks": 5,
+    "memo_blocks": 5,
+    "section_count": 5,
+    "reasons": []
+  },
+  {
+    "source": "CMakeLists.txt",
+    "path": "docs_ja/translated/CMakeLists.txt.ja.md",
+    "status": "DONE",
+    "line_count": 57,
+    "jp_blocks": 5,
+    "memo_blocks": 5,
+    "section_count": 5,
+    "reasons": []
+  },
+  {
+    "source": "docs_ja/README.md",
+    "path": "docs_ja/README.md",
+    "status": "DONE",
+    "line_count": 67,
+    "jp_blocks": 6,
+    "memo_blocks": 6,
+    "section_count": 5,
+    "reasons": []
+  }
+]
