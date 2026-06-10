@@ -1,3 +1,5 @@
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
 find_path(EGL_INCLUDE_DIR
   NAMES EGL/egl.h
   PATHS /usr/include /usr/local/include

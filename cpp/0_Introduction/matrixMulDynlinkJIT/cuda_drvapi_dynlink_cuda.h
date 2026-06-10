@@ -8,6 +8,7 @@
  * is strictly prohibited.
  *
  */
+// JP: この file では kernel launch と thread indexing、stream/event による非同期実行と同期、shared memory と block 内同期 を確認します。英語の識別子/API/出力文字列は保持します。
 
 
 #ifndef __cuda_drvapi_dynlink_cuda_h__

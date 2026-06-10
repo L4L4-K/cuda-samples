@@ -17,6 +17,7 @@
  *
  * Relicensed from the WTFPL (http://www.wtfpl.net/faq/).
  */
+// JP: この file では performance measurement と memory access pattern を確認します。英語の識別子/API/出力文字列は保持します。
 
 #ifndef LINMATH_H
 #define LINMATH_H

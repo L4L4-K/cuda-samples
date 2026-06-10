@@ -24,6 +24,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+// JP: この file では memory ownership と host/device transfer、stream/event による非同期実行と同期、CUDA library の handle/descriptor/workspace を確認します。英語の識別子/API/出力文字列は保持します。
 
 /*
  * This sample demonstrates how 2D convolutions

@@ -12,6 +12,7 @@
  * your use of this NVIDIA software.
  *
  */
+// JP: この file では stream/event による非同期実行と同期、CUDA Graph の依存関係と replay、Runtime/Driver/NVRTC の境界 を確認します。英語の識別子/API/出力文字列は保持します。
 
 // With these flags defined, this source file will dynamically
 // load the corresponding functions.  Disabled by default.

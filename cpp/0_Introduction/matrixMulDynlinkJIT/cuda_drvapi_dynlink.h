@@ -8,6 +8,7 @@
  * is strictly prohibited.
  *
  */
+// JP: この file では sample setup、error handling、validation の流れ を確認します。英語の識別子/API/出力文字列は保持します。
 
 
 #ifndef __cuda_drvapi_dynlink_h__

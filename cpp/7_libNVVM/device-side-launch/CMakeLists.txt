@@ -24,6 +24,8 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
 set(CMAKE_INSTALL_RPATH ${LIBNVVM_HOME})
 set(CMAKE_INCLUDE_CURRENT_DIR YES)
 set_property(SOURCE dsl.c

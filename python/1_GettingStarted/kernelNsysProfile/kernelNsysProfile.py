@@ -23,6 +23,7 @@
 # OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+# JP: この file では Python から CUDA work を起動する境界、memory ownership と host/device transfer、kernel launch と thread indexing を確認します。英語の識別子/API/出力文字列は保持します。
 
 """
 Kernel Nsys Profiling Sample - CUDA C++ Kernel Profiling with cuda.core

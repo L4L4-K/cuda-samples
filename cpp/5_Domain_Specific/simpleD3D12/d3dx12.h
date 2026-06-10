@@ -1,3 +1,5 @@
+// JP: この file では 同期範囲、atomic、memory ordering、CUDA Graph の依存関係と replay、Tensor Core/WMMA の tile と data type を確認します。英語の識別子/API/出力文字列は保持します。
+
 //////////////////////////////////////////////////////////////////////////////
 //
 //  Copyright (C) Microsoft Corporation.  All Rights Reserved.

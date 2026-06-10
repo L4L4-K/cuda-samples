@@ -1,3 +1,5 @@
+// JP: この file では stream/event による非同期実行と同期、Runtime/Driver/NVRTC の境界、Tensor Core/WMMA の tile と data type を確認します。英語の識別子/API/出力文字列は保持します。
+
 // Copyright (c) 1993-2025, NVIDIA CORPORATION. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without

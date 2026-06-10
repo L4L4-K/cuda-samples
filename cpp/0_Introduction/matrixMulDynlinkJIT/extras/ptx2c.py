@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+# JP: この file では Python から CUDA work を起動する境界、stream/event による非同期実行と同期、Runtime/Driver/NVRTC の境界 を確認します。英語の識別子/API/出力文字列は保持します。
+
 from string import *
 import os, getopt, sys, platform
 

@@ -1,6 +1,8 @@
 # This layer of CMakeLists.txt adds folders, for better organization in Visual Studio
 # and other IDEs that support this feature.
 
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
 set(CMAKE_FOLDER "0_Introduction")

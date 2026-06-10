@@ -1,3 +1,5 @@
+// JP: この file では stream/event による非同期実行と同期 を確認します。英語の識別子/API/出力文字列は保持します。
+
 #ifndef __TIPSY_H__
 #define __TIPSY_H__
 

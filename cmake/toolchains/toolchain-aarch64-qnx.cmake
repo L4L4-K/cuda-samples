@@ -1,3 +1,5 @@
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
 set(CMAKE_SYSTEM_NAME QNX)
 set(CMAKE_SYSTEM_PROCESSOR aarch64)
 

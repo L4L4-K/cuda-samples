@@ -16,6 +16,8 @@
 # Users can override by setting CMAKE_INSTALL_PREFIX or CUDA_SAMPLES_INSTALL_DIR
 
 # Configure paths only once (but always define the function below)
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
 if(NOT CUDA_SAMPLES_INSTALL_CONFIGURED)
     set(CUDA_SAMPLES_INSTALL_CONFIGURED TRUE CACHE INTERNAL "InstallSamples configuration guard")
 

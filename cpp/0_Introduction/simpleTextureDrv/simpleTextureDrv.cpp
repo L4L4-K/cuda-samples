@@ -24,6 +24,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+// JP: この file では stream/event による非同期実行と同期、Runtime/Driver/NVRTC の境界、Tensor Core/WMMA の tile と data type を確認します。英語の識別子/API/出力文字列は保持します。
 
 /*
  * This sample demonstrates how use texture fetches in CUDA

@@ -1,6 +1,8 @@
 # GCC auto-enables _FORTIFY_SOURCE at -O1 and above, which routes printf through
 # a __host__ __device__ wrapper that tile kernels can't call. Turn it off for
 # the tile category.
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
 add_compile_options(
     $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-U_FORTIFY_SOURCE>
     $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-D_FORTIFY_SOURCE=0>

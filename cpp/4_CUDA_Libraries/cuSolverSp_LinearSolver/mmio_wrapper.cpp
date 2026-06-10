@@ -1,4 +1,6 @@
 
+// JP: この file では CUDA library の handle/descriptor/workspace、Tensor Core/WMMA の tile と data type、performance measurement と memory access pattern を確認します。英語の識別子/API/出力文字列は保持します。
+
 #include <cusolverDn.h>
 #include <math.h>
 #include <stdio.h>

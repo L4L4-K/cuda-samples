@@ -8,6 +8,8 @@
  * is strictly prohibited.
  *
  */
+// JP: この file では performance measurement と memory access pattern を確認します。英語の識別子/API/出力文字列は保持します。
+
 #ifndef __STABLEFLUIDS_KERNELS_CUH_
 #define __STABLEFLUIDS_KERNELS_CUH_
 

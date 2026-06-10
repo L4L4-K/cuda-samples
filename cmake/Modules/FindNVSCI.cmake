@@ -8,6 +8,8 @@
 #  NVSCISYNC_LIBRARY  - NVSCI sync library
 
 # Find the libraries
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
 find_library(NVSCIBUF_LIBRARY
     NAMES nvscibuf libnvscibuf
     PATHS 

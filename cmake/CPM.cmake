@@ -5,6 +5,8 @@
 # MIT License
 # -----------
 #[[
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
   Copyright (c) 2019-2023 Lars Melchior and contributors
 
   Permission is hereby granted, free of charge, to any person obtaining a copy
