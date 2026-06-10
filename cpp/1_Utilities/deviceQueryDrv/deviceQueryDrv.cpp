@@ -24,7 +24,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-// JP: この file では kernel launch と thread indexing、stream/event による非同期実行と同期、shared memory と block 内同期 を確認します。英語の識別子/API/出力文字列は保持します。
+// JP: この file は Driver API で device count と CUdevice attribute を取得し、GPU capability、制限値、P2P 可否を表示します。kernel 実行や stream/shared-memory 実行は行いません。
 
 /* This sample queries the properties of the CUDA devices present
  * in the system.
@@ -158,12 +158,12 @@ int main(int argc, char **argv)
         printf("  Total amount of constant memory:               %u bytes\n", totalConstantMemory);
         int sharedMemPerBlock;
         getCudaAttribute<int>(&sharedMemPerBlock, CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK, dev);
-        // JP: shared_memory: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+        // JP: `CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK`: device capability として shared memory 容量を表示します。kernel 内での使用や同期は行いません。
         printf("  Total amount of shared memory per block:       %u bytes\n", sharedMemPerBlock);
         int regsPerBlock;
         getCudaAttribute<int>(&regsPerBlock, CU_DEVICE_ATTRIBUTE_MAX_REGISTERS_PER_BLOCK, dev);
         printf("  Total number of registers available per block: %d\n", regsPerBlock);
-        // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+        // JP: `CU_DEVICE_ATTRIBUTE_WARP_SIZE`: launch や indexing の前提になる device property を表示します。この sample 自体は thread index 計算を行いません。
         int warpSize;
         getCudaAttribute<int>(&warpSize, CU_DEVICE_ATTRIBUTE_WARP_SIZE, dev);
         printf("  Warp size:                                     %d\n", warpSize);
@@ -325,7 +325,7 @@ int main(int argc, char **argv)
         }
     }
 
-    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+    // JP: validation: device query API が最後まで成功したことを PASS として表示します。GPU 計算結果の CPU/reference 比較ではありません。
     printf("Result = PASS\n");
 
     exit(EXIT_SUCCESS);

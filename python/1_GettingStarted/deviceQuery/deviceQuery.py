@@ -23,7 +23,7 @@
 # OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-# JP: この file では Python から CUDA work を起動する境界、stream/event による非同期実行と同期、shared memory と block 内同期 を確認します。英語の識別子/API/出力文字列は保持します。
+# JP: この file は CUDA Python/cuda.core で device properties を列挙し、driver/runtime version、memory、capability、P2P 情報を表示します。kernel launch や shared-memory 実行は行いません。
 
 """
 Device Query using CUDA Core API
@@ -157,7 +157,7 @@ def print_device_info(dev_id, device):
     )
 
     # cuda.bindings workaround: global memory (free/total) not in device.properties
-    # JP: `cuMemGetInfo`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
+    # JP: `cuMemGetInfo`: current device/context の free/total memory を Driver API で取得します。module/function の読み込みや kernel 実行は行いません。
     err, free_mem, total_mem_bytes = cuda.cuMemGetInfo()
     if err != cuda.CUresult.CUDA_SUCCESS:
         raise RuntimeError(f"Failed to get memory info: {err}")
@@ -202,7 +202,7 @@ def print_device_info(dev_id, device):
         "Total amount of constant memory:", f"{props.total_constant_memory} bytes"
     )
     print_property(
-        # JP: shared_memory: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+        # JP: `max_shared_memory_per_block`: device property として shared memory 上限を表示します。この sample 自体は shared memory を割り当てません。
         "Total amount of shared memory per block:",
         f"{props.max_shared_memory_per_block} bytes",
     )

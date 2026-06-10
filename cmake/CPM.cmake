@@ -5,7 +5,6 @@
 # MIT License
 # -----------
 #[[
-# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
 
   Copyright (c) 2019-2023 Lars Melchior and contributors
 
@@ -21,7 +20,6 @@
 
   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-  # JP: streams_events: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
@@ -111,7 +109,6 @@ cpm_set_policies()
 
 option(
   CPM_USE_LOCAL_PACKAGES
-  # JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
   "Always try to use `find_package` to get dependencies"
   $ENV{CPM_USE_LOCAL_PACKAGES}
 )
@@ -127,7 +124,6 @@ option(
 )
 option(
   CPM_DONT_UPDATE_MODULE_PATH
-  # JP: この anchor では CMake CUDA target/link/architecture wiring です。source、target、optional dependency、platform condition を確認します。
   "Don't update the module path to allow using find_package"
   $ENV{CPM_DONT_UPDATE_MODULE_PATH}
 )
@@ -248,7 +244,6 @@ endfunction()
 
 function(cpm_find_package NAME VERSION)
   string(REPLACE " " ";" EXTRA_ARGS "${ARGN}")
-  # JP: この anchor では CMake CUDA target/link/architecture wiring です。source、target、optional dependency、platform condition を確認します。
   find_package(${NAME} ${VERSION} ${EXTRA_ARGS} QUIET)
   if (${CPM_ARGS_NAME}_FOUND)
     if (DEFINED ${CPM_ARGS_NAME}_VERSION)
@@ -405,7 +400,6 @@ endfunction()
 
 # Check that the working directory for a git repo is clean
 function(cpm_check_git_working_dir_is_clean repoPath gitTag isClean)
-  # JP: この anchor では CMake CUDA target/link/architecture wiring です。source、target、optional dependency、platform condition を確認します。
   find_package(Git REQUIRED)
 
   if (NOT GIT_EXECUTABLE)
@@ -468,7 +462,6 @@ function(cpm_add_patches)
   if (WIN32 AND NOT PATCH_EXECUTABLE)
     # The Windows git executable is distributed with patch.exe. Find the path to the executable, if
     # it exists, then search `../usr/bin` and `../../usr/bin` for patch.exe.
-    # JP: この anchor では CMake CUDA target/link/architecture wiring です。source、target、optional dependency、platform condition を確認します。
     find_package(Git QUIET)
     if (GIT_EXECUTABLE)
       get_filename_component(extra_search_path ${GIT_EXECUTABLE} DIRECTORY)
@@ -762,7 +755,6 @@ function(CPMAddPackage)
       if (CPM_LOCAL_PACKAGES_ONLY)
         message(
           SEND_ERROR
-          # JP: この anchor では CMake CUDA target/link/architecture wiring です。source、target、optional dependency、platform condition を確認します。
           "${CPM_INDENT} ${CPM_ARGS_NAME} not found via find_package(${CPM_ARGS_NAME} ${CPM_ARGS_VERSION})"
         )
       endif()
