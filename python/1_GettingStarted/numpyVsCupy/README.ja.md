@@ -80,6 +80,60 @@ English anchor: read `numpyVsCupy` as a focused example of the CUDA concepts use
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `numpyVsCupy.py`
+
+Source: python/1_GettingStarted/numpyVsCupy/numpyVsCupy.py:2-42
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    distribution and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+# OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+# JP: この file では Python から CUDA work を起動する境界、memory ownership と host/device transfer、stream/event による非同期実行と同期 を確認します。英語の識別子/API/出力文字列は保持します。
+
+import argparse
+import contextlib
+import sys
+import time
+from pathlib import Path
+
+try:
+    # JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
+    import cupy as cp
+    import numpy as np
+    from cuda.core import Device, EventOptions
+except ImportError as e:
+    print(f"Error: Required package not found: {e}")
+    print("Please install from requirements.txt:")
+    print("  pip install -r requirements.txt")
+```
+
+> JP: この抜粋は `python/1_GettingStarted/numpyVsCupy/numpyVsCupy.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

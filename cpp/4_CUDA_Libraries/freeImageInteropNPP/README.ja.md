@@ -74,13 +74,167 @@ English anchor: read `freeImageInteropNPP` as a focused example of the CUDA conc
 
 ## Concrete Reading Path
 
-- `freeImageInteropNPP.cpp`: focus on `nppStreamCtx`, `CUDA`, `cudaError`, `npp`, `cudaSuccess`.
+- `freeImageInteropNPP.cpp`: focus on `CUDA`, `nppStreamCtx`, `cudaError`, `npp`, `cudaSuccess`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/freeImageInteropNPP/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(freeImageInteropNPP LANGUAGES CXX)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/freeImageInteropNPP/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/freeImageInteropNPP/CMakeLists.txt:42-61
+```cmake
+        ${CUDAToolkit_INCLUDE_DIRS}
+        ${FreeImage_INCLUDE_DIRS}
+    )
+
+    target_link_libraries(freeImageInteropNPP PRIVATE
+        # JP: `nppc`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+        CUDA::nppc
+        CUDA::nppisu
+        CUDA::nppif
+        CUDA::cudart
+        ${FreeImage_LIBRARIES}
+    )
+
+    # Copy data files to output directory
+    add_custom_command(TARGET freeImageInteropNPP POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../Common/data/teapot512.pgm
+        ${CMAKE_CURRENT_BINARY_DIR}/
+    )
+    if(WIN32)
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/freeImageInteropNPP/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `freeImageInteropNPP.cpp`
+
+Source: cpp/4_CUDA_Libraries/freeImageInteropNPP/freeImageInteropNPP.cpp:33-51
+```cpp
+#if defined(WIN32) || defined(_WIN32) || defined(WIN64) || defined(_WIN64)
+#pragma warning(disable : 4819)
+#define WINDOWS_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
+// Common Helpers
+
+#include "Exceptions.h"
+#include "FreeImage.h"
+
+// Other Includes
+#include <cuda_runtime.h>
+#include <fstream>
+#include <iostream>
+#include <npp.h> // CUDA NPP Definitions
+#include <string.h>
+
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/freeImageInteropNPP/freeImageInteropNPP.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/freeImageInteropNPP/freeImageInteropNPP.cpp:65-93
+```cpp
+
+    int dev = findCudaDevice(argc, argv);
+
+    cudaDeviceProp deviceProp;
+    cudaGetDeviceProperties(&deviceProp, dev);
+    std::cerr << "cudaSetDevice GPU" << dev << " = " << deviceProp.name << std::endl;
+
+    checkCudaErrors(cudaSetDevice(dev));
+
+    return dev;
+}
+
+// Error handler for FreeImage library.
+//  In case this handler is invoked, it throws an NPP exception.
+// JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+extern "C" void FreeImageErrorHandler(FREE_IMAGE_FORMAT oFif, const char *zMessage) { throw npp::Exception(zMessage); }
+
+std::ostream &operator<<(std::ostream &rOutputStream, const FIBITMAP &rBitmap)
+{
+    unsigned int nImageWidth  = FreeImage_GetWidth(const_cast<FIBITMAP *>(&rBitmap));
+    unsigned int nImageHeight = FreeImage_GetHeight(const_cast<FIBITMAP *>(&rBitmap));
+    unsigned int nPitch       = FreeImage_GetPitch(const_cast<FIBITMAP *>(&rBitmap));
+    unsigned int nBPP         = FreeImage_GetBPP(const_cast<FIBITMAP *>(&rBitmap));
+
+    FREE_IMAGE_COLOR_TYPE eType = FreeImage_GetColorType(const_cast<FIBITMAP *>(&rBitmap));
+
+    rOutputStream << "Size  (" << nImageWidth << ", " << nImageHeight << ")\n";
+    rOutputStream << "Pitch " << nPitch << "\n";
+    rOutputStream << "Type  ";
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/freeImageInteropNPP/freeImageInteropNPP.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/freeImageInteropNPP/freeImageInteropNPP.cpp:264-287
+```cpp
+        unsigned int   nSrcPitch    = FreeImage_GetPitch(pBitmap);
+        unsigned char *pSrcData     = FreeImage_GetBits(pBitmap);
+
+        int    nSrcPitchCUDA;
+        // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+        Npp8u *pSrcImageCUDA = nppiMalloc_8u_C1(nImageWidth, nImageHeight, &nSrcPitchCUDA);
+        NPP_ASSERT_NOT_NULL(pSrcImageCUDA);
+        // copy image loaded via FreeImage to into CUDA device memory, i.e.
+        // transfer the image-data up to the GPU's video-memory
+        // JP: `cudaMemcpy2D`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+        NPP_CHECK_CUDA(cudaMemcpy2D(
+            pSrcImageCUDA, nSrcPitchCUDA, pSrcData, nSrcPitch, nImageWidth, nImageHeight, cudaMemcpyHostToDevice));
+
+        // define size of the box filter
+        const NppiSize  oMaskSize   = {7, 7};
+        const NppiPoint oMaskAchnor = {0, 0};
+        // compute maximal result image size
+        const NppiSize oSizeROI = {(int)nImageWidth - (oMaskSize.width - 1),
+                                   (int)nImageHeight - (oMaskSize.height - 1)};
+        // allocate result image memory
+        int    nDstPitchCUDA;
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+        Npp8u *pDstImageCUDA = nppiMalloc_8u_C1(oSizeROI.width, oSizeROI.height, &nDstPitchCUDA);
+        NPP_ASSERT_NOT_NULL(pDstImageCUDA);
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/freeImageInteropNPP/freeImageInteropNPP.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

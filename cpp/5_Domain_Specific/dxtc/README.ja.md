@@ -91,6 +91,316 @@ English anchor: read `dxtc` as a focused example of the CUDA concepts used in `c
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/5_Domain_Specific/dxtc/CMakeLists.txt:1-43
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(dxtc LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for dxtc
+add_executable(dxtc dxtc.cu)
+
+target_compile_options(dxtc PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(dxtc PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(dxtc PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+add_custom_command(TARGET dxtc POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_CURRENT_SOURCE_DIR}/data
+    ${CMAKE_CURRENT_BINARY_DIR}/data
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/dxtc/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `CudaMath.h`
+
+Source: cpp/5_Domain_Specific/dxtc/CudaMath.h:31-49
+```cpp
+#ifndef CUDAMATH_H
+#define CUDAMATH_H
+
+#include <cooperative_groups.h>
+
+namespace cg = cooperative_groups;
+
+// Use power method to find the first eigenvector.
+// https://en.wikipedia.org/wiki/Power_iteration
+inline __device__ __host__ float3 firstEigenVector(float matrix[6])
+{
+    // 8 iterations seems to be more than enough.
+
+    float3 v = make_float3(1.0f, 1.0f, 1.0f);
+
+    for (int i = 0; i < 8; i++) {
+        float x  = v.x * matrix[0] + v.y * matrix[1] + v.z * matrix[2];
+        float y  = v.x * matrix[1] + v.y * matrix[3] + v.z * matrix[4];
+        float z  = v.x * matrix[2] + v.y * matrix[4] + v.z * matrix[5];
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/dxtc/CudaMath.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/dxtc/CudaMath.h:55-74
+```cpp
+    return v;
+}
+
+inline __device__ void colorSums(const float3 *colors, float3 *sums, cg::thread_group tile)
+{
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    const int idx = threadIdx.x;
+
+    sums[idx] = colors[idx];
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    cg::sync(tile);
+    sums[idx] += sums[idx ^ 8];
+    cg::sync(tile);
+    sums[idx] += sums[idx ^ 4];
+    cg::sync(tile);
+    sums[idx] += sums[idx ^ 2];
+    cg::sync(tile);
+    sums[idx] += sums[idx ^ 1];
+}
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/dxtc/CudaMath.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `dds.h`
+
+Source: cpp/5_Domain_Specific/dxtc/dds.h:29-87
+```cpp
+#ifndef DDS_H
+#define DDS_H
+
+#if !defined(MAKEFOURCC)
+#define MAKEFOURCC(ch0, ch1, ch2, ch3) \
+    ((unsigned int)(ch0) | ((unsigned int)(ch1) << 8) | ((unsigned int)(ch2) << 16) | ((unsigned int)(ch3) << 24))
+#endif
+
+typedef unsigned int   uint;
+typedef unsigned short ushort;
+
+struct DDSPixelFormat
+{
+    uint size;
+    uint flags;
+    uint fourcc;
+    uint bitcount;
+    uint rmask;
+    uint gmask;
+    uint bmask;
+    uint amask;
+};
+
+struct DDSCaps
+{
+    uint caps1;
+    uint caps2;
+    uint caps3;
+    uint caps4;
+};
+
+/// DDS file header.
+struct DDSHeader
+{
+    uint           fourcc;
+    uint           size;
+    uint           flags;
+    uint           height;
+    uint           width;
+    uint           pitch;
+    uint           depth;
+    uint           mipmapcount;
+    uint           reserved[11];
+    DDSPixelFormat pf;
+    DDSCaps        caps;
+    uint           notused;
+};
+
+static const uint FOURCC_DDS       = MAKEFOURCC('D', 'D', 'S', ' ');
+static const uint FOURCC_DXT1      = MAKEFOURCC('D', 'X', 'T', '1');
+static const uint DDSD_WIDTH       = 0x00000004U;
+static const uint DDSD_HEIGHT      = 0x00000002U;
+static const uint DDSD_CAPS        = 0x00000001U;
+static const uint DDSD_PIXELFORMAT = 0x00001000U;
+static const uint DDSCAPS_TEXTURE  = 0x00001000U;
+static const uint DDPF_FOURCC      = 0x00000004U;
+static const uint DDSD_LINEARSIZE  = 0x00080000U;
+
+#endif // DDS_H
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/dxtc/dds.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `dxtc.cu`
+
+Source: cpp/5_Domain_Specific/dxtc/dxtc.cu:30-48
+```cuda
+#include <cooperative_groups.h>
+
+namespace cg = cooperative_groups;
+
+#include <float.h> // for FLT_MAX
+#include <helper_cuda.h>
+#include <helper_functions.h>
+#include <helper_math.h>
+
+#include "CudaMath.h"
+#include "dds.h"
+#include "permutations.h"
+
+// Definitions
+#define INPUT_IMAGE     "teapot512_std.ppm"
+#define REFERENCE_IMAGE "teapot512_ref.dds"
+
+#define ERROR_THRESHOLD 0.02f
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/dxtc/dxtc.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/dxtc/dxtc.cu:63-82
+```cuda
+////////////////////////////////////////////////////////////////////////////////
+// Sort colors
+////////////////////////////////////////////////////////////////////////////////
+__device__ void sortColors(const float *values, int *ranks, cg::thread_group tile)
+{
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    const int tid = threadIdx.x;
+
+    int rank = 0;
+
+#pragma unroll
+
+    for (int i = 0; i < 16; i++) {
+        rank += (values[i] < values[tid]);
+    }
+
+    ranks[tid] = rank;
+
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    cg::sync(tile);
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/dxtc/dxtc.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/dxtc/dxtc.cu:473-492
+```cuda
+    if (idx == minIdx) {
+        saveBlockDXT1(bestStart, bestEnd, bestPermutation, xrefs, result, blockOffset);
+    }
+}
+
+// Helper structs and functions to validate the output of the compressor.
+// We cannot simply do a bitwise compare, because different compilers produce
+// different
+// results for different targets due to floating point arithmetic.
+
+union Color32
+{
+    struct
+    {
+        unsigned char b, g, r, a;
+    };
+    unsigned int u;
+};
+
+union Color16
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/dxtc/dxtc.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/dxtc/dxtc.cu:592-611
+```cuda
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    printf("%s Starting...\n\n", argv[0]);
+
+    // use command-line specified CUDA device, otherwise use device with highest
+    // Gflops/s
+    findCudaDevice(argc, (const char **)argv);
+
+    // Load input image.
+    unsigned char *data = NULL;
+    uint           W, H;
+
+    char *image_path = sdkFindFilePath(INPUT_IMAGE, argv[0]);
+
+    if (image_path == 0) {
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/dxtc/dxtc.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `permutations.h`
+
+Source: cpp/5_Domain_Specific/dxtc/permutations.h:27-47
+```cpp
+// JP: この file では stream/event による非同期実行と同期 を確認します。英語の識別子/API/出力文字列は保持します。
+
+#ifndef PERMUTATIONS_H
+#define PERMUTATIONS_H
+
+#include <helper_cuda.h> // assert
+
+static void computePermutations(uint permutations[1024])
+{
+    int indices[16];
+    int num = 0;
+
+    // 3 element permutations:
+
+    // first cluster [0,i) is at the start
+    for (int m = 0; m < 16; ++m) {
+        indices[m] = 0;
+    }
+
+    const int imax = 15;
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/dxtc/permutations.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

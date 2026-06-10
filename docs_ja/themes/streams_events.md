@@ -53,6 +53,150 @@ stream は CUDA work を投入する queue、event はその queue 上の時点�
 - [StreamPriorities](../../cpp/3_CUDA_Features/StreamPriorities/README.ja.md): priority stream を読みます。
 - [streamingCopyComputeOverlap](../../python/2_CoreConcepts/streamingCopyComputeOverlap/README.ja.md): Python stream overlap を読みます。
 
+## Representative Code
+
+### `cpp/0_Introduction/asyncAPI/CMakeLists.txt`
+
+Source: cpp/0_Introduction/asyncAPI/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(asyncAPI LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for asyncAPI
+add_executable(asyncAPI asyncAPI.cu)
+
+target_compile_options(asyncAPI PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(asyncAPI PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(asyncAPI PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/asyncAPI/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+> JP: `cpp/0_Introduction/asyncAPI/CMakeLists.txt` はこのテーマを読むための代表例です。API 名だけでなく、所有権、同期位置、検証位置を抜粋内で対応付けます。
+
+### `cpp/0_Introduction/simpleStreams/CMakeLists.txt`
+
+Source: cpp/0_Introduction/simpleStreams/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleStreams LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simpleStreams
+add_executable(simpleStreams simpleStreams.cu)
+
+target_compile_options(simpleStreams PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleStreams PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simpleStreams PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleStreams/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+> JP: `cpp/0_Introduction/simpleStreams/CMakeLists.txt` はこのテーマを読むための代表例です。API 名だけでなく、所有権、同期位置、検証位置を抜粋内で対応付けます。
+
+### `cpp/0_Introduction/simpleMultiCopy/CMakeLists.txt`
+
+Source: cpp/0_Introduction/simpleMultiCopy/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleMultiCopy LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simpleMultiCopy
+add_executable(simpleMultiCopy simpleMultiCopy.cu)
+
+target_compile_options(simpleMultiCopy PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleMultiCopy PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simpleMultiCopy PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleMultiCopy/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+> JP: `cpp/0_Introduction/simpleMultiCopy/CMakeLists.txt` はこのテーマを読むための代表例です。API 名だけでなく、所有権、同期位置、検証位置を抜粋内で対応付けます。
+
+
 ## Reading Steps
 
 1. streams/events に関係する API call を探し、作成、設定、利用、破棄を対応させます。

@@ -87,9 +87,9 @@ English anchor: read `nbody_opengles` as a focused example of the CUDA concepts 
 - `bodysystem.h`: focus on control flow and helper functions.
 - `bodysystemcpu.h`: focus on control flow and helper functions.
 - `bodysystemcpu_impl.h`: focus on control flow and helper functions.
-- `bodysystemcuda.cu`: focus on `blockDim`, `threadIdx`, `cudaGraphicsResource`, `cudaMemcpyToSymbol`, `cudaMemcpyHostToDevice`.
+- `bodysystemcuda.cu`: focus on `blockDim`, `launch`, `CUDA`, `threadIdx`, `cudaGraphicsResource`.
 - `bodysystemcuda.h`: focus on `CUDA`, `cudaEvent_t`, `cudaGraphicsResource`.
-- `bodysystemcuda_impl.h`: focus on `CUDA`, `cudaHostAlloc`, `cudaHostAllocMapped`, `cudaHostAllocPortable`, `cudaMalloc`.
+- `bodysystemcuda_impl.h`: focus on `CUDA`, `cudaHostAlloc`, `cudaHostAllocMapped`, `cudaHostAllocPortable`, `launch`.
 - `nbody_opengles.cpp`: focus on `CUDA`, `cudaEventRecord`, `cudaEventSynchronize`, `cudaDeviceProp`, `cudaGetDeviceProperties`.
 - `render_particles.cpp`: focus on control flow and helper functions.
 - `render_particles.h`: focus on control flow and helper functions.
@@ -101,10 +101,742 @@ English anchor: read `nbody_opengles` as a focused example of the CUDA concepts 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/8_Platform_Specific/Tegra/nbody_opengles/CMakeLists.txt:1-70
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../../cmake/Modules")
+
+project(nbody_opengles LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 87 110)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../../Common)
+
+find_package(EGL)
+find_package(X11)
+find_package(OpenGL)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Source file
+    if(${OpenGL_FOUND})
+        if(${EGL_FOUND})
+            if(${X11_FOUND})
+                # Add target for nbody_opengles
+                add_executable(nbody_opengles bodysystemcuda.cu render_particles.cpp nbody_opengles.cpp)
+
+                target_compile_options(nbody_opengles PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+                target_compile_features(nbody_opengles PRIVATE cxx_std_17 cuda_std_17)
+
+                set_target_properties(nbody_opengles PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+                target_include_directories(nbody_opengles PUBLIC
+                    ${EGL_INCLUDE_DIR}
+                    ${OPENGL_INCLUDE_DIR}
+                    ${CUDAToolkit_INCLUDE_DIRS}
+                )
+
+                target_link_libraries(nbody_opengles
+                    ${EGL_LIBRARY}
+                    ${X11_LIBRARIES}
+                    ${OPENGL_LIBRARIES}
+                )
+            else()
+                message(STATUS "X11 libraries not found - will not build sample 'nbody_opengles'")
+            endif()
+        else()
+            message(STATUS "EGL not found - will not build sample 'nbody_opengles'")
+        endif()
+    else()
+        message(STATUS "OpenGL not found - will not build sample 'nbody_opengles'")
+    endif()
+else()
+    message(STATUS "Will not build sample nbody_opengles - requires Linux OS")
+endif()
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/nbody_opengles/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `bodysystem.h`
+
+Source: cpp/8_Platform_Specific/Tegra/nbody_opengles/bodysystem.h:29-47
+```cpp
+#ifndef __BODYSYSTEM_H__
+#define __BODYSYSTEM_H__
+
+#include <algorithm>
+
+enum NBodyConfig { NBODY_CONFIG_RANDOM, NBODY_CONFIG_SHELL, NBODY_CONFIG_EXPAND, NBODY_NUM_CONFIGS };
+
+enum BodyArray {
+    BODYSYSTEM_POSITION,
+    BODYSYSTEM_VELOCITY,
+};
+
+template <typename T> struct vec3
+{
+    typedef float Type;
+}; // dummy
+template <> struct vec3<float>
+{
+    typedef float3 Type;
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/nbody_opengles/bodysystem.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `bodysystemcpu.h`
+
+Source: cpp/8_Platform_Specific/Tegra/nbody_opengles/bodysystemcpu.h:29-78
+```cpp
+#ifndef __BODYSYSTEMCPU_H__
+#define __BODYSYSTEMCPU_H__
+
+#include "bodysystem.h"
+
+// CPU Body System
+template <typename T> class BodySystemCPU : public BodySystem<T>
+{
+public:
+    BodySystemCPU(int numBodies);
+    virtual ~BodySystemCPU();
+
+    virtual void loadTipsyFile(const std::string &filename);
+
+    virtual void update(T deltaTime);
+
+    virtual void setSoftening(T softening) { m_softeningSquared = softening * softening; }
+    virtual void setDamping(T damping) { m_damping = damping; }
+
+    virtual T   *getArray(BodyArray array);
+    virtual void setArray(BodyArray array, const T *data);
+
+    virtual unsigned int getCurrentReadBuffer() const { return 0; }
+
+    virtual unsigned int getNumBodies() const { return m_numBodies; }
+
+protected:             // methods
+    BodySystemCPU() {} // default constructor
+
+    virtual void _initialize(int numBodies);
+    virtual void _finalize();
+
+    void _computeNBodyGravitation();
+    void _integrateNBodySystem(T deltaTime);
+
+protected: // data
+    int  m_numBodies;
+    bool m_bInitialized;
+
+    T *m_pos;
+    T *m_vel;
+    T *m_force;
+
+    T m_softeningSquared;
+    T m_damping;
+};
+
+#include "bodysystemcpu_impl.h"
+
+#endif // __BODYSYSTEMCPU_H__
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/nbody_opengles/bodysystemcpu.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `bodysystemcpu_impl.h`
+
+Source: cpp/8_Platform_Specific/Tegra/nbody_opengles/bodysystemcpu_impl.h:25-47
+```cpp
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+// JP: この file では stream/event による非同期実行と同期、performance measurement と memory access pattern を確認します。英語の識別子/API/出力文字列は保持します。
+
+#include <algorithm>
+#include <assert.h>
+#include <helper_cuda.h>
+#include <math.h>
+#include <memory.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "bodysystemcpu.h"
+#include "tipsy.h"
+
+#ifdef OPENMP
+#include <omp.h>
+#endif
+
+template <typename T>
+BodySystemCPU<T>::BodySystemCPU(int numBodies)
+    : m_numBodies(numBodies)
+    , m_bInitialized(false)
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/nbody_opengles/bodysystemcpu_impl.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/nbody_opengles/bodysystemcpu_impl.h:66-85
+```cpp
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+    assert(!m_bInitialized);
+
+    m_numBodies = numBodies;
+
+    m_pos   = new T[m_numBodies * 4];
+    m_vel   = new T[m_numBodies * 4];
+    m_force = new T[m_numBodies * 3];
+
+    memset(m_pos, 0, m_numBodies * 4 * sizeof(T));
+    memset(m_vel, 0, m_numBodies * 4 * sizeof(T));
+    memset(m_force, 0, m_numBodies * 3 * sizeof(T));
+
+    m_bInitialized = true;
+}
+
+template <typename T> void BodySystemCPU<T>::_finalize()
+{
+    assert(m_bInitialized);
+
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/nbody_opengles/bodysystemcpu_impl.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `bodysystemcuda.cu`
+
+Source: cpp/8_Platform_Specific/Tegra/nbody_opengles/bodysystemcuda.cu:29-74
+```cuda
+#include <helper_cuda.h>
+#include <math.h>
+
+// #include <GL/glew.h>
+// #include <GL/freeglut.h>
+
+// CUDA standard includes
+#include <cuda_runtime.h>
+// #include <cuda_gl_interop.h>
+
+#include "bodysystem.h"
+
+__constant__ float  softeningSquared;
+__constant__ double softeningSquared_fp64;
+
+cudaError_t setSofteningSquared(float softeningSq)
+{
+    // JP: `cudaMemcpyToSymbol`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    return cudaMemcpyToSymbol(softeningSquared, &softeningSq, sizeof(float), 0, cudaMemcpyHostToDevice);
+}
+
+cudaError_t setSofteningSquared(double softeningSq)
+{
+    return cudaMemcpyToSymbol(softeningSquared_fp64, &softeningSq, sizeof(double), 0, cudaMemcpyHostToDevice);
+}
+
+// JP: shared_memory: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+template <class T> struct SharedMemory
+{
+    __device__ inline operator T *()
+    {
+        extern __shared__ int __smem[];
+        return (T *)__smem;
+    }
+
+    __device__ inline operator const T *() const
+    {
+        extern __shared__ int __smem[];
+        return (T *)__smem;
+    }
+};
+
+template <typename T> __device__ T rsqrt_T(T x) { return rsqrt(x); }
+
+template <> __device__ float rsqrt_T<float>(float x) { return rsqrtf(x); }
+
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/nbody_opengles/bodysystemcuda.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/nbody_opengles/bodysystemcuda.cu:133-152
+```cuda
+
+    for (int tile = 0; tile < numTiles; tile++) {
+        // JP: `threadIdx`, `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+        sharedPos[threadIdx.x] = positions[tile * blockDim.x + threadIdx.x];
+
+        __syncthreads();
+
+        // This is the "tile_calculation" from the GPUG3 article.
+#pragma unroll 128
+
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+        for (unsigned int counter = 0; counter < blockDim.x; counter++) {
+            acc = bodyBodyInteraction<T>(acc, bodyPos, sharedPos[counter]);
+        }
+
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
+        __syncthreads();
+    }
+
+    return acc;
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/nbody_opengles/bodysystemcuda.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/nbody_opengles/bodysystemcuda.cu:172-191
+```cuda
+    typename vec4<T>::Type position = oldPos[deviceOffset + index];
+
+    typename vec3<T>::Type accel = computeBodyAccel<T>(position, oldPos, numTiles);
+
+    // acceleration = force / mass;
+    // new velocity = old velocity + acceleration * deltaTime
+    // note we factor out the body's mass from the equation, here and in
+    // bodyBodyInteraction (because they cancel out).  Thus here force ==
+    // acceleration
+    typename vec4<T>::Type velocity = vel[deviceOffset + index];
+
+    velocity.x += accel.x * deltaTime;
+    velocity.y += accel.y * deltaTime;
+    velocity.z += accel.z * deltaTime;
+
+    velocity.x *= damping;
+    velocity.y *= damping;
+    velocity.z *= damping;
+
+    // new position = old position + velocity * deltaTime
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/nbody_opengles/bodysystemcuda.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/nbody_opengles/bodysystemcuda.cu:222-260
+```cuda
+            (void **)&(deviceData[0].dPos[1 - currentRead]), &bytes, pgres[1 - currentRead]));
+    }
+
+    for (unsigned int dev = 0; dev != numDevices; dev++) {
+        if (numDevices > 1) {
+            cudaSetDevice(dev);
+        }
+
+        int numBlocks     = (deviceData[dev].numBodies + blockSize - 1) / blockSize;
+        int numTiles      = (numBodies + blockSize - 1) / blockSize;
+        int sharedMemSize = blockSize * 4 * sizeof(T); // 4 floats for pos
+
+        integrateBodies<T>
+            // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+            <<<numBlocks, blockSize, sharedMemSize>>>((typename vec4<T>::Type *)deviceData[dev].dPos[1 - currentRead],
+                                                      (typename vec4<T>::Type *)deviceData[dev].dPos[currentRead],
+                                                      (typename vec4<T>::Type *)deviceData[dev].dVel,
+                                                      deviceData[dev].offset,
+                                                      deviceData[dev].numBodies,
+                                                      deltaTime,
+                                                      damping,
+                                                      numTiles);
+
+        if (numDevices > 1) {
+            // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+            checkCudaErrors(cudaEventRecord(deviceData[dev].event));
+            // MJH: Hack on older driver versions to force kernel launches to flush!
+            cudaStreamQuery(0);
+        }
+
+        // check if kernel invocation generated an error
+        getLastCudaError("Kernel execution failed");
+    }
+
+    if (numDevices > 1) {
+        for (unsigned int dev = 0; dev < numDevices; dev++) {
+            // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
+            checkCudaErrors(cudaEventSynchronize(deviceData[dev].event));
+        }
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/nbody_opengles/bodysystemcuda.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `bodysystemcuda.h`
+
+Source: cpp/8_Platform_Specific/Tegra/nbody_opengles/bodysystemcuda.h:29-52
+```cpp
+#ifndef __BODYSYSTEMCUDA_H__
+#define __BODYSYSTEMCUDA_H__
+
+#include "bodysystem.h"
+
+template <typename T> struct DeviceData
+{
+    T           *dPos[2]; // mapped host pointers
+    T           *dVel;
+    // JP: `cudaEvent_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+    cudaEvent_t  event;
+    unsigned int offset;
+    unsigned int numBodies;
+};
+
+// CUDA BodySystem: runs on the GPU
+template <typename T> class BodySystemCUDA : public BodySystem<T>
+{
+public:
+    BodySystemCUDA(unsigned int numBodies,
+                   unsigned int numDevices,
+                   unsigned int blockSize,
+                   bool         usePBO,
+                   bool         useSysMem = false);
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/nbody_opengles/bodysystemcuda.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `bodysystemcuda_impl.h`
+
+Source: cpp/8_Platform_Specific/Tegra/nbody_opengles/bodysystemcuda_impl.h:25-47
+```cpp
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+// JP: この file では memory ownership と host/device transfer、stream/event による非同期実行と同期、CUDA Graph の依存関係と replay を確認します。英語の識別子/API/出力文字列は保持します。
+
+#include <algorithm>
+#include <assert.h>
+#include <cstdio>
+#include <cstdlib>
+#include <helper_cuda.h>
+#include <math.h>
+#include <memory.h>
+#include <vector>
+// #include <GL/glew.h>
+
+#include <cuda_gl_interop.h>
+
+template <typename T>
+void integrateNbodySystem(DeviceData<T>         *deviceData,
+                          // JP: `cudaGraphicsResource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
+                          cudaGraphicsResource **pgres,
+                          unsigned int           currentRead,
+                          float                  deltaTime,
+                          float                  damping,
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/nbody_opengles/bodysystemcuda_impl.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/nbody_opengles/bodysystemcuda_impl.h:91-110
+```cpp
+
+    m_numBodies = numBodies;
+
+    unsigned int memSize = sizeof(T) * 4 * numBodies;
+
+    m_deviceData = new DeviceData<T>[m_numDevices];
+
+    // divide up the workload amongst Devices
+    float *weights = new float[m_numDevices];
+    int   *numSms  = new int[m_numDevices];
+    float  total   = 0;
+
+    for (unsigned int i = 0; i < m_numDevices; i++) {
+        cudaDeviceProp props;
+        checkCudaErrors(cudaGetDeviceProperties(&props, i));
+
+        // Choose the weight based on the Compute Capability
+        // We estimate that a CC2.0 SM is about 4.0x faster than a CC 1.x SM for
+        // this application (since a 15-SM GF100 is about 2X faster than a 30-SM
+        // GT200).
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/nbody_opengles/bodysystemcuda_impl.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/nbody_opengles/bodysystemcuda_impl.h:148-184
+```cpp
+        memset(m_hPos[1], 0, memSize);
+        memset(m_hVel, 0, memSize);
+
+        for (unsigned int i = 0; i < m_numDevices; i++) {
+            if (m_numDevices > 1) {
+                checkCudaErrors(cudaSetDevice(i));
+            }
+
+            // JP: `cudaEventCreate`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+            checkCudaErrors(cudaEventCreate(&m_deviceData[i].event));
+            checkCudaErrors(cudaHostGetDevicePointer((void **)&m_deviceData[i].dPos[0], (void *)m_hPos[0], 0));
+            checkCudaErrors(cudaHostGetDevicePointer((void **)&m_deviceData[i].dPos[1], (void *)m_hPos[1], 0));
+            checkCudaErrors(cudaHostGetDevicePointer((void **)&m_deviceData[i].dVel, (void *)m_hVel, 0));
+        }
+    }
+    else {
+        m_hPos[0] = new T[m_numBodies * 4];
+        m_hVel    = new T[m_numBodies * 4];
+
+        memset(m_hPos[0], 0, memSize);
+        memset(m_hVel, 0, memSize);
+
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+        checkCudaErrors(cudaEventCreate(&m_deviceData[0].event));
+
+        if (m_bUsePBO) {
+            // create the position pixel buffer objects for rendering
+            // we will actually compute directly from this memory in CUDA too
+            glGenBuffers(2, (GLuint *)m_pbo);
+
+            for (int i = 0; i < 2; ++i) {
+                glBindBuffer(GL_ARRAY_BUFFER, m_pbo[i]);
+                glBufferData(GL_ARRAY_BUFFER, memSize, m_hPos[0], GL_DYNAMIC_DRAW);
+
+                int size = 0;
+                glGetBufferParameteriv(GL_ARRAY_BUFFER, GL_BUFFER_SIZE, (GLint *)&size);
+
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/nbody_opengles/bodysystemcuda_impl.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/nbody_opengles/bodysystemcuda_impl.h:326-345
+```cpp
+
+    if (!m_bUseSysMem) {
+        if (pgres) {
+            // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+            checkCudaErrors(cudaGraphicsResourceSetMapFlags(pgres, cudaGraphicsMapFlagsReadOnly));
+            checkCudaErrors(cudaGraphicsMapResources(1, &pgres, 0));
+            size_t bytes;
+            checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&ddata, &bytes, pgres));
+        }
+
+        // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+        checkCudaErrors(cudaMemcpy(hdata, ddata, m_numBodies * 4 * sizeof(T), cudaMemcpyDeviceToHost));
+
+        if (pgres) {
+            checkCudaErrors(cudaGraphicsUnmapResources(1, &pgres, 0));
+        }
+    }
+
+    return hdata;
+}
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/nbody_opengles/bodysystemcuda_impl.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `nbody_opengles.cpp`
+
+Source: cpp/8_Platform_Specific/Tegra/nbody_opengles/nbody_opengles.cpp:28-47
+```cpp
+
+#include <EGL/egl.h>
+#include <GLES2/gl2.h>
+#include <X11/Xlib.h>
+#include <algorithm>
+#include <assert.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cuda_runtime.h>
+#include <helper_cuda.h>
+#include <helper_functions.h>
+#include <math.h>
+#include <string.h>
+#include <unistd.h>
+
+#include "bodysystemcpu.h"
+#include "bodysystemcuda.h"
+#include "cuda_runtime.h"
+#include "render_particles.h"
+
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/nbody_opengles/nbody_opengles.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/nbody_opengles/nbody_opengles.cpp:160-181
+```cpp
+cudaEvent_t hostMemSyncEvent;
+
+template <typename T> class NBodyDemo
+{
+public:
+    static void Create() { m_singleton = new NBodyDemo; }
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    static void Destroy() { delete m_singleton; }
+
+    static void init(int numBodies, int numDevices, int blockSize, bool usePBO, bool useHostMem, bool useCpu)
+    {
+        m_singleton->_init(numBodies, numDevices, blockSize, usePBO, useHostMem, useCpu);
+    }
+
+    static void reset(int numBodies, NBodyConfig config) { m_singleton->_reset(numBodies, config); }
+
+    static void selectDemo(int index) { m_singleton->_selectDemo(index); }
+
+    // JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
+    static bool compareResults(int numBodies) { return m_singleton->_compareResults(numBodies); }
+
+    static void runBenchmark(int iterations) { m_singleton->_runBenchmark(iterations); }
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/nbody_opengles/nbody_opengles.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/nbody_opengles/nbody_opengles.cpp:876-895
+```cpp
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// Program main
+//////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    bool bTestResults = true;
+
+#if defined(__linux__)
+    setenv("DISPLAY", ":0", 0);
+#endif
+
+    if (checkCmdLineFlag(argc, (const char **)argv, "help")) {
+        printf("\n> Command line options\n");
+        showHelp();
+        return 0;
+    }
+
+    printf("Run \"nbody_opengles -benchmark [-numbodies=<numBodies>]\" to measure "
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/nbody_opengles/nbody_opengles.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `render_particles.cpp`
+
+Source: cpp/8_Platform_Specific/Tegra/nbody_opengles/render_particles.cpp:26-47
+```cpp
+ */
+// JP: この file では stream/event による非同期実行と同期、Runtime/Driver/NVRTC の境界、Tensor Core/WMMA の tile と data type を確認します。英語の識別子/API/出力文字列は保持します。
+
+#include "render_particles.h"
+
+#include <assert.h>
+#include <cuda_gl_interop.h>
+#include <cuda_runtime.h>
+#include <helper_cuda.h>
+#include <math.h>
+
+void mat_identity(matrix4 m)
+{
+    m[0][1] = m[0][2] = m[0][3] = m[1][0] = m[1][2] = m[1][3] = m[2][0] = m[2][1] = m[2][3] = m[3][0] = m[3][1] =
+        m[3][2]                                                                                       = 0.0f;
+    m[0][0] = m[1][1] = m[2][2] = m[3][3] = 1.0f;
+}
+
+void mat_multiply(matrix4 m0, matrix4 m1)
+{
+    float m[4];
+
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/nbody_opengles/render_particles.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/nbody_opengles/render_particles.cpp:255-279
+```cpp
+    if (!isCompiled) {
+        GLint infoLen = 0;
+        glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &infoLen);
+
+        if (infoLen > 1) {
+            char *infoLog = (char *)malloc(sizeof(char) * infoLen);
+
+            glGetShaderInfoLog(shader, infoLen, NULL, infoLog);
+            printf("Error compiling program:\n%s\n", infoLog);
+            // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+            free(infoLog);
+        }
+
+        return 0;
+    }
+
+    return 1;
+}
+
+void ParticleRenderer::_initGL()
+{
+    m_vertexShader   = glCreateShader(GL_VERTEX_SHADER);
+    m_fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+
+    const char *v = vertexShader;
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/nbody_opengles/render_particles.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `render_particles.h`
+
+Source: cpp/8_Platform_Specific/Tegra/nbody_opengles/render_particles.h:29-47
+```cpp
+#ifndef __RENDER_PARTICLES__
+#define __RENDER_PARTICLES__
+
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <GLES3/gl31.h>
+#include <cstdio>
+
+typedef float matrix4[4][4];
+typedef float vector3[3];
+
+// check for OpenGL errors
+inline void checkGLErrors(const char *s)
+{
+    EGLenum error;
+
+    while ((error = glGetError()) != GL_NO_ERROR) {
+        fprintf(stderr, "%s: error - %d\n", s, error);
+    }
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/nbody_opengles/render_particles.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `tipsy.h`
+
+Source: cpp/8_Platform_Specific/Tegra/nbody_opengles/tipsy.h:3-21
+```cpp
+#ifndef __TIPSY_H__
+#define __TIPSY_H__
+
+#include <string>
+
+using namespace std;
+
+#define MAXDIM 3
+
+typedef float Real;
+
+struct gas_particle
+{
+    Real mass;
+    Real pos[MAXDIM];
+    Real vel[MAXDIM];
+    Real rho;
+    Real temp;
+    Real hsmooth;
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/nbody_opengles/tipsy.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
 | - | - |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaGraphicsResource` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 | `cudaEventRecord` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
 | `cudaEventCreate` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
@@ -118,7 +850,6 @@ English anchor: read `nbody_opengles` as a focused example of the CUDA concepts 
 | `cudaMemcpyHostToDevice` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `threadIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `cudaGraphicsResourceSetMapFlags` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
-| `cudaGraphicsResourceGetMappedPointer` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。
@@ -184,7 +915,7 @@ The sample prints timing, bandwidth, latency, throughput, or comparison data; ex
 
 ## Exercises
 
-- `cudaGraphicsResource` の直前と直後で、どの memory/resource が有効になったかをメモする。
+- `launch` の直前と直後で、どの memory/resource が有効になったかをメモする。
 - source file を上から読み、setup、GPU work、sync、validation、cleanup の行番号を抜き出す。
 - problem size や input size を変更した場合に、境界チェックや allocation size が破綻しないか説明する。
 - shared memory tile の producer、consumer、barrier を図にする。

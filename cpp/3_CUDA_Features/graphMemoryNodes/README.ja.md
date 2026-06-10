@@ -81,12 +81,187 @@ English anchor: read `graphMemoryNodes` as a focused example of the CUDA concept
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/3_CUDA_Features/graphMemoryNodes/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(graphMemoryNodes LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for graphMemoryNodes
+add_executable(graphMemoryNodes graphMemoryNodes.cu)
+
+target_compile_options(graphMemoryNodes PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(graphMemoryNodes PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(graphMemoryNodes PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/graphMemoryNodes/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `graphMemoryNodes.cu`
+
+Source: cpp/3_CUDA_Features/graphMemoryNodes/graphMemoryNodes.cu:25-63
+```cuda
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+// JP: この file では memory ownership と host/device transfer、kernel launch と thread indexing、stream/event による非同期実行と同期 を確認します。英語の識別子/API/出力文字列は保持します。
+
+// System includes
+#include <assert.h>
+#include <climits>
+#include <stdio.h>
+#include <vector>
+
+// CUDA runtime
+#include <cuda_runtime.h>
+
+// helper functions and utilities to work with CUDA
+#include <helper_cuda.h>
+#include <helper_functions.h>
+
+#define THREADS_PER_BLOCK  512
+#define ALLOWABLE_VARIANCE 1.e-6f
+#define NUM_ELEMENTS       8000000
+
+// Stores the square of each input element in output array
+__global__ void squareArray(const float *input, float *output, int numElements)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (idx < numElements) {
+        output[idx] = input[idx] * input[idx];
+    }
+}
+
+// Stores the negative of each input element in output array
+__global__ void negateArray(const float *input, float *output, int numElements)
+{
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (idx < numElements) {
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/graphMemoryNodes/graphMemoryNodes.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/graphMemoryNodes/graphMemoryNodes.cu:96-115
+```cuda
+    size_t numBlocks = hostArrays->numElements / (size_t)THREADS_PER_BLOCK;
+    if ((numBlocks % (size_t)THREADS_PER_BLOCK) != 0) {
+        numBlocks++;
+    }
+
+    hostArrays->input     = (float *)malloc(bytes);
+    hostArrays->square    = (float *)malloc(bytes);
+    hostArrays->negSquare = (float *)malloc(bytes);
+    hostArrays->bytes     = bytes;
+    hostArrays->numBlocks = numBlocks;
+
+    fillRandomly(hostArrays->input, hostArrays->numElements);
+    fillRandomly(hostArrays->square, hostArrays->numElements);
+    fillRandomly(hostArrays->negSquare, hostArrays->numElements);
+}
+
+// JP: `cudaGraphExec_t`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
+void createFreeGraph(cudaGraphExec_t *graphExec, float *dPtr)
+{
+    cudaGraph_t     graph;
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/graphMemoryNodes/graphMemoryNodes.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/graphMemoryNodes/graphMemoryNodes.cu:204-223
+```cuda
+                                             &allocNodeSquare,
+                                             1,
+                                             d_input,
+                                             hostArrays->input,
+                                             hostArrays->bytes,
+                                             // JP: `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+                                             cudaMemcpyHostToDevice));
+
+    void *squareKernelArgs[3]     = {(void *)&d_input, (void *)&d_square, (void *)&(hostArrays->numElements)};
+    kernelNodeParams.func         = (void *)squareArray;
+    kernelNodeParams.kernelParams = (void **)squareKernelArgs;
+
+    // Square kernel depends on copyNodeInput to ensure all data is on the device
+    // before kernel launch.
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+    checkCudaErrors(cudaGraphAddKernelNode(&squareKernelNode, graph, &copyNodeInput, 1, &kernelNodeParams));
+
+    checkCudaErrors(cudaGraphAddMemcpyNode1D(&copyNodeSquare,
+                                             graph,
+                                             &squareKernelNode,
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/graphMemoryNodes/graphMemoryNodes.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/graphMemoryNodes/graphMemoryNodes.cu:337-356
+```cuda
+    checkCudaErrors(cudaMallocAsync(&d_square, hostArrays->bytes, stream1));
+
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
+    checkCudaErrors(cudaMemcpyAsync(d_input, hostArrays->input, hostArrays->bytes, cudaMemcpyHostToDevice, stream1));
+    squareArray<<<hostArrays->numBlocks, THREADS_PER_BLOCK, 0, stream1>>>(d_input, d_square, hostArrays->numElements);
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    checkCudaErrors(cudaEventRecord(squareKernelCompleteEvent, stream1));
+
+    checkCudaErrors(cudaStreamWaitEvent(stream2, squareKernelCompleteEvent, 0));
+    checkCudaErrors(cudaMemcpyAsync(hostArrays->square, d_square, hostArrays->bytes, cudaMemcpyDeviceToHost, stream2));
+
+    // JP: `cudaFreeAsync`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaFreeAsync(d_input, stream1));
+    checkCudaErrors(cudaMallocAsync(&d_negSquare, hostArrays->bytes, stream1));
+    negateArray<<<hostArrays->numBlocks, THREADS_PER_BLOCK, 0, stream1>>>(
+        d_square, d_negSquare, hostArrays->numElements);
+    checkCudaErrors(cudaEventRecord(negateKernelCompleteEvent, stream1));
+    checkCudaErrors(
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
+        cudaMemcpyAsync(hostArrays->negSquare, d_negSquare, hostArrays->bytes, cudaMemcpyDeviceToHost, stream1));
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/graphMemoryNodes/graphMemoryNodes.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
 | - | - |
-| `cudaStreamSynchronize` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
 | `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
+| `cudaStreamSynchronize` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
 | `cudaGraphLaunch` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 | `cudaGraphNode_t` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 | `cudaFreeAsync` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
@@ -174,7 +349,7 @@ Run the sample as documented and compare its output with the original README, va
 
 ## Exercises
 
-- `cudaStreamSynchronize` の直前と直後で、どの memory/resource が有効になったかをメモする。
+- `launch` の直前と直後で、どの memory/resource が有効になったかをメモする。
 - source file を上から読み、setup、GPU work、sync、validation、cleanup の行番号を抜き出す。
 - problem size や input size を変更した場合に、境界チェックや allocation size が破綻しないか説明する。
 - stream timeline を描き、copy、kernel、event、host wait の位置を分ける。

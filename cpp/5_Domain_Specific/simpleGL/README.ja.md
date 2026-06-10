@@ -74,7 +74,7 @@ English anchor: read `simpleGL` as a focused example of the CUDA concepts used i
 
 ## Concrete Reading Path
 
-- `simpleGL.cu`: focus on `CUDA`, `cudaGraphicsResource`, `blockIdx`, `blockDim`, `threadIdx`.
+- `simpleGL.cu`: focus on `CUDA`, `launch`, `cudaGraphicsResource`, `blockIdx`, `blockDim`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
@@ -82,10 +82,176 @@ English anchor: read `simpleGL` as a focused example of the CUDA concepts used i
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/5_Domain_Specific/simpleGL/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleGL LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleGL/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleGL.cu`
+
+Source: cpp/5_Domain_Specific/simpleGL/simpleGL.cu:30-48
+```cuda
+    This example demonstrates how to use the Cuda OpenGL bindings to
+    dynamically modify a vertex buffer using a Cuda kernel.
+
+    The steps are:
+    1. Create an empty vertex buffer object (VBO)
+    2. Register the VBO with Cuda
+    3. Map the VBO for writing from Cuda
+    4. Run Cuda kernel to modify the vertex positions
+    5. Unmap the VBO
+    6. Render the results using OpenGL
+
+    Host code
+*/
+
+// includes, system
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleGL/simpleGL.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/simpleGL/simpleGL.cu:148-167
+```cuda
+//! Simple kernel to modify vertex positions in sine wave pattern
+//! @param data  data in global memory
+///////////////////////////////////////////////////////////////////////////////
+__global__ void simple_vbo_kernel(float4 *pos, unsigned int width, unsigned int height, float time)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    // calculate uv coordinates
+    float u = x / (float)width;
+    float v = y / (float)height;
+    u       = u * 2.0f - 1.0f;
+    v       = v * 2.0f - 1.0f;
+
+    // calculate simple sine wave pattern
+    float freq = 4.0f;
+    float w    = sinf(u * freq + time) * cosf(v * freq + time) * 0.5f;
+
+    // write output vertex
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleGL/simpleGL.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/simpleGL/simpleGL.cu:180-214
+```cuda
+
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    char *ref_file = NULL;
+
+    pArgc = &argc;
+    pArgv = argv;
+
+#if defined(__linux__)
+    setenv("DISPLAY", ":0", 0);
+#endif
+
+    printf("%s starting...\n", sSDKsample);
+
+    if (argc > 1) {
+        if (checkCmdLineFlag(argc, (const char **)argv, "file")) {
+            // In this mode, we are running non-OpenGL and doing a compare of the VBO was generated correctly
+            getCmdLineArgumentString(argc, (const char **)argv, "file", (char **)&ref_file);
+        }
+    }
+
+    printf("\n");
+
+    runTest(argc, argv, ref_file);
+
+    printf("%s completed, returned %s\n", sSDKsample, (g_TotalErrors == 0) ? "OK" : "ERROR!");
+    exit(g_TotalErrors == 0 ? EXIT_SUCCESS : EXIT_FAILURE);
+}
+
+void computeFPS()
+{
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleGL/simpleGL.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/simpleGL/simpleGL.cu:279-307
+```cuda
+    int devID = findCudaDevice(argc, (const char **)argv);
+
+    // command line mode only
+    if (ref_file != NULL) {
+        // create VBO
+        // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+        checkCudaErrors(cudaMalloc((void **)&d_vbo_buffer, mesh_width * mesh_height * 4 * sizeof(float)));
+
+        // run the cuda part
+        runAutoTest(devID, argv, ref_file);
+
+        // check result of Cuda step
+        checkResultCuda(argc, argv, vbo);
+
+        // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        cudaFree(d_vbo_buffer);
+        d_vbo_buffer = NULL;
+    }
+    else {
+        // First initialize OpenGL context, so we can properly set the GL for CUDA.
+        // This is necessary in order to achieve optimal performance with OpenGL/CUDA interop.
+        if (false == initGL(&argc, argv)) {
+            return false;
+        }
+
+        // register callbacks
+        glutDisplayFunc(display);
+        glutKeyboardFunc(keyboard);
+        glutMouseFunc(mouse);
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleGL/simpleGL.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
 | - | - |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaGraphicsResource` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
@@ -99,7 +265,6 @@ English anchor: read `simpleGL` as a focused example of the CUDA concepts used i
 | `cudaGraphicsMapResources` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 | `cudaGraphicsResourceGetMappedPointer` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 | `cudaGraphicsUnmapResources` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
-| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。
@@ -162,7 +327,7 @@ The sample may display a window or produce/validate image-like output; exact vis
 
 ## Exercises
 
-- `cudaGraphicsResource` の直前と直後で、どの memory/resource が有効になったかをメモする。
+- `launch` の直前と直後で、どの memory/resource が有効になったかをメモする。
 - source file を上から読み、setup、GPU work、sync、validation、cleanup の行番号を抜き出す。
 - problem size や input size を変更した場合に、境界チェックや allocation size が破綻しないか説明する。
 - stream timeline を描き、copy、kernel、event、host wait の位置を分ける。

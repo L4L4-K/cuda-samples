@@ -76,7 +76,7 @@ English anchor: read `simpleCUDA2GL` as a focused example of the CUDA concepts u
 
 ## Concrete Reading Path
 
-- `main.cpp`: focus on `CUDA`, `cudaGraphicsResource`, `cudaGraphicsMapResources`, `cudaGraphicsUnmapResources`, `cudaDeviceSynchronize`.
+- `main.cpp`: focus on `CUDA`, `launch`, `cudaGraphicsResource`, `cudaGraphicsMapResources`, `cudaGraphicsUnmapResources`.
 - `simpleCUDA2GL.cu`: focus on `cudaProcess`, `threadIdx`, `launch`, `__shared__`, `blockDim`.
 
 > **日本語**
@@ -85,10 +85,205 @@ English anchor: read `simpleCUDA2GL` as a focused example of the CUDA concepts u
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/simpleCUDA2GL/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleCUDA2GL LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleCUDA2GL/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `main.cpp`
+
+Source: cpp/0_Introduction/simpleCUDA2GL/main.cpp:32-50
+```cpp
+#define USE_TEXSUBIMAGE2D
+
+#if defined(WIN32) || defined(_WIN32) || defined(WIN64) || defined(_WIN64)
+#define WINDOWS_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#pragma warning(disable : 4996)
+#endif
+
+// OpenGL Graphics includes
+#include <helper_gl.h>
+#if defined(__APPLE__) || defined(MACOSX)
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#include <GLUT/glut.h>
+// Sorry for Apple : unsigned int sampler is not available to you, yet...
+// Let's switch to the use of PBO and glTexSubImage
+#define USE_TEXSUBIMAGE2D
+#else
+#include <GL/freeglut.h>
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleCUDA2GL/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleCUDA2GL/main.cpp:161-187
+```cpp
+{
+    // set up vertex data parameter
+    num_texels    = image_width * image_height;
+    num_values    = num_texels * 4;
+    size_tex_data = sizeof(GLubyte) * num_values;
+    void *data    = malloc(size_tex_data);
+
+    // create buffer object
+    glGenBuffers(1, pbo);
+    glBindBuffer(GL_ARRAY_BUFFER, *pbo);
+    glBufferData(GL_ARRAY_BUFFER, size_tex_data, data, GL_DYNAMIC_DRAW);
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    free(data);
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    // register this buffer object with CUDA
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+    checkCudaErrors(cudaGraphicsGLRegisterBuffer(pbo_resource, *pbo, cudaGraphicsMapFlagsNone));
+
+    SDK_CHECK_ERROR_GL();
+}
+
+void deletePBO(GLuint *pbo)
+{
+    glDeleteBuffers(1, pbo);
+    SDK_CHECK_ERROR_GL();
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleCUDA2GL/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleCUDA2GL/main.cpp:193-212
+```cpp
+                              GL_COLOR_ATTACHMENT1_EXT,
+                              GL_COLOR_ATTACHMENT2_EXT,
+                              GL_COLOR_ATTACHMENT3_EXT};
+
+#ifndef USE_TEXSUBIMAGE2D
+static const char *glsl_drawtex_vertshader_src = "void main(void)\n"
+                                                 "{\n"
+                                                 "	gl_Position = gl_Vertex;\n"
+                                                 "	gl_TexCoord[0].xy = gl_MultiTexCoord0.xy;\n"
+                                                 "}\n";
+
+static const char *glsl_drawtex_fragshader_src = "#version 130\n"
+                                                 "uniform usampler2D texImage;\n"
+                                                 "void main()\n"
+                                                 "{\n"
+                                                 "   vec4 c = texture(texImage, gl_TexCoord[0].xy);\n"
+                                                 "	gl_FragColor = c / 255.0;\n"
+                                                 "}\n";
+#endif
+
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleCUDA2GL/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleCUDA2GL/main.cpp:236-255
+```cpp
+    // run the Cuda kernel
+    unsigned int *out_data;
+
+#ifdef USE_TEXSUBIMAGE2D
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+    checkCudaErrors(cudaGraphicsMapResources(1, &cuda_pbo_dest_resource, 0));
+    size_t num_bytes;
+    checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&out_data, &num_bytes, cuda_pbo_dest_resource));
+// printf("CUDA mapped pointer of pbo_out: May access %ld bytes, expected %d\n",
+// num_bytes, size_tex_data);
+#else
+    out_data = cuda_dest_resource;
+#endif
+    // calculate grid size
+    dim3 block(16, 16, 1);
+    // dim3 block(16, 16, 1);
+    dim3 grid(image_width / block.x, image_height / block.y, 1);
+    // execute CUDA kernel
+    launch_cudaProcess(grid, block, 0, out_data, image_width);
+
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleCUDA2GL/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleCUDA2GL.cu`
+
+Source: cpp/0_Introduction/simpleCUDA2GL/simpleCUDA2GL.cu:31-68
+```cuda
+#include <helper_cuda.h>
+
+// clamp x to range [a, b]
+__device__ float clamp(float x, float a, float b) { return max(a, min(b, x)); }
+
+__device__ int clamp(int x, int a, int b) { return max(a, min(b, x)); }
+
+// convert floating point rgb color to 8-bit integer
+__device__ int rgbToInt(float r, float g, float b)
+{
+    r = clamp(r, 0.0f, 255.0f);
+    g = clamp(g, 0.0f, 255.0f);
+    b = clamp(b, 0.0f, 255.0f);
+    return (int(b) << 16) | (int(g) << 8) | int(r);
+}
+
+__global__ void cudaProcess(unsigned int *g_odata, int imgw)
+{
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    extern __shared__ uchar4 sdata[];
+
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+    int bw = blockDim.x;
+    int bh = blockDim.y;
+    int x  = blockIdx.x * bw + tx;
+    int y  = blockIdx.y * bh + ty;
+
+    uchar4 c4             = make_uchar4((x & 0x20) ? 100 : 0, 0, (y & 0x20) ? 100 : 0, 0);
+    g_odata[y * imgw + x] = rgbToInt(c4.z, c4.y, c4.x);
+}
+
+extern "C" void launch_cudaProcess(dim3 grid, dim3 block, int sbytes, unsigned int *g_odata, int imgw)
+{
+    // JP: `cudaProcess`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    cudaProcess<<<grid, block, sbytes>>>(g_odata, imgw);
+}
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleCUDA2GL/simpleCUDA2GL.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
 | - | - |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaGraphicsResource` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 | `cudaProcess` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaGraphicsMapResources` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
@@ -102,7 +297,6 @@ English anchor: read `simpleCUDA2GL` as a focused example of the CUDA concepts u
 | `cudaMemcpyToArray` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaGraphicsGLRegisterImage` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
-| `cudaHostAlloc` | pinned host memory を作り、async copy や DMA の前提を作る API です。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。
@@ -168,7 +362,7 @@ The sample prints timing, bandwidth, latency, throughput, or comparison data; ex
 
 ## Exercises
 
-- `cudaGraphicsResource` の直前と直後で、どの memory/resource が有効になったかをメモする。
+- `launch` の直前と直後で、どの memory/resource が有効になったかをメモする。
 - source file を上から読み、setup、GPU work、sync、validation、cleanup の行番号を抜き出す。
 - problem size や input size を変更した場合に、境界チェックや allocation size が破綻しないか説明する。
 - shared memory tile の producer、consumer、barrier を図にする。

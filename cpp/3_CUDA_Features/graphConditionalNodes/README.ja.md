@@ -73,7 +73,7 @@ English anchor: read `graphConditionalNodes` as a focused example of the CUDA co
 
 ## Concrete Reading Path
 
-- `graphConditionalNodes.cu`: focus on `cudaGraphAddNode`, `launch`, `cudaGraphNode_t`, `cudaGraphConditionalHandle`, `blockDim`.
+- `graphConditionalNodes.cu`: focus on `launch`, `CUDA`, `cudaGraphAddNode`, `cudaGraphNode_t`, `cudaGraphConditionalHandle`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
@@ -81,12 +81,185 @@ English anchor: read `graphConditionalNodes` as a focused example of the CUDA co
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/3_CUDA_Features/graphConditionalNodes/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(graphConditionalNodes LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for graphConditionalNodes
+add_executable(graphConditionalNodes graphConditionalNodes.cu)
+
+target_compile_options(graphConditionalNodes PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(graphConditionalNodes PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(graphConditionalNodes PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/graphConditionalNodes/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `graphConditionalNodes.cu`
+
+Source: cpp/3_CUDA_Features/graphConditionalNodes/graphConditionalNodes.cu:40-58
+```cuda
+#include <cassert>
+#include <cstdio>
+
+// CUDA runtime
+#include <cuda_runtime.h>
+
+// helper functions and utilities to work with CUDA
+#include <helper_cuda.h>
+#include <helper_functions.h>
+
+/*
+ * Create a graph containing two nodes.
+ * The first node, A, is a kernel and the second node, B, is a conditional IF node.
+ * The kernel sets the condition variable to true if a device memory location
+ * contains an odd number. Otherwise the condition variable is set to false.
+ * There is a single kernel, C, within the conditional body which prints a message.
+ *
+ * A -> B [ C ]
+ *
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/graphConditionalNodes/graphConditionalNodes.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/graphConditionalNodes/graphConditionalNodes.cu:81-100
+```cuda
+
+    void *kernelArgs[2];
+
+    // Allocate a byte of device memory to use as input
+    char *dPtr;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc((void **)&dPtr, 1));
+
+    printf("simpleIfGraph: Building graph...\n");
+    cudaGraphCreate(&graph, 0);
+
+    // Create conditional handle.
+    cudaGraphConditionalHandle handle;
+    cudaGraphConditionalHandleCreate(&handle, graph);
+
+    // Use a kernel upstream of the conditional to set the handle value
+    cudaGraphNodeParams params = {cudaGraphNodeTypeKernel};
+    params.kernel.func         = (void *)ifGraphKernelA;
+    // JP: `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    params.kernel.blockDim.x = params.kernel.blockDim.y = params.kernel.blockDim.z = 1;
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/graphConditionalNodes/graphConditionalNodes.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/graphConditionalNodes/graphConditionalNodes.cu:120-157
+```cuda
+    checkCudaErrors(cudaGraphAddNode(&bodyNode, bodyGraph, NULL, NULL, 0, &params));
+
+    checkCudaErrors(cudaGraphInstantiate(&graphExec, graph, NULL, NULL, 0));
+
+    // Initialize device memory and launch the graph
+    // JP: `cudaMemset`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemset(dPtr, 0, 1)); // Set dPtr to 0
+    printf("Host: Launching graph with device memory set to 0\n");
+    checkCudaErrors(cudaGraphLaunch(graphExec, 0));
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    checkCudaErrors(cudaDeviceSynchronize());
+
+    // Initialize device memory and launch the graph
+    checkCudaErrors(cudaMemset(dPtr, 1, 1)); // Set dPtr to 1
+    printf("Host: Launching graph with device memory set to 1\n");
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+    checkCudaErrors(cudaGraphLaunch(graphExec, 0));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
+    checkCudaErrors(cudaDeviceSynchronize());
+
+    // Cleanup
+    checkCudaErrors(cudaGraphExecDestroy(graphExec));
+    checkCudaErrors(cudaGraphDestroy(graph));
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaFree(dPtr));
+
+    printf("simpleIfGraph: Complete\n\n");
+}
+
+/*
+ * Create a graph containing a single conditional while node.
+ * The default value of the conditional variable is set to true, so this
+ * effectively becomes a do-while loop as the conditional body will always
+ * execute at least once. The body of the conditional contains 3 kernel nodes:
+ * A [ B -> C -> D ]
+ * Nodes B and C are just dummy nodes for demonstrative purposes. Node D
+ * will decrement a device memory location and set the condition value to false
+ * when the value reaches zero, terminating the loop.
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/graphConditionalNodes/graphConditionalNodes.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/graphConditionalNodes/graphConditionalNodes.cu:204-223
+```cuda
+    checkCudaErrors(cudaStreamCreate(&captureStream));
+
+    checkCudaErrors(
+        cudaStreamBeginCaptureToGraph(captureStream, bodyGraph, nullptr, nullptr, 0, cudaStreamCaptureModeGlobal));
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    doWhileEmptyKernel<<<1, 1, 0, captureStream>>>();
+    doWhileEmptyKernel<<<1, 1, 0, captureStream>>>();
+    doWhileLoopKernel<<<1, 1, 0, captureStream>>>(dPtr, handle);
+    checkCudaErrors(cudaStreamEndCapture(captureStream, nullptr));
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    checkCudaErrors(cudaStreamDestroy(captureStream));
+
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+    checkCudaErrors(cudaGraphInstantiate(&graphExec, graph, NULL, NULL, 0));
+
+    // Initialize device memory and launch the graph
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
+    checkCudaErrors(cudaMemset(dPtr, 10, 1)); // Set dPtr to 10
+    printf("Host: Launching graph with loop counter set to 10\n");
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/graphConditionalNodes/graphConditionalNodes.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
 | - | - |
-| `cudaGraphAddNode` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 | `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
+| `cudaGraphAddNode` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 | `cudaGraphNode_t` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 | `cudaMemset` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaDeviceSynchronize` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
@@ -173,7 +346,7 @@ Run the sample as documented and compare its output with the original README, va
 
 ## Exercises
 
-- `cudaGraphAddNode` の直前と直後で、どの memory/resource が有効になったかをメモする。
+- `launch` の直前と直後で、どの memory/resource が有効になったかをメモする。
 - source file を上から読み、setup、GPU work、sync、validation、cleanup の行番号を抜き出す。
 - problem size や input size を変更した場合に、境界チェックや allocation size が破綻しないか説明する。
 - stream timeline を描き、copy、kernel、event、host wait の位置を分ける。

@@ -77,6 +77,267 @@ English anchor: read `simple` as a focused example of the CUDA concepts used in 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/7_libNVVM/simple/CMakeLists.txt:2-71
+```cmake
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+# OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+set(CMAKE_INSTALL_RPATH ${LIBNVVM_HOME})
+set(CMAKE_INCLUDE_CURRENT_DIR YES)
+
+# JP: `add_executable`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+add_executable(simple simple.c)
+
+add_test(NAME simple COMMAND simple WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+
+target_link_libraries(simple ${NVVM_LIB} ${CUDA_LIB})
+
+if (WIN32)
+  set_target_properties(simple PROPERTIES COMPILE_FLAGS "/wd4996")
+else (WIN32)
+  set_target_properties(simple PROPERTIES
+                        LINK_FLAGS "-Wl,-rpath,${LIBNVVM_RPATH}")
+endif (WIN32)
+
+# Install to CUDA_SAMPLES_INSTALL_DIR if defined (for unified installation),
+# otherwise install to bin (for standalone libNVVM build)
+if(DEFINED CUDA_SAMPLES_INSTALL_DIR)
+    install(TARGETS simple DESTINATION ${CUDA_SAMPLES_INSTALL_DIR})
+    install(FILES simple-gpu64.ll DESTINATION ${CUDA_SAMPLES_INSTALL_DIR})
+else()
+    install(TARGETS simple DESTINATION bin)
+    install(FILES simple-gpu64.ll DESTINATION bin)
+endif()
+
+# 'simple' will load simple-gpu64.ll from the current working directory. That
+# .ll file should be present where tests are executed (the build directory).
+add_custom_command(
+    TARGET simple
+    POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/simple-gpu64.ll" "$<TARGET_FILE_DIR:simple>"
+)
+if (WIN32)
+  add_custom_command(
+      TARGET simple
+      POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+              "${CMAKE_BINARY_DIR}/nvvm64_40_0.dll" "$<TARGET_FILE_DIR:simple>"
+  )
+endif ()
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/simple/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simple-gpu64.ll`
+
+Source: cpp/7_libNVVM/simple/simple-gpu64.ll:2-61
+```llvm
+;
+; Redistribution and use in source and binary forms, with or without
+; modification, are permitted provided that the following conditions
+; are met:
+;  * Redistributions of source code must retain the above copyright
+;    notice, this list of conditions and the following disclaimer.
+;  * Redistributions in binary form must reproduce the above copyright
+;    notice, this list of conditions and the following disclaimer in the
+;    documentation and/or other materials provided with the distribution.
+;  * Neither the name of NVIDIA CORPORATION nor the names of its
+;    contributors may be used to endorse or promote products derived
+;    from this software without specific prior written permission.
+;
+; THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+; EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+; IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+; PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+; CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+; EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+; PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+; PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+; OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+; (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+; OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-i128:128:128-f32:32:32-f64:64:64-v16:16:16-v32:32:32-v64:64:64-v128:128:128-n16:32:64"
+target triple = "nvptx64-nvidia-cuda"
+
+define i32 @ave(i32 %a, i32 %b) {
+entry:
+  %add = add nsw i32 %a, %b
+  %div = sdiv i32 %add, 2
+  ret i32 %div
+}
+
+define void @simple(i32* %data) {
+entry:
+  %0 = call i32 @llvm.nvvm.read.ptx.sreg.ctaid.x()
+  %1 = call i32 @llvm.nvvm.read.ptx.sreg.ntid.x()
+  %mul = mul i32 %0, %1
+  %2 = call i32 @llvm.nvvm.read.ptx.sreg.tid.x()
+  %add = add i32 %mul, %2
+  %call = call i32 @ave(i32 %add, i32 %add)
+  %idxprom = sext i32 %add to i64
+  %arrayidx = getelementptr inbounds i32, i32* %data, i64 %idxprom
+  store i32 %call, i32* %arrayidx, align 4
+  ret void
+}
+
+declare i32 @llvm.nvvm.read.ptx.sreg.ctaid.x() nounwind readnone
+
+declare i32 @llvm.nvvm.read.ptx.sreg.ntid.x() nounwind readnone
+
+declare i32 @llvm.nvvm.read.ptx.sreg.tid.x() nounwind readnone
+
+!nvvm.annotations = !{!1}
+!1 = !{void (i32*)* @simple, !"kernel", i32 1}
+
+!nvvmir.version = !{!2}
+!2 = !{i32 2, i32 0, i32 3, i32 1}
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/simple/simple-gpu64.ll` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simple.c`
+
+Source: cpp/7_libNVVM/simple/simple.c:24-47
+```c
+// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+// OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+#include <assert.h>
+#include <builtin_types.h>
+#include <cuda.h>
+#include <math.h>
+#include <nvvm.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+
+// If 'err' is non-zero, emit an error message and exit.
+#define checkCudaErrors(err) __checkCudaErrors(err, __FILE__, __LINE__)
+// JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
+static void __checkCudaErrors(CUresult err, const char *filename, int line)
+{
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+    assert(filename);
+    if (CUDA_SUCCESS != err) {
+        const char    *ename = NULL;
+        const CUresult res   = cuGetErrorName(err, &ename);
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/simple/simple.c` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/7_libNVVM/simple/simple.c:59-78
+```c
+// Return a CUDA capable device or exit if one cannot be found.
+// JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
+static CUdevice cudaDeviceInit(int *devMajor, int *devMinor)
+{
+    assert(devMajor && devMinor);
+    CUresult err         = cuInit(0);
+    int      deviceCount = 0;
+    if (CUDA_SUCCESS == err)
+        checkCudaErrors(cuDeviceGetCount(&deviceCount));
+    if (deviceCount == 0) {
+        fprintf(stderr, "cudaDeviceInit error: no devices supporting CUDA\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Locate a CUDA supporting device and its name.
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
+    CUdevice cuDevice = 0;
+    checkCudaErrors(cuDeviceGet(&cuDevice, 0));
+    char name[128];
+    cuDeviceGetName(name, sizeof(name), cuDevice);
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/simple/simple.c` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/7_libNVVM/simple/simple.c:114-133
+```c
+    *size        = 0;
+    FILE *fh     = fopen(filename, "rb");
+    if (fh) {
+        struct stat statbuf;
+        stat(filename, &statbuf);
+        source = malloc(statbuf.st_size + 1);
+        assert(source);
+        fread(source, statbuf.st_size, 1, fh);
+        source[statbuf.st_size] = 0;
+        *size                   = statbuf.st_size + 1;
+    }
+    else {
+        fprintf(stderr, "Error reading file %s\n", filename);
+        exit(EXIT_FAILURE);
+    }
+    return source;
+}
+
+static char *generatePTX(const char *ir, size_t size, const char *filename, int devMajor, int devMinor)
+{
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/simple/simple.c` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/7_libNVVM/simple/simple.c:162-181
+```c
+        char *msg = malloc(logSize);
+        assert(msg);
+        nvvmGetProgramLog(program, msg);
+        fprintf(stderr, "%s\n", msg);
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        free(msg);
+        exit(EXIT_FAILURE);
+    }
+
+    // Obrain the resulting PTX.
+    size_t ptxSize;
+    result = nvvmGetCompiledResultSize(program, &ptxSize);
+    if (result != NVVM_SUCCESS) {
+        fprintf(stderr, "nvvmGetCompiledResultSize: Failed\n");
+        exit(EXIT_FAILURE);
+    }
+    char *ptx = malloc(ptxSize);
+    assert(ptx);
+    result = nvvmGetCompiledResult(program, ptx);
+    if (result != NVVM_SUCCESS) {
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/simple/simple.c` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

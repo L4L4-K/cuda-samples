@@ -83,6 +83,215 @@ English anchor: read `simpleMultiGPU` as a focused example of the CUDA concepts 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/simpleMultiGPU/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleMultiGPU LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simpleMultiGPU
+add_executable(simpleMultiGPU simpleMultiGPU.cu)
+
+target_compile_options(simpleMultiGPU PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleMultiGPU PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simpleMultiGPU PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleMultiGPU/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleMultiGPU.cu`
+
+Source: cpp/0_Introduction/simpleMultiGPU/simpleMultiGPU.cu:36-59
+```cuda
+ * application. On the other side, you can still extend your desktop to screens
+ * attached to both GPUs.
+ */
+
+// System includes
+#include <assert.h>
+#include <stdio.h>
+
+// CUDA runtime
+#include <cuda_runtime.h>
+
+// helper functions and utilities to work with CUDA
+#include <helper_cuda.h>
+#include <helper_functions.h>
+
+#ifndef MAX
+#define MAX(a, b) (a > b ? a : b)
+#endif
+
+#include "simpleMultiGPU.h"
+
+////////////////////////////////////////////////////////////////////////////////
+// Data configuration
+////////////////////////////////////////////////////////////////////////////////
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleMultiGPU/simpleMultiGPU.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleMultiGPU/simpleMultiGPU.cu:65-98
+```cuda
+// Refer to the 'reduction' CUDA Sample describing
+// reduction optimization strategies
+////////////////////////////////////////////////////////////////////////////////
+__global__ static void reduceKernel(float *d_Result, float *d_Input, int N)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    const int tid     = blockIdx.x * blockDim.x + threadIdx.x;
+    const int threadN = gridDim.x * blockDim.x;
+    float     sum     = 0;
+
+    for (int pos = tid; pos < N; pos += threadN)
+        sum += d_Input[pos];
+
+    d_Result[tid] = sum;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    // Solver config
+    TGPUplan plan[MAX_GPU_COUNT];
+
+    // GPU reduction results
+    float h_SumGPU[MAX_GPU_COUNT];
+
+    float  sumGPU;
+    double sumCPU, diff;
+
+    int i, j, gpuBase, GPU_N;
+
+    const int BLOCK_N  = 32;
+    const int THREAD_N = 256;
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleMultiGPU/simpleMultiGPU.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleMultiGPU/simpleMultiGPU.cu:133-152
+```cuda
+    for (i = 0; i < GPU_N; i++) {
+        checkCudaErrors(cudaSetDevice(i));
+        // JP: `cudaStreamCreate`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+        checkCudaErrors(cudaStreamCreate(&plan[i].stream));
+        // Allocate memory
+        // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+        checkCudaErrors(cudaMalloc((void **)&plan[i].d_Data, plan[i].dataN * sizeof(float)));
+        checkCudaErrors(cudaMalloc((void **)&plan[i].d_Sum, ACCUM_N * sizeof(float)));
+        // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
+        checkCudaErrors(cudaMallocHost((void **)&plan[i].h_Sum_from_device, ACCUM_N * sizeof(float)));
+        checkCudaErrors(cudaMallocHost((void **)&plan[i].h_Data, plan[i].dataN * sizeof(float)));
+
+        for (j = 0; j < plan[i].dataN; j++) {
+            plan[i].h_Data[j] = (float)rand() / (float)RAND_MAX;
+        }
+    }
+
+    // Start timing and compute on GPU(s)
+    printf("Computing with %d GPUs...\n", GPU_N);
+    // create and start timer
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleMultiGPU/simpleMultiGPU.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleMultiGPU/simpleMultiGPU.cu:160-179
+```cuda
+    for (i = 0; i < GPU_N; i++) {
+        // Set device
+        checkCudaErrors(cudaSetDevice(i));
+
+        // Copy input data from CPU
+        // JP: `cudaMemcpyAsync`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+        checkCudaErrors(cudaMemcpyAsync(
+            plan[i].d_Data, plan[i].h_Data, plan[i].dataN * sizeof(float), cudaMemcpyHostToDevice, plan[i].stream));
+
+        // Perform GPU computations
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+        reduceKernel<<<BLOCK_N, THREAD_N, 0, plan[i].stream>>>(plan[i].d_Sum, plan[i].d_Data, plan[i].dataN);
+        getLastCudaError("reduceKernel() execution failed.\n");
+
+        // Read back GPU results
+        // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
+        checkCudaErrors(cudaMemcpyAsync(
+            plan[i].h_Sum_from_device, plan[i].d_Sum, ACCUM_N * sizeof(float), cudaMemcpyDeviceToHost, plan[i].stream));
+    }
+
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleMultiGPU/simpleMultiGPU.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleMultiGPU.h`
+
+Source: cpp/0_Introduction/simpleMultiGPU/simpleMultiGPU.h:38-64
+```cpp
+#ifndef SIMPLEMULTIGPU_H
+#define SIMPLEMULTIGPU_H
+
+typedef struct
+{
+    // Host-side input data
+    int    dataN;
+    float *h_Data;
+
+    // Partial sum for this GPU
+    float *h_Sum;
+
+    // Device buffers
+    float *d_Data, *d_Sum;
+
+    // Reduction copied back from GPU
+    float *h_Sum_from_device;
+
+    // Stream for asynchronous command execution
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+    cudaStream_t stream;
+
+} TGPUplan;
+
+extern "C" void launch_reduceKernel(float *d_Result, float *d_Input, int N, int BLOCK_N, int THREAD_N, cudaStream_t &s);
+
+#endif
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleMultiGPU/simpleMultiGPU.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

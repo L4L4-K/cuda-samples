@@ -73,13 +73,180 @@ English anchor: read `simpleCUBLAS` as a focused example of the CUDA concepts us
 
 ## Concrete Reading Path
 
-- `simpleCUBLAS.cpp`: focus on `CUBLAS_STATUS_SUCCESS`, `cudaSuccess`, `cudaMalloc`, `CUBLAS`, `cublasSetVector`.
+- `simpleCUBLAS.cpp`: focus on `CUDA`, `CUBLAS_STATUS_SUCCESS`, `cudaSuccess`, `cudaMalloc`, `CUBLAS`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/simpleCUBLAS/CMakeLists.txt:1-47
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleCUBLAS LANGUAGES CXX)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simpleCUBLAS
+add_executable(simpleCUBLAS simpleCUBLAS.cpp)
+
+target_compile_options(simpleCUBLAS PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleCUBLAS PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simpleCUBLAS PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_include_directories(simpleCUBLAS PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+target_link_libraries(simpleCUBLAS PRIVATE
+    CUDA::cudart
+    # JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    CUDA::cublas
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUBLAS/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleCUBLAS.cpp`
+
+Source: cpp/4_CUDA_Libraries/simpleCUBLAS/simpleCUBLAS.cpp:36-54
+```cpp
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* Includes, cuda */
+#include <cublas_v2.h>
+#include <cuda_runtime.h>
+#include <helper_cuda.h>
+
+/* Matrix size */
+#define N (275)
+
+/* Host implementation of a simple version of sgemm */
+static void simple_sgemm(int n, float alpha, const float *A, const float *B, float beta, float *C)
+{
+    int i;
+    int j;
+    int k;
+
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUBLAS/simpleCUBLAS.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/simpleCUBLAS/simpleCUBLAS.cpp:64-85
+```cpp
+        }
+    }
+}
+
+/* Main */
+int main(int argc, char **argv)
+{
+    // JP: `cublasStatus_t`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    cublasStatus_t status;
+    float         *h_A;
+    float         *h_B;
+    float         *h_C;
+    float         *h_C_ref;
+    float         *d_A   = 0;
+    float         *d_B   = 0;
+    float         *d_C   = 0;
+    float          alpha = 1.0f;
+    float          beta  = 0.0f;
+    int            n2    = N * N;
+    int            i;
+    float          error_norm;
+    float          ref_norm;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUBLAS/simpleCUBLAS.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/simpleCUBLAS/simpleCUBLAS.cpp:95-114
+```cpp
+
+    /* Initialize CUBLAS */
+    printf("simpleCUBLAS test running..\n");
+
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+    status = cublasCreate(&handle);
+
+    if (status != CUBLAS_STATUS_SUCCESS) {
+        fprintf(stderr, "!!!! CUBLAS initialization error\n");
+        return EXIT_FAILURE;
+    }
+
+    /* Allocate host memory for the matrices */
+    h_A = reinterpret_cast<float *>(malloc(n2 * sizeof(h_A[0])));
+
+    if (h_A == 0) {
+        fprintf(stderr, "!!!! host memory allocation error (A)\n");
+        return EXIT_FAILURE;
+    }
+
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUBLAS/simpleCUBLAS.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/simpleCUBLAS/simpleCUBLAS.cpp:221-240
+```cpp
+        return EXIT_FAILURE;
+    }
+
+    /* Memory clean up */
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    free(h_A);
+    free(h_B);
+    free(h_C);
+    free(h_C_ref);
+
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
+    if (cudaFree(d_A) != cudaSuccess) {
+        fprintf(stderr, "!!!! memory free error (A)\n");
+        return EXIT_FAILURE;
+    }
+
+    if (cudaFree(d_B) != cudaSuccess) {
+        fprintf(stderr, "!!!! memory free error (B)\n");
+        return EXIT_FAILURE;
+    }
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUBLAS/simpleCUBLAS.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

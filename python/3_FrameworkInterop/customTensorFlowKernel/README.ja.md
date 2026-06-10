@@ -81,6 +81,116 @@ English anchor: read `customTensorFlowKernel` as a focused example of the CUDA c
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `customTensorFlowKernel.py`
+
+Source: python/3_FrameworkInterop/customTensorFlowKernel/customTensorFlowKernel.py:2-20
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    distribution and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `python/3_FrameworkInterop/customTensorFlowKernel/customTensorFlowKernel.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/3_FrameworkInterop/customTensorFlowKernel/customTensorFlowKernel.py:77-96
+```python
+RELU_KERNEL = """
+extern "C" __global__
+void relu_forward_kernel(const float* x, float* y, int n)
+{
+    // Grid-stride loop: each thread processes multiple elements
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = gridDim.x * blockDim.x;
+    for (int i = idx; i < n; i += stride) {
+        y[i] = x[i] > 0.0f ? x[i] : 0.0f;
+    }
+}
+
+extern "C" __global__
+void relu_backward_kernel(const float* x, const float* grad_y, float* grad_x, int n)
+{
+    // Grid-stride loop: each thread processes multiple elements
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = gridDim.x * blockDim.x;
+    for (int i = idx; i < n; i += stride) {
+        grad_x[i] = x[i] > 0.0f ? grad_y[i] : 0.0f;
+```
+
+> JP: この抜粋は `python/3_FrameworkInterop/customTensorFlowKernel/customTensorFlowKernel.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/3_FrameworkInterop/customTensorFlowKernel/customTensorFlowKernel.py:127-146
+```python
+
+    if key not in _kernel_cache:
+        # Compile the kernel with appropriate architecture
+        opts = ProgramOptions(std="c++17", arch=f"sm_{device.arch}")
+        # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
+        prog = Program(RELU_KERNEL, code_type="c++", options=opts)
+        mod = prog.compile("cubin")
+        forward_kernel = mod.get_kernel("relu_forward_kernel")
+        backward_kernel = mod.get_kernel("relu_backward_kernel")
+        _kernel_cache[key] = (forward_kernel, backward_kernel)
+
+    return _kernel_cache[key]
+
+
+def _launch_relu_forward(x_np):
+    """
+    Internal function: Launch forward CUDA kernel.
+
+    Takes numpy array, returns numpy array.
+    Uses CuPy for array operations and device pointer access, cuda.core for
+```
+
+> JP: この抜粋は `python/3_FrameworkInterop/customTensorFlowKernel/customTensorFlowKernel.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/3_FrameworkInterop/customTensorFlowKernel/customTensorFlowKernel.py:342-361
+```python
+
+        print(f"Max absolute error: {max_error:.2e}")
+
+        if tf.reduce_all(tf.abs(y_custom - y_reference) < 1e-5):
+            # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+            print("[PASS] Forward pass PASSED")
+        else:
+            print("[FAIL] Forward pass FAILED")
+            return 1
+
+    # ========================================================================
+    # Test 2: Backward Pass (Gradient) Correctness
+    # ========================================================================
+    print("\n" + "-" * 70)
+    print("Test 2: Backward Pass")
+    print("-" * 70)
+
+    with tf.device("/GPU:0"):
+        x_custom = tf.random.normal([args.size], dtype=tf.float32)
+        x_reference = tf.identity(x_custom)
+```
+
+> JP: この抜粋は `python/3_FrameworkInterop/customTensorFlowKernel/customTensorFlowKernel.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

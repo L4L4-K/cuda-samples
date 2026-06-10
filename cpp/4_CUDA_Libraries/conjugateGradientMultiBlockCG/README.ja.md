@@ -82,6 +82,198 @@ English anchor: read `conjugateGradientMultiBlockCG` as a focused example of the
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/conjugateGradientMultiBlockCG/CMakeLists.txt:1-51
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(conjugateGradientMultiBlockCG LANGUAGES CUDA CXX)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -maxrregcount=128") # limit register usage to 128 per thread to comply with the maximum number of 32-bit registers per SM
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# This sample is not supported on QNX
+if(CMAKE_SYSTEM_NAME STREQUAL "QNX")
+    message(STATUS "Will not build sample ${PROJECT_NAME} - not supported on QNX")
+    return()
+endif()
+
+# Source file
+# Add target for conjugateGradientMultiBlockCG
+add_executable(conjugateGradientMultiBlockCG conjugateGradientMultiBlockCG.cu)
+
+target_compile_options(conjugateGradientMultiBlockCG PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(conjugateGradientMultiBlockCG PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(conjugateGradientMultiBlockCG PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_link_libraries(conjugateGradientMultiBlockCG PRIVATE
+    # JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    CUDA::cublas
+    CUDA::cusparse
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/conjugateGradientMultiBlockCG/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `conjugateGradientMultiBlockCG.cu`
+
+Source: cpp/4_CUDA_Libraries/conjugateGradientMultiBlockCG/conjugateGradientMultiBlockCG.cu:36-54
+```cuda
+#include <cuda_runtime.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// Utilities and system includes
+#include <cooperative_groups.h>
+#include <cooperative_groups/reduce.h>
+#include <helper_cuda.h>      // helper function CUDA error checking and initialization
+#include <helper_functions.h> // helper for shared functions common to CUDA Samples
+
+namespace cg = cooperative_groups;
+
+const char *sSDKname = "conjugateGradientMultiBlockCG";
+
+#define ENABLE_CPU_DEBUG_CODE 0
+#define THREADS_PER_BLOCK     512
+
+/* genTridiag: generate a random tridiagonal symmetric matrix */
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/conjugateGradientMultiBlockCG/conjugateGradientMultiBlockCG.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/conjugateGradientMultiBlockCG/conjugateGradientMultiBlockCG.cu:214-233
+```cuda
+                              double                 *result,
+                              int                     size,
+                              const cg::thread_block &cta,
+                              const cg::grid_group   &grid)
+{
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    extern __shared__ double tmp[];
+
+    double temp_sum = 0.0;
+    for (int i = grid.thread_rank(); i < size; i += grid.size()) {
+        temp_sum += static_cast<double>(vecA[i] * vecB[i]);
+    }
+
+    cg::thread_block_tile<32> tile32 = cg::tiled_partition<32>(cta);
+
+    temp_sum = cg::reduce(tile32, temp_sum, cg::plus<double>());
+
+    if (tile32.thread_rank() == 0) {
+        tmp[tile32.meta_group_rank()] = temp_sum;
+    }
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/conjugateGradientMultiBlockCG/conjugateGradientMultiBlockCG.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/conjugateGradientMultiBlockCG/conjugateGradientMultiBlockCG.cu:369-388
+```cuda
+               b);
+        return false;
+    }
+}
+
+int main(int argc, char **argv)
+{
+    int         N = 0, nz = 0, *I = NULL, *J = NULL;
+    float      *val = NULL;
+    const float tol = 1e-5f;
+    float      *x;
+    float      *rhs;
+    float       r1;
+    float      *r, *p, *Ax;
+    // JP: `cudaEvent_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+    cudaEvent_t start, stop;
+
+    printf("Starting [%s]...\n", sSDKname);
+
+    // This will pick the best possible CUDA capable device
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/conjugateGradientMultiBlockCG/conjugateGradientMultiBlockCG.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/conjugateGradientMultiBlockCG/conjugateGradientMultiBlockCG.cu:415-457
+```cuda
+    /* Generate a random tridiagonal symmetric matrix in CSR format */
+    N  = 1048576;
+    nz = (N - 2) * 3 + 4;
+
+    // JP: この連続する anchor 群では Unified Memory allocation/prefetch/advice です。migration、host/device visibility、同期位置 を確認します。
+    cudaMallocManaged(reinterpret_cast<void **>(&I), sizeof(int) * (N + 1));
+    cudaMallocManaged(reinterpret_cast<void **>(&J), sizeof(int) * nz);
+    cudaMallocManaged(reinterpret_cast<void **>(&val), sizeof(float) * nz);
+
+    genTridiag(I, J, val, N, nz);
+
+    cudaMallocManaged(reinterpret_cast<void **>(&x), sizeof(float) * N);
+    cudaMallocManaged(reinterpret_cast<void **>(&rhs), sizeof(float) * N);
+
+    double *dot_result;
+
+    cudaMallocManaged(reinterpret_cast<void **>(&dot_result), sizeof(double));
+
+    *dot_result = 0.0;
+
+    // temp memory for CG
+    checkCudaErrors(cudaMallocManaged(reinterpret_cast<void **>(&r), N * sizeof(float)));
+    checkCudaErrors(cudaMallocManaged(reinterpret_cast<void **>(&p), N * sizeof(float)));
+    checkCudaErrors(cudaMallocManaged(reinterpret_cast<void **>(&Ax), N * sizeof(float)));
+
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
+    cudaDeviceSynchronize();
+
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    checkCudaErrors(cudaEventCreate(&start));
+    checkCudaErrors(cudaEventCreate(&stop));
+
+#if ENABLE_CPU_DEBUG_CODE
+    float *Ax_cpu = reinterpret_cast<float *>(malloc(sizeof(float) * N));
+    float *r_cpu  = reinterpret_cast<float *>(malloc(sizeof(float) * N));
+    float *p_cpu  = reinterpret_cast<float *>(malloc(sizeof(float) * N));
+    float *x_cpu  = reinterpret_cast<float *>(malloc(sizeof(float) * N));
+
+    for (int i = 0; i < N; i++) {
+        r_cpu[i]  = 1.0;
+        Ax_cpu[i] = x_cpu[i] = 0.0;
+    }
+
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/conjugateGradientMultiBlockCG/conjugateGradientMultiBlockCG.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

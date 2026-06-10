@@ -110,6 +110,367 @@ English anchor: read `matrixMulDynlinkJIT` as a focused example of the CUDA conc
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/matrixMulDynlinkJIT/CMakeLists.txt:1-54
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(matrixMulDynlinkJIT LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for matrixMulDynlinkJIT
+add_executable(matrixMulDynlinkJIT cuda_drvapi_dynlink.c matrixMulDynlinkJIT.cpp matrixMul_gold.cpp matrixMul_kernel_32_ptxdump.c matrixMul_kernel_64_ptxdump.c)
+
+target_compile_options(matrixMulDynlinkJIT PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(matrixMulDynlinkJIT PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(matrixMulDynlinkJIT PROPERTIES
+    CUDA_SEPARABLE_COMPILATION ON
+    POSITION_INDEPENDENT_CODE OFF
+)
+
+# Only add -no-pie for GCC or Clang
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -no-pie")
+endif()
+
+target_link_libraries(matrixMulDynlinkJIT PUBLIC
+    CUDA::cudart
+    CUDA::cuda_driver
+)
+
+if(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+    target_link_libraries(matrixMulDynlinkJIT PUBLIC dl)
+endif()
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMulDynlinkJIT/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `extras/matrixMul_kernel_32.ptx`
+
+Source: cpp/0_Introduction/matrixMulDynlinkJIT/extras/matrixMul_kernel_32.ptx:1-19
+```ptx
+	.version 1.4
+	.target sm_20, map_f64_to_f32
+	// compiled with C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v4.0\\bin/../open64/lib//be.exe
+	// nvopencc 4.0 built on 2011-02-21
+
+	//-----------------------------------------------------------
+	// Compiling C:/Users/EYOUNG~1.COM/AppData/Local/Temp/tmpxft_000014c0_00000000-11_matrixMul_kernel.cpp3.i (C:/Users/EYOUNG~1.COM/AppData/Local/Temp/ccBI#.a04000)
+	//-----------------------------------------------------------
+
+	//-----------------------------------------------------------
+	// Options:
+	//-----------------------------------------------------------
+	//  Target:ptx, ISA:sm_20, Endian:little, Pointer Size:32
+	//  -O3	(Optimization level)
+	//  -g0	(Debug level)
+	//  -m2	(Report advisories)
+	//-----------------------------------------------------------
+
+	.shared .align 4 .b8 __cuda_local_var_87382_38_non_const_As__6[1024];
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMulDynlinkJIT/extras/matrixMul_kernel_32.ptx` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `extras/matrixMul_kernel_64.ptx`
+
+Source: cpp/0_Introduction/matrixMulDynlinkJIT/extras/matrixMul_kernel_64.ptx:1-19
+```ptx
+	.version 1.4
+	.target sm_20, map_f64_to_f32
+	// compiled with C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v4.0\\bin/../open64/lib//be.exe
+	// nvopencc 4.0 built on 2011-02-21
+
+	//-----------------------------------------------------------
+	// Compiling C:/Users/EYOUNG~1.COM/AppData/Local/Temp/tmpxft_00000c2c_00000000-11_matrixMul_kernel.cpp3.i (C:/Users/EYOUNG~1.COM/AppData/Local/Temp/ccBI#.a04524)
+	//-----------------------------------------------------------
+
+	//-----------------------------------------------------------
+	// Options:
+	//-----------------------------------------------------------
+	//  Target:ptx, ISA:sm_20, Endian:little, Pointer Size:64
+	//  -O3	(Optimization level)
+	//  -g0	(Debug level)
+	//  -m2	(Report advisories)
+	//-----------------------------------------------------------
+
+	.shared .align 4 .b8 __cuda_local_var_87382_38_non_const_As__6[1024];
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMulDynlinkJIT/extras/matrixMul_kernel_64.ptx` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `extras/ptx2c.py`
+
+Source: cpp/0_Introduction/matrixMulDynlinkJIT/extras/ptx2c.py:2-20
+```python
+# JP: この file では Python から CUDA work を起動する境界、stream/event による非同期実行と同期、Runtime/Driver/NVRTC の境界 を確認します。英語の識別子/API/出力文字列は保持します。
+
+from string import *
+import os, getopt, sys, platform
+
+g_Header = '''/* Copyright (c) 2022, NVIDIA CORPORATION. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *  * Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ *  * Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *  * Neither the name of NVIDIA CORPORATION nor the names of its
+ *    contributors may be used to endorse or promote products derived
+ *    from this software without specific prior written permission.
+ *
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMulDynlinkJIT/extras/ptx2c.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `helper_cuda_drvapi.h`
+
+Source: cpp/0_Introduction/matrixMulDynlinkJIT/helper_cuda_drvapi.h:15-33
+```cpp
+#ifndef HELPER_CUDA_DRVAPI_H
+#define HELPER_CUDA_DRVAPI_H
+
+#include <helper_string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#ifndef MAX
+#define MAX(a, b) (a > b ? a : b)
+#endif
+
+#ifndef HELPER_CUDA_DRVAPI_H
+inline int ftoi(float value) { return (value >= 0 ? static_cast<int>(value + 0.5) : static_cast<int>(value - 0.5)); }
+#endif
+
+#ifndef EXIT_WAIVED
+#define EXIT_WAIVED 2
+#endif
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMulDynlinkJIT/helper_cuda_drvapi.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/matrixMulDynlinkJIT/helper_cuda_drvapi.h:137-156
+```cpp
+inline int gpuDeviceInitDRV(int ARGC, const char **ARGV)
+{
+    int cuDevice    = 0;
+    int deviceCount = 0;
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
+    checkCudaErrors(cuInit(0, __CUDA_API_VERSION));
+
+    checkCudaErrors(cuDeviceGetCount(&deviceCount));
+
+    if (deviceCount == 0) {
+        fprintf(stderr, "cudaDeviceInit error: no devices supporting CUDA\n");
+        exit(EXIT_FAILURE);
+    }
+
+    int dev = 0;
+    dev     = getCmdLineArgumentInt(ARGC, (const char **)ARGV, "device=");
+
+    if (dev < 0) {
+        dev = 0;
+    }
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMulDynlinkJIT/helper_cuda_drvapi.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `matrixMul.h`
+
+Source: cpp/0_Introduction/matrixMulDynlinkJIT/matrixMul.h:30-42
+```cpp
+#ifndef _MATRIXMUL_H_
+#define _MATRIXMUL_H_
+
+// Matrix dimensions
+// (chosen as multiples of the thread block size for simplicity)
+#define WA (4 * block_size) // Matrix A width
+#define HA (6 * block_size) // Matrix A height
+#define WB (4 * block_size) // Matrix B width
+#define HB WA               // Matrix B height
+#define WC WB               // Matrix C width
+#define HC HA               // Matrix C height
+
+#endif // _MATRIXMUL_H_
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMulDynlinkJIT/matrixMul.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `matrixMulDynlinkJIT.cpp`
+
+Source: cpp/0_Introduction/matrixMulDynlinkJIT/matrixMulDynlinkJIT.cpp:47-65
+```cpp
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// includes, CUDA
+#include "cuda_drvapi_dynlink.h"
+#include "helper_cuda_drvapi.h"
+
+// includes, project
+#include "matrixMul.h"
+#include "matrixMul_kernel_32_ptxdump.h"
+#include "matrixMul_kernel_64_ptxdump.h"
+
+extern "C" void computeGold(float *, const float *, const float *, unsigned int, unsigned int, unsigned int);
+
+#if defined _MSC_VER
+#pragma warning(disable : 4312)
+#endif
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMulDynlinkJIT/matrixMulDynlinkJIT.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/matrixMulDynlinkJIT/matrixMulDynlinkJIT.cpp:97-116
+```cpp
+    CUfunction cuFunction;
+    int        major, minor, block_size, devID = 0;
+    char       deviceName[256];
+
+    // link to cuda driver dynamically
+    checkCudaErrors(cuInit(0, __CUDA_API_VERSION));
+
+    // This assumes that the user is attempting to specify a explicit device -device=n
+    if (argc > 1) {
+        bool bFound = false;
+
+        for (int param = 0; param < argc; param++) {
+            if (!strncmp(argv[param], "-device", 7)) {
+                int i = (int)strlen(argv[1]);
+
+                while (argv[1][i] != '=') {
+                    i--;
+                }
+
+                devID  = atoi(&argv[1][++i]);
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMulDynlinkJIT/matrixMulDynlinkJIT.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/matrixMulDynlinkJIT/matrixMulDynlinkJIT.cpp:166-185
+```cpp
+
+    // setup JIT compilation options and perform compilation
+    {
+        // in this branch we use compilation with parameters
+        const unsigned int jitNumOptions = 3;
+        CUjit_option      *jitOptions    = new CUjit_option[jitNumOptions];
+        void             **jitOptVals    = new void *[jitNumOptions];
+
+        // set up size of compilation log buffer
+        jitOptions[0]        = CU_JIT_INFO_LOG_BUFFER_SIZE_BYTES;
+        int jitLogBufferSize = 1024;
+        jitOptVals[0]        = (void *)(size_t)jitLogBufferSize;
+
+        // set up pointer to the compilation log buffer
+        jitOptions[1]      = CU_JIT_INFO_LOG_BUFFER;
+        char *jitLogBuffer = new char[jitLogBufferSize];
+        jitOptVals[1]      = jitLogBuffer;
+
+        // set up pointer to set the Maximum # of registers for a particular kernel
+        jitOptions[2]   = CU_JIT_MAX_REGISTERS;
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMulDynlinkJIT/matrixMulDynlinkJIT.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/matrixMulDynlinkJIT/matrixMulDynlinkJIT.cpp:284-303
+```cpp
+        // This is the new CUDA 4.0 API for Kernel Parameter passing and Kernel Launching (simpler method)
+        int   Matrix_Width_A = WA;
+        int   Matrix_Width_B = WB;
+        void *args[5]        = {&d_C, &d_A, &d_B, &Matrix_Width_A, &Matrix_Width_B};
+
+        // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+        checkCudaErrors(cuLaunchKernel(
+            matrixMul, (WC / block_size), (HC / block_size), 1, block_size, block_size, 1, 0, NULL, args, NULL));
+    }
+#else // __CUDA_API_VERSION <= 3020
+    {
+        // This is the older CUDA Driver API for Kernel Parameter passing and Kernel Launching
+        int offset = 0;
+        {
+            // setup execution parameters
+            // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
+            checkCudaErrors(cuParamSetv(matrixMul, offset, &d_C, sizeof(d_C)));
+            offset += sizeof(d_C);
+
+            checkCudaErrors(cuParamSetv(matrixMul, offset, &d_A, sizeof(d_A)));
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMulDynlinkJIT/matrixMulDynlinkJIT.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `matrixMul_gold.cpp`
+
+Source: cpp/0_Introduction/matrixMulDynlinkJIT/matrixMul_gold.cpp:32-57
+```cpp
+extern "C" void computeGold(float *, const float *, const float *, unsigned int, unsigned int, unsigned int);
+
+////////////////////////////////////////////////////////////////////////////////
+//! Compute reference data set
+//! C = A * B
+//! @param C          reference data, computed but preallocated
+//! @param A          matrix A as provided to device
+//! @param B          matrix B as provided to device
+//! @param hA         height of matrix A
+//! @param wB         width of matrix B
+////////////////////////////////////////////////////////////////////////////////
+void computeGold(float *C, const float *A, const float *B, unsigned int hA, unsigned int wA, unsigned int wB)
+{
+    for (unsigned int i = 0; i < hA; ++i)
+        for (unsigned int j = 0; j < wB; ++j) {
+            double sum = 0;
+
+            for (unsigned int k = 0; k < wA; ++k) {
+                double a = A[i * wA + k];
+                double b = B[k * wB + j];
+                sum += a * b;
+            }
+
+            C[i * wB + j] = (float)sum;
+        }
+}
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMulDynlinkJIT/matrixMul_gold.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

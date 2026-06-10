@@ -74,13 +74,101 @@ English anchor: read `reduction` as a focused example of the CUDA concepts used 
 
 ## Concrete Reading Path
 
-- `reduction.py`: focus on `launch`, `blockIdx`, `__syncthreads`, `CUDA`, `Device`.
+- `reduction.py`: focus on `launch`, `CUDA`, `blockIdx`, `__syncthreads`, `Device`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `reduction.py`
+
+Source: python/2_CoreConcepts/reduction/reduction.py:2-20
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    distribution and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/reduction/reduction.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/reduction/reduction.py:34-57
+```python
+Key Features:
+- Block-level reduction using shared memory
+- Each thread loads 2 elements to reduce global memory traffic
+- Sequential addressing tree reduction pattern
+- No atomic operations - eliminates serialization bottleneck
+- Device memory via CuPy; ``launch()`` takes pointers as ``ndarray.data.ptr``
+- CuPy uses ``cp.cuda.Stream.from_external(stream)``.
+"""
+
+import argparse
+import os
+import sys
+import time
+
+try:
+    # JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
+    import cupy as cp
+    import numpy as np
+    from cuda.core import (
+        Device,
+        EventOptions,
+        LaunchConfig,
+        Program,
+        ProgramOptions,
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/reduction/reduction.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/reduction/reduction.py:103-122
+```python
+    int sum = 0;
+    if (gid < n) sum += input[gid];
+    if (gid + blockSize < n) sum += input[gid + blockSize];
+
+    sdata_int[tid] = sum;
+    __syncthreads();
+
+    // Tree reduction with sequential addressing
+    for (unsigned int s = blockSize / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            sdata_int[tid] += sdata_int[tid + s];
+        }
+        __syncthreads();
+    }
+
+    // Write block result
+    if (tid == 0) {
+        blockSums[blockIdx.x] = sdata_int[0];
+    }
+}
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/reduction/reduction.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

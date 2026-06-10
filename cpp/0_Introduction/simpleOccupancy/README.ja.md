@@ -80,6 +80,153 @@ English anchor: read `simpleOccupancy` as a focused example of the CUDA concepts
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/simpleOccupancy/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleOccupancy LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simpleOccupancy
+add_executable(simpleOccupancy simpleOccupancy.cu)
+
+target_compile_options(simpleOccupancy PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleOccupancy PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simpleOccupancy PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleOccupancy/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleOccupancy.cu`
+
+Source: cpp/0_Introduction/simpleOccupancy/simpleOccupancy.cu:29-53
+```cuda
+#include <cstdint>
+#include <helper_cuda.h> // helper functions for CUDA error check
+#include <iostream>
+
+const int manualBlockSize = 32;
+
+////////////////////////////////////////////////////////////////////////////////
+// Test kernel
+//
+// This kernel squares each array element. Each thread addresses
+// himself with threadIdx and blockIdx, so that it can handle any
+// execution configuration, including anything the launch configurator
+// API suggests.
+////////////////////////////////////////////////////////////////////////////////
+__global__ void square(uint32_t *array, int arrayCount)
+{
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    extern __shared__ int dynamicSmem[];
+    // JP: `threadIdx`, `blockIdx`, `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int                   idx = threadIdx.x + blockIdx.x * blockDim.x;
+
+    if (idx < arrayCount) {
+        array[idx] *= array[idx];
+    }
+}
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleOccupancy/simpleOccupancy.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleOccupancy/simpleOccupancy.cu:147-204
+```cuda
+    checkCudaErrors(cudaEventRecord(start));
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    square<<<gridSize, blockSize, dynamicSMemUsage>>>(array, arrayCount);
+    checkCudaErrors(cudaEventRecord(end));
+
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    checkCudaErrors(cudaDeviceSynchronize());
+
+    // Calculate occupancy
+    //
+    potentialOccupancy = reportPotentialOccupancy((void *)square, blockSize, dynamicSMemUsage);
+
+    std::cout << "Potential occupancy: " << potentialOccupancy * 100 << "%" << std::endl;
+
+    // Report elapsed time
+    //
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    checkCudaErrors(cudaEventElapsedTime(&elapsedTime, start, end));
+    std::cout << "Elapsed time: " << elapsedTime << "ms" << std::endl;
+
+    return 0;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// The test
+//
+// The test generates an array and squares it with a CUDA kernel, then
+// verifies the result.
+////////////////////////////////////////////////////////////////////////////////
+static int test(bool automaticLaunchConfig, const int count = 1000000)
+{
+    uint32_t *array;
+    uint32_t *dArray;
+    int       size = count * sizeof(uint32_t);
+
+    array = new uint32_t[count];
+
+    for (uint32_t i = 0; i < count; i += 1) {
+        array[i] = i;
+    }
+
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc(&dArray, size));
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpy(dArray, array, size, cudaMemcpyHostToDevice));
+
+    for (uint32_t i = 0; i < count; i += 1) {
+        array[i] = 0;
+    }
+
+    launchConfig(dArray, count, automaticLaunchConfig);
+
+    checkCudaErrors(cudaMemcpy(array, dArray, size, cudaMemcpyDeviceToHost));
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaFree(dArray));
+
+    // Verify the return data
+    // Both GPU and CPU use uint32_t * uint32_t, which has well-defined overflow behavior (modulo 2^32)
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleOccupancy/simpleOccupancy.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

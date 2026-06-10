@@ -81,6 +81,116 @@ English anchor: read `processCheckpoint` as a focused example of the CUDA concep
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `processCheckpoint.py`
+
+Source: python/2_CoreConcepts/processCheckpoint/processCheckpoint.py:2-20
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS `AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/processCheckpoint/processCheckpoint.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/processCheckpoint/processCheckpoint.py:33-52
+```python
+lock/checkpoint/restore/unlock cycle on its own PID, and re-hashes
+the buffer afterwards to verify that the GPU memory contents
+survived the round trip.
+"""
+
+import argparse
+import hashlib
+import os
+import sys
+import time
+from dataclasses import dataclass
+from typing import List
+
+import numpy as np
+# JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
+from cuda.bindings import driver as cudrv
+from cuda.core import (
+    Device,
+    LaunchConfig,
+    Program,
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/processCheckpoint/processCheckpoint.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/processCheckpoint/processCheckpoint.py:58-77
+```python
+# Small fill kernel: deterministic, non-trivial pattern so the before/after
+# hashes would disagree on any bit flip.
+KERNEL_SRC = r"""
+extern "C" __global__ void fill_pattern(float *out, unsigned long long n)
+{
+    unsigned long long i = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (i < n) {
+        float v = (float)(i & 0xFFFFu) * 1e-3f + 1.0f;
+        float u = (float)((i >> 16) & 0xFFFFu) * 1e-4f + 0.5f;
+        // A handful of dependent ops per element. Deterministic given i.
+        for (int k = 0; k < 8; ++k) {
+            v = v * 1.000001f + u;
+            u = u * 0.999999f + v * 1e-6f;
+        }
+        out[i] = v + u;
+    }
+}
+"""
+
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/processCheckpoint/processCheckpoint.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/processCheckpoint/processCheckpoint.py:253-272
+```python
+        print(f"Buffer hash (after):  {hash_after}")
+
+        if hash_before != hash_after:
+            print()
+            # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+            print("FAIL: GPU buffer contents changed across checkpoint/restore.")
+            return 1
+
+        print()
+        print("PASS: GPU buffer contents survived checkpoint/restore.")
+    finally:
+        # JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        device_buffer.close(stream)
+
+    print()
+    print("Done")
+    return 0
+
+
+if __name__ == "__main__":
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/processCheckpoint/processCheckpoint.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

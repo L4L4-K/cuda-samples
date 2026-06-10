@@ -73,13 +73,218 @@ English anchor: read `simpleCUFFT_2d_MGPU` as a focused example of the CUDA conc
 
 ## Concrete Reading Path
 
-- `simpleCUFFT_2d_MGPU.cu`: focus on `CUFFT_SUCCESS`, `cudaLibXtDesc`, `cufftComplex`, `cufftXtMemcpy`, `CUFFT`.
+- `simpleCUFFT_2d_MGPU.cu`: focus on `CUFFT_SUCCESS`, `CUDA`, `cudaLibXtDesc`, `cufftComplex`, `cufftXtMemcpy`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/simpleCUFFT_2d_MGPU/CMakeLists.txt:1-51
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleCUFFT_2d_MGPU LANGUAGES CUDA)
+
+# Disable response file for libraries on QNX as qcc does not support lib paths with double quotes
+if(CMAKE_SYSTEM_NAME STREQUAL "QNX")
+    set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_LIBRARIES OFF)
+endif()
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simpleCUFFT_2d_MGPU
+add_executable(simpleCUFFT_2d_MGPU simpleCUFFT_2d_MGPU.cu)
+
+if(MSVC)
+    add_compile_definitions(_USE_MATH_DEFINES)
+endif()
+
+target_compile_options(simpleCUFFT_2d_MGPU PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleCUFFT_2d_MGPU PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simpleCUFFT_2d_MGPU PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_link_libraries(simpleCUFFT_2d_MGPU PRIVATE
+    # JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    CUDA::cufft
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUFFT_2d_MGPU/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleCUFFT_2d_MGPU.cu`
+
+Source: cpp/4_CUDA_Libraries/simpleCUFFT_2d_MGPU/simpleCUFFT_2d_MGPU.cu:42-88
+```cuda
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// CUDA runtime
+#include <cuda_runtime.h>
+
+// CUFFT Header file
+#include <cufftXt.h>
+
+// helper functions and utilities to work with CUDA
+#include <helper_cuda.h>
+#include <helper_functions.h>
+
+// Complex data type
+typedef float2 Complex;
+
+// Data configuration
+const int GPU_COUNT = 2;
+const int BSZ_Y     = 4;
+const int BSZ_X     = 4;
+
+// Forward Declaration
+void solvePoissonEquation(cudaLibXtDesc *, cudaLibXtDesc *, float **, int, int);
+
+// JP: `cufftComplex`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+__global__ void solvePoisson(cufftComplex *, cufftComplex *, float *, int, int, int n_gpu);
+
+///////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    printf("\nPoisson equation using CUFFT library on Multiple GPUs is "
+           "starting...\n\n");
+
+    int GPU_N;
+    checkCudaErrors(cudaGetDeviceCount(&GPU_N));
+
+    if (GPU_N < GPU_COUNT) {
+        printf("No. of GPU on node %d\n", GPU_N);
+        printf("Two GPUs are required to run simpleCUFFT_2d_MGPU sample code\n");
+        exit(EXIT_WAIVED);
+    }
+
+    int *major_minor         = (int *)malloc(sizeof(int) * GPU_N * 2);
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUFFT_2d_MGPU/simpleCUFFT_2d_MGPU.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/simpleCUFFT_2d_MGPU/simpleCUFFT_2d_MGPU.cu:116-135
+```cuda
+            break;
+        }
+    }
+
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    free(major_minor);
+    if (!found2IdenticalGPUs) {
+        printf("No Two GPUs with same architecture found\nWaiving simpleCUFFT_2d_MGPU "
+               "sample\n");
+        exit(EXIT_WAIVED);
+    }
+
+    int    N    = 64;
+    float  xMAX = 1.0f, xMIN = 0.0f, yMIN = 0.0f, h = (xMAX - xMIN) / ((float)N), s = 0.1f, s2 = s * s;
+    float *x, *y, *f, *u_a, r2;
+
+    x   = (float *)malloc(sizeof(float) * N * N);
+    y   = (float *)malloc(sizeof(float) * N * N);
+    f   = (float *)malloc(sizeof(float) * N * N);
+    u_a = (float *)malloc(sizeof(float) * N * N);
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUFFT_2d_MGPU/simpleCUFFT_2d_MGPU.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/simpleCUFFT_2d_MGPU/simpleCUFFT_2d_MGPU.cu:209-228
+```cuda
+
+    for (int i = 0; i < nGPUs; i++) {
+        cudaSetDevice(whichGPUs[i]);
+        // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+        cudaMalloc((void **)&d_k[i], sizeof(float) * N);
+        // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+        cudaMemcpy(d_k[i], k, sizeof(float) * N, cudaMemcpyHostToDevice);
+    }
+
+    // Create a variable on device
+    // d_f - variable on device to store the input data
+    // d_d_f - variable that store the natural order of d_f data
+    // d_out - device output
+    cudaLibXtDesc *d_f, *d_d_f, *d_out;
+
+    // cufftXtMalloc() - Malloc data on multiple GPUs
+
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+    result = cufftXtMalloc(planComplex, (cudaLibXtDesc **)&d_f, CUFFT_XT_FORMAT_INPLACE);
+    if (result != CUFFT_SUCCESS) {
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUFFT_2d_MGPU/simpleCUFFT_2d_MGPU.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/simpleCUFFT_2d_MGPU/simpleCUFFT_2d_MGPU.cu:351-378
+```cuda
+
+    for (int i = 0; i < nGPUs; i++) {
+        device = d_ft_k->descriptor->GPUs[i];
+        cudaSetDevice(device);
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+        solvePoisson<<<dimGrid, dimBlock>>>(
+            (cufftComplex *)d_ft->descriptor->data[i], (cufftComplex *)d_ft_k->descriptor->data[i], k[i], N, i, nGPUs);
+    }
+
+    // Wait for device to finish all operation
+    for (int i = 0; i < nGPUs; i++) {
+        device = d_ft_k->descriptor->GPUs[i];
+        cudaSetDevice(device);
+        // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+        cudaDeviceSynchronize();
+
+        // Check if kernel execution generated and error
+        getLastCudaError("Kernel execution failed [ solvePoisson ]");
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Kernel for Solving Poisson equation on GPU
+////////////////////////////////////////////////////////////////////////////////
+__global__ void solvePoisson(cufftComplex *ft, cufftComplex *ft_k, float *k, int N, int gpu_id, int n_gpu)
+{
+    // JP: `threadIdx`, `blockIdx`, `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int i     = threadIdx.x + blockIdx.x * blockDim.x;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUFFT_2d_MGPU/simpleCUFFT_2d_MGPU.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

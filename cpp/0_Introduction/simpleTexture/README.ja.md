@@ -74,13 +74,202 @@ English anchor: read `simpleTexture` as a focused example of the CUDA concepts u
 
 ## Concrete Reading Path
 
-- `simpleTexture.cu`: focus on `cuArray`, `CUDA`, `blockIdx`, `blockDim`, `threadIdx`.
+- `simpleTexture.cu`: focus on `cuArray`, `CUDA`, `launch`, `blockIdx`, `blockDim`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/simpleTexture/CMakeLists.txt:1-51
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleTexture LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simpleTexture
+add_executable(simpleTexture simpleTexture.cu)
+
+target_compile_options(simpleTexture PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleTexture PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simpleTexture PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Copy data files to output directory
+add_custom_command(TARGET simpleTexture POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_CURRENT_SOURCE_DIR}/data/teapot512.pgm
+    ${CMAKE_CURRENT_BINARY_DIR}/
+)
+
+# Copy data files to output directory
+add_custom_command(TARGET simpleTexture POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_CURRENT_SOURCE_DIR}/data/ref_rotated.pgm
+    ${CMAKE_CURRENT_BINARY_DIR}/
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleTexture/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleTexture.cu`
+
+Source: cpp/0_Introduction/simpleTexture/simpleTexture.cu:38-56
+```cuda
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#ifdef _WIN32
+#define WINDOWS_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
+// Includes CUDA
+#include <cuda_runtime.h>
+
+// Utilities and timing functions
+#include <helper_functions.h> // includes cuda.h and cuda_runtime_api.h
+
+// CUDA helper functions
+#include <helper_cuda.h> // helper functions for CUDA error check
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleTexture/simpleTexture.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleTexture/simpleTexture.cu:75-94
+```cuda
+//! @param outputData  output data in global memory
+////////////////////////////////////////////////////////////////////////////////
+__global__ void transformKernel(float *outputData, int width, int height, float theta, cudaTextureObject_t tex)
+{
+    // calculate normalized texture coordinates
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    float u  = (float)x - (float)width / 2;
+    float v  = (float)y - (float)height / 2;
+    float tu = u * cosf(theta) - v * sinf(theta);
+    float tv = v * cosf(theta) + u * sinf(theta);
+
+    tu /= (float)width;
+    tv /= (float)height;
+
+    // read from texture and write to global memory
+    outputData[y * width + x] = tex2D<float>(tex, tu + 0.5f, tv + 0.5f);
+}
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleTexture/simpleTexture.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleTexture/simpleTexture.cu:98-117
+```cuda
+void runTest(int argc, char **argv);
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    printf("%s starting...\n", sampleName);
+
+    // Process command-line arguments
+    if (argc > 1) {
+        if (checkCmdLineFlag(argc, (const char **)argv, "input")) {
+            getCmdLineArgumentString(argc, (const char **)argv, "input", (char **)&imageFilename);
+
+            if (checkCmdLineFlag(argc, (const char **)argv, "reference")) {
+                getCmdLineArgumentString(argc, (const char **)argv, "reference", (char **)&refFilename);
+            }
+            else {
+                printf("-input flag should be used with -reference flag");
+                exit(EXIT_FAILURE);
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleTexture/simpleTexture.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleTexture/simpleTexture.cu:150-189
+```cuda
+
+    unsigned int size = width * height * sizeof(float);
+    printf("Loaded '%s', %d x %d pixels\n", imageFilename, width, height);
+
+    // Load reference image from image (output)
+    float *hDataRef = (float *)malloc(size);
+    char  *refPath  = sdkFindFilePath(refFilename, argv[0]);
+
+    if (refPath == NULL) {
+        printf("Unable to find reference image file: %s\n", refFilename);
+        exit(EXIT_FAILURE);
+    }
+
+    sdkLoadPGM(refPath, &hDataRef, &width, &height);
+
+    // Allocate device memory for result
+    float *dData = NULL;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc((void **)&dData, size));
+
+    // Allocate array and copy image data
+    cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc(32, 0, 0, 0, cudaChannelFormatKindFloat);
+    // JP: `cudaArray`, `cuArray`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
+    cudaArray            *cuArray;
+    checkCudaErrors(cudaMallocArray(&cuArray, &channelDesc, width, height));
+    // JP: `cudaMemcpyToArray`, `cuArray`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpyToArray(cuArray, 0, 0, hData, size, cudaMemcpyHostToDevice));
+
+    cudaTextureObject_t tex;
+    cudaResourceDesc    texRes;
+    memset(&texRes, 0, sizeof(cudaResourceDesc));
+
+    texRes.resType         = cudaResourceTypeArray;
+    texRes.res.array.array = cuArray;
+
+    cudaTextureDesc texDescr;
+    memset(&texDescr, 0, sizeof(cudaTextureDesc));
+
+    texDescr.normalizedCoords = true;
+    texDescr.filterMode       = cudaFilterModeLinear;
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleTexture/simpleTexture.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 
@@ -91,6 +280,7 @@ English anchor: read `simpleTexture` as a focused example of the CUDA concepts u
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
 | `cudaMemcpyToArray` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaDestroyTextureObject` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `blockIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `blockDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `threadIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
@@ -99,7 +289,6 @@ English anchor: read `simpleTexture` as a focused example of the CUDA concepts u
 | `cudaCreateTextureObject` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaMemcpy` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
-| `cudaFreeArray` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。

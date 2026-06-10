@@ -79,6 +79,189 @@ English anchor: read `cuDLALayerwiseStatsStandalone` as a focused example of the
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/8_Platform_Specific/Tegra/cuDLALayerwiseStatsStandalone/CMakeLists.txt:1-65
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../../cmake/Modules")
+
+# JP: `cuDLALayerwiseStatsStandalone`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
+project(cuDLALayerwiseStatsStandalone LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 87 110)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../../Common)
+
+# JP: この連続する anchor 群では CMake CUDA target/link/architecture wiring です。source、target、optional dependency、platform condition を確認します。
+find_package(NVSCI)
+find_library(CUDLA_LIB cudla PATHS ${CUDAToolkit_LIBRARY_DIR} ${CMAKE_LIBRARY_PATH})
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    if(CUDLA_LIB)
+        if(NVSCI_FOUND)
+            # Source file
+            # Add target for cuDLALayerwiseStatsStandalone
+            add_executable(cuDLALayerwiseStatsStandalone main.cpp)
+
+            target_compile_options(cuDLALayerwiseStatsStandalone PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+            target_compile_features(cuDLALayerwiseStatsStandalone PRIVATE cxx_std_17 cuda_std_17)
+
+            set_target_properties(cuDLALayerwiseStatsStandalone PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+            target_include_directories(cuDLALayerwiseStatsStandalone PUBLIC
+                ${CUDAToolkit_INCLUDE_DIRS}
+                ${NVSCI_INCLUDE_DIRS}
+            )
+
+            target_link_libraries(cuDLALayerwiseStatsStandalone
+                ${CUDLA_LIB}
+                ${NVSCI_LIBRARIES}
+            )
+        else()
+            message(STATUS "NvSCI not found - will not build sample 'cuDLALayerwiseStatsStandalone'")
+        endif()
+    else()
+        message(STATUS "CUDLA not found - will not build sample 'cuDLALayerwiseStatsStandalone'")
+    endif()
+else()
+    message(STATUS "Will not build sample cuDLALayerwiseStatsStandalone - requires Linux OS")
+endif()
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/cuDLALayerwiseStatsStandalone/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `main.cpp`
+
+Source: cpp/8_Platform_Specific/Tegra/cuDLALayerwiseStatsStandalone/main.cpp:29-47
+```cpp
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <sstream>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include "cudla.h"
+#include "cudlaExternalEtbl.hpp"
+#include "nvscibuf.h"
+#include "nvscierror.h"
+#include "nvscisync.h"
+
+#define MAX_FILENAME_LEN    200
+#define RESERVED_SUFFIX_LEN 10
+
+#define DPRINTF(...) printf(__VA_ARGS__)
+
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/cuDLALayerwiseStatsStandalone/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/cuDLALayerwiseStatsStandalone/main.cpp:112-131
+```cpp
+{
+    uint32_t ii = 0;
+
+    if (resourceList->inputTensorDesc != NULL) {
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        free(resourceList->inputTensorDesc);
+        resourceList->inputTensorDesc = NULL;
+    }
+    if (resourceList->outputTensorDesc != NULL) {
+        free(resourceList->outputTensorDesc);
+        resourceList->outputTensorDesc = NULL;
+    }
+
+    if (resourceList->outputTaskStatisticsDesc != NULL) {
+        free(resourceList->outputTaskStatisticsDesc);
+        resourceList->outputTaskStatisticsDesc = NULL;
+    }
+
+    if (resourceList->loadableData != NULL) {
+        free(resourceList->loadableData);
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/cuDLALayerwiseStatsStandalone/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/cuDLALayerwiseStatsStandalone/main.cpp:448-467
+```cpp
+    keyValue[1].value           = (void *)&cpuPerm;
+    keyValue[1].len             = sizeof(cpuPerm);
+    return NvSciSyncAttrListSetAttrs(list, keyValue, 2);
+}
+
+int main(int argc, char **argv)
+{
+    cudlaDevHandle devHandle;
+    cudlaModule    moduleHandle;
+    cudlaStatus    err;
+    uint32_t       statSupport  = 0;
+    uint32_t       dlaFreqInMHz = 0;
+    FILE          *fp           = NULL;
+    struct stat    st;
+    size_t         file_size;
+    size_t         actually_read = 0;
+    unsigned char *loadableData  = NULL;
+    char           filename[MAX_FILENAME_LEN];
+    const char    *suffix = ".csv";
+
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/cuDLALayerwiseStatsStandalone/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/cuDLALayerwiseStatsStandalone/main.cpp:500-519
+```cpp
+    DPRINTF("The file size = %ld\n", file_size);
+
+    dlaFreqInMHz = atoi(argv[2]);
+    statSupport  = atoi(argv[3]);
+
+    loadableData = (unsigned char *)malloc(file_size);
+    if (loadableData == NULL) {
+        DPRINTF("Cannot Allocate memory for loadable\n");
+        return 1;
+    }
+
+    actually_read = fread(loadableData, 1, file_size, fp);
+    if (actually_read != file_size) {
+        free(loadableData);
+        DPRINTF("Read wrong size\n");
+        return 1;
+    }
+    fclose(fp);
+
+    resourceList.loadableData = loadableData;
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/cuDLALayerwiseStatsStandalone/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

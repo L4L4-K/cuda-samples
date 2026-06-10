@@ -86,6 +86,249 @@ English anchor: read `EGLSync_CUDAEvent_Interop` as a focused example of the CUD
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/8_Platform_Specific/Tegra/EGLSync_CUDAEvent_Interop/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../../cmake/Modules")
+
+project(EGLSync_CUDAEvent_Interop LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 87 110)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../../Common)
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/EGLSync_CUDAEvent_Interop/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `EGLSync_CUDAEvent_Interop.cu`
+
+Source: cpp/8_Platform_Specific/Tegra/EGLSync_CUDAEvent_Interop/EGLSync_CUDAEvent_Interop.cu:35-53
+```cuda
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <GLES3/gl32.h>
+#include <cuda.h>
+#include <cudaEGL.h>
+#include <helper_cuda_drvapi.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#include "egl_common.h"
+#include "graphics_interface.h"
+
+//---------------------------DEFINES---------------------------------//
+#define MAX_ITR 100
+
+#define FAILURE 0
+#define SUCCESS 1
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/EGLSync_CUDAEvent_Interop/EGLSync_CUDAEvent_Interop.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/EGLSync_CUDAEvent_Interop/EGLSync_CUDAEvent_Interop.cu:177-196
+```cuda
+verify_and_update_kernel(CUsurfObject write, CUsurfObject read, char expected, char newval, int width, int height);
+extern "C" cudaError_t cudaGetValueMismatch();
+
+//-----------------------FUNCTION DEFINITIONS------------------------//
+
+int main(int argc, char *argv[])
+{
+#if defined(__linux__)
+    setenv("DISPLAY", ":0", 0);
+#endif
+
+    parseCmdLine(argc, argv);
+    atexit(exitHandler);
+
+    checkSync(argc, argv);
+    return 0;
+}
+
+int parseCmdLine(int argc, char **argv)
+{
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/EGLSync_CUDAEvent_Interop/EGLSync_CUDAEvent_Interop.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/EGLSync_CUDAEvent_Interop/EGLSync_CUDAEvent_Interop.cu:291-310
+```cuda
+
+#if (defined(__arm__) || defined(__aarch64__)) && defined(__linux__)
+    graphics_setup_window(0, 0, width, height, "EGLSync_CUDA_Interop");
+#endif
+
+    pSurf_read  = (unsigned char *)malloc(bufferSize);
+    pSurf_write = (unsigned char *)malloc(bufferSize);
+    if (pSurf_read == NULL || pSurf_write == NULL) {
+        printf("malloc failed\n");
+        cleanup(FAILURE);
+    }
+
+    for (x = 0; x < width; x++) {
+        for (y = 0; y < height; y++) {
+            pSurf_read[(y * width + x) * 4]      = 1;
+            pSurf_read[(y * width + x) * 4 + 1]  = 1;
+            pSurf_read[(y * width + x) * 4 + 2]  = 1;
+            pSurf_read[(y * width + x) * 4 + 3]  = 1;
+            pSurf_write[(y * width + x) * 4]     = 0;
+            pSurf_write[(y * width + x) * 4 + 1] = 0;
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/EGLSync_CUDAEvent_Interop/EGLSync_CUDAEvent_Interop.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/EGLSync_CUDAEvent_Interop/EGLSync_CUDAEvent_Interop.cu:419-438
+```cuda
+        printf("Using CPU Sync path\n");
+        checkSyncOnCPU();
+    }
+
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    free(pSurf_read);
+    free(pSurf_write);
+    cleanup(SUCCESS);
+}
+
+void checkSyncOnCPU(void)
+{
+    int                z = 0;
+    unsigned char      expectedData, newData;
+    CUresult           status = CUDA_SUCCESS;
+    CUDA_RESOURCE_DESC wdsc, rdsc;
+    memset(&wdsc, 0, sizeof(wdsc));
+    memset(&rdsc, 0, sizeof(rdsc));
+
+    expectedData = 0;
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/EGLSync_CUDAEvent_Interop/EGLSync_CUDAEvent_Interop.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `egl_common.h`
+
+Source: cpp/8_Platform_Specific/Tegra/EGLSync_CUDAEvent_Interop/egl_common.h:33-73
+```cpp
+#ifndef _EGL_COMMON_H_
+#define _EGL_COMMON_H_
+
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/time.h>
+#include <unistd.h>
+
+#include "cuda.h"
+#include "cudaEGL.h"
+
+EGLImageKHR eglImage;
+
+#define EXTENSION_LIST(T)                                \
+    T(PFNEGLCREATEIMAGEKHRPROC, eglCreateImageKHR)       \
+    T(PFNEGLDESTROYIMAGEKHRPROC, eglDestroyImageKHR)     \
+    T(PFNEGLCREATESYNCKHRPROC, eglCreateSyncKHR)         \
+    T(PFNEGLDESTROYSYNCKHRPROC, eglDestroySyncKHR)       \
+    T(PFNEGLCLIENTWAITSYNCKHRPROC, eglClientWaitSyncKHR) \
+    T(PFNEGLGETSYNCATTRIBKHRPROC, eglGetSyncAttribKHR)   \
+    T(PFNEGLCREATESYNC64KHRPROC, eglCreateSync64KHR)     \
+    T(PFNEGLWAITSYNCKHRPROC, eglWaitSyncKHR)
+
+#define eglCreateImageKHR    my_eglCreateImageKHR
+#define eglDestroyImageKHR   my_eglDestroyImageKHR
+#define eglCreateSyncKHR     my_eglCreateSyncKHR
+#define eglDestroySyncKHR    my_eglDestroySyncKHR
+#define eglClientWaitSyncKHR my_eglClientWaitSyncKHR
+#define eglGetSyncAttribKHR  my_eglGetSyncAttribKHR
+#define eglCreateSync64KHR   my_eglCreateSync64KHR
+#define eglWaitSyncKHR       my_eglWaitSyncKHR
+
+#define EXTLST_DECL(tx, x)   tx my_##x = NULL;
+#define EXTLST_EXTERN(tx, x) extern tx my_##x;
+#define EXTLST_ENTRY(tx, x)  {(extlst_fnptr_t *)&my_##x, #x},
+
+int eglSetupExtensions(void);
+#endif
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/EGLSync_CUDAEvent_Interop/egl_common.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `graphics_interface.h`
+
+Source: cpp/8_Platform_Specific/Tegra/EGLSync_CUDAEvent_Interop/graphics_interface.h:29-47
+```cpp
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+Display *display;
+int      screen;
+Window   win = 0;
+
+void error_exit(const char *format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    vfprintf(stderr, format, args);
+    va_end(args);
+    exit(1);
+}
+
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/EGLSync_CUDAEvent_Interop/graphics_interface.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/EGLSync_CUDAEvent_Interop/graphics_interface.h:119-138
+```cpp
+        error_exit("EGL failed to initialize\n");
+
+    if (!eglChooseConfig(eglDisplay, configAttrs, NULL, 0, &configCount) || !configCount)
+        error_exit("EGL failed to return any matching configurations\n");
+
+    configList = (EGLConfig *)malloc(configCount * sizeof(EGLConfig));
+
+    if (!eglChooseConfig(eglDisplay, configAttrs, configList, configCount, &configCount) || !configCount)
+        error_exit("EGL failed to populate configuration list\n");
+
+    Window               xRootWindow = DefaultRootWindow(display);
+    XSetWindowAttributes xCreateWindowAttributes;
+    xCreateWindowAttributes.event_mask = ExposureMask;
+    win                                = XCreateWindow(display,
+                        xRootWindow,
+                        0,
+                        0,
+                        width,
+                        height,
+                        0,
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/EGLSync_CUDAEvent_Interop/graphics_interface.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

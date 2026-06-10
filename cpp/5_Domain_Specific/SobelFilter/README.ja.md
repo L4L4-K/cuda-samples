@@ -82,7 +82,7 @@ English anchor: read `SobelFilter` as a focused example of the CUDA concepts use
 
 ## Concrete Reading Path
 
-- `SobelFilter.cpp`: focus on `CUDA`, `cudaGraphicsResource`, `cudaMalloc`, `cudaDeviceSynchronize`, `cudaMemcpy`.
+- `SobelFilter.cpp`: focus on `CUDA`, `launch`, `cudaGraphicsResource`, `cudaMalloc`, `cudaDeviceSynchronize`.
 - `SobelFilter_kernels.cu`: focus on `blockIdx`, `blockDim`, `threadIdx`, `cudaTextureObject_t`, `CUDA`.
 - `SobelFilter_kernels.h`: focus on control flow and helper functions.
 
@@ -92,6 +92,261 @@ English anchor: read `SobelFilter` as a focused example of the CUDA concepts use
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/5_Domain_Specific/SobelFilter/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(SobelFilter LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/SobelFilter/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `SobelFilter.cpp`
+
+Source: cpp/5_Domain_Specific/SobelFilter/SobelFilter.cpp:30-48
+```cpp
+#include <helper_gl.h>
+#if defined(__APPLE__) || defined(MACOSX)
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#include <GLUT/glut.h>
+#ifndef glutCloseFunc
+#define glutCloseFunc glutWMCloseFunc
+#endif
+#else
+#include <GL/freeglut.h>
+#endif
+
+// CUDA utilities and system includes
+#include <cuda_gl_interop.h>
+#include <cuda_runtime.h>
+
+// Includes
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/SobelFilter/SobelFilter.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/SobelFilter/SobelFilter.cpp:134-153
+```cpp
+    // Sobel operation
+    Pixel *data = NULL;
+
+    // map PBO to get CUDA device pointer
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+    checkCudaErrors(cudaGraphicsMapResources(1, &cuda_pbo_resource, 0));
+    size_t num_bytes;
+    checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&data, &num_bytes, cuda_pbo_resource));
+    // printf("CUDA mapped PBO: May access %ld bytes\n", num_bytes);
+
+    sobelFilter(data, imWidth, imHeight, g_SobelDisplayMode, imageScale);
+    checkCudaErrors(cudaGraphicsUnmapResources(1, &cuda_pbo_resource, 0));
+
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glBindTexture(GL_TEXTURE_2D, texid);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo_buffer);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, imWidth, imHeight, GL_LUMINANCE, GL_UNSIGNED_BYTE, OFFSET(0));
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/SobelFilter/SobelFilter.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/SobelFilter/SobelFilter.cpp:341-360
+```cpp
+        exit(EXIT_FAILURE);
+    }
+
+    initializeData(image_path);
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    free(image_path);
+}
+
+void initGL(int *argc, char **argv)
+{
+    glutInit(argc, argv);
+    glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE);
+    glutInitWindowSize(wWidth, wHeight);
+    glutCreateWindow("CUDA Edge Detection");
+
+    if (!isGLVersionSupported(1, 5)
+        || !areGLExtensionsSupported("GL_ARB_vertex_buffer_object GL_ARB_pixel_buffer_object")) {
+        fprintf(stderr, "Error: failed to get minimal extensions for demo\n");
+        fprintf(stderr, "This sample requires:\n");
+        fprintf(stderr, "  OpenGL version 1.5\n");
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/SobelFilter/SobelFilter.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/SobelFilter/SobelFilter.cpp:370-389
+```cpp
+    int devID = findCudaDevice(argc, (const char **)argv);
+
+    loadDefaultImage(argv[0]);
+
+    Pixel *d_result;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc((void **)&d_result, imWidth * imHeight * sizeof(Pixel)));
+
+    char *ref_file = NULL;
+    char  dump_file[256];
+
+    int mode = 0;
+    mode     = getCmdLineArgumentInt(argc, (const char **)argv, "mode");
+    getCmdLineArgumentString(argc, (const char **)argv, "file", &ref_file);
+
+    switch (mode) {
+    case 0:
+        g_SobelDisplayMode = SOBELDISPLAY_IMAGE;
+        sprintf(dump_file, "teapot_orig.pgm");
+        break;
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/SobelFilter/SobelFilter.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `SobelFilter_kernels.cu`
+
+Source: cpp/5_Domain_Specific/SobelFilter/SobelFilter_kernels.cu:29-56
+```cuda
+#include <cooperative_groups.h>
+#include <cuda_runtime.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+namespace cg = cooperative_groups;
+
+#include <helper_string.h>
+
+#include "SobelFilter_kernels.h"
+
+// Texture object for reading image
+cudaTextureObject_t             texObject;
+// JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+extern __shared__ unsigned char LocalBlock[];
+static cudaArray               *array = NULL;
+
+#define RADIUS 1
+
+#ifdef FIXED_BLOCKWIDTH
+#define BlockWidth  80
+#define SharedPitch 384
+#endif
+
+// This will output the proper CUDA error strings in the event that a CUDA host
+// call returns an error
+#define checkCudaErrors(err) __checkCudaErrors(err, __FILE__, __LINE__)
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/SobelFilter/SobelFilter_kernels.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/SobelFilter/SobelFilter_kernels.cu:222-243
+```cuda
+    }
+    else {
+        desc = cudaCreateChannelDesc<uchar4>();
+    }
+
+    // JP: `cudaMallocArray`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMallocArray(&array, &desc, iw, ih));
+    checkCudaErrors(cudaMemcpy2DToArray(
+        // JP: `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+        array, 0, 0, data, iw * Bpp * sizeof(Pixel), iw * Bpp * sizeof(Pixel), ih, cudaMemcpyHostToDevice));
+
+    cudaResourceDesc texRes;
+    memset(&texRes, 0, sizeof(cudaResourceDesc));
+
+    texRes.resType         = cudaResourceTypeArray;
+    texRes.res.array.array = array;
+
+    cudaTextureDesc texDescr;
+    memset(&texDescr, 0, sizeof(cudaTextureDesc));
+
+    texDescr.normalizedCoords = false;
+    texDescr.filterMode       = cudaFilterModePoint;
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/SobelFilter/SobelFilter_kernels.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/SobelFilter/SobelFilter_kernels.cu:247-266
+```cuda
+    checkCudaErrors(cudaCreateTextureObject(&texObject, &texRes, &texDescr, NULL));
+}
+
+extern "C" void deleteTexture(void)
+{
+    // JP: `cudaFreeArray`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaFreeArray(array));
+    checkCudaErrors(cudaDestroyTextureObject(texObject));
+}
+
+// Wrapper for the __global__ call that sets up the texture and threads
+extern "C" void sobelFilter(Pixel *odata, int iw, int ih, enum SobelDisplayMode mode, float fScale)
+{
+    switch (mode) {
+    case SOBELDISPLAY_IMAGE:
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+        SobelCopyImage<<<ih, 384>>>(odata, iw, iw, ih, fScale, texObject);
+        break;
+
+    case SOBELDISPLAY_SOBELTEX:
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/SobelFilter/SobelFilter_kernels.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `SobelFilter_kernels.h`
+
+Source: cpp/5_Domain_Specific/SobelFilter/SobelFilter_kernels.h:29-44
+```cpp
+#ifndef __SOBELFILTER_KERNELS_H_
+#define __SOBELFILTER_KERNELS_H_
+
+typedef unsigned char Pixel;
+
+// global determines which filter to invoke
+enum SobelDisplayMode { SOBELDISPLAY_IMAGE = 0, SOBELDISPLAY_SOBELTEX, SOBELDISPLAY_SOBELSHARED };
+
+extern enum SobelDisplayMode g_SobelDisplayMode;
+
+extern "C" void sobelFilter(Pixel *odata, int iw, int ih, enum SobelDisplayMode mode, float fScale);
+extern "C" void setupTexture(int iw, int ih, Pixel *data, int Bpp);
+extern "C" void deleteTexture(void);
+extern "C" void initFilter(void);
+
+#endif
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/SobelFilter/SobelFilter_kernels.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
@@ -99,6 +354,7 @@ English anchor: read `SobelFilter` as a focused example of the CUDA concepts use
 | `blockIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `blockDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `threadIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
 | `cudaDeviceSynchronize` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaMemcpy` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
@@ -109,7 +365,6 @@ English anchor: read `SobelFilter` as a focused example of the CUDA concepts use
 | `cudaGraphicsResourceGetMappedPointer` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 | `cudaGraphicsUnmapResources` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 | `cudaGraphicsUnregisterResource` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
-| `cudaGraphicsGLRegisterBuffer` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。

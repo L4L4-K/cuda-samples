@@ -196,6 +196,349 @@ English anchor: read `interval` as a focused example of the CUDA concepts used i
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/2_Concepts_and_Techniques/interval/CMakeLists.txt:1-41
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(interval LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for interval
+add_executable(interval interval.cu)
+
+target_compile_options(interval PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(interval PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(interval PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_include_directories(interval PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/interval/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `cpu_interval.h`
+
+Source: cpp/2_Concepts_and_Techniques/interval/cpu_interval.h:33-51
+```cpp
+#ifndef CPU_INTERVAL_H
+#define CPU_INTERVAL_H
+
+#ifndef __USE_ISOC99
+#define __USE_ISOC99
+#endif
+
+#include <boost/numeric/interval.hpp>
+#include <iostream>
+#include <vector>
+
+#include "cuda_interval.h"
+// #include <iomanip>
+
+#define UNPROTECTED       0
+#define USE_RECURSION_CPU 1
+
+using boost::numeric::interval;
+using namespace boost::numeric;
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/interval/cpu_interval.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `cuda_interval.h`
+
+Source: cpp/2_Concepts_and_Techniques/interval/cuda_interval.h:29-47
+```cpp
+#ifndef CUDA_INTERVAL_H
+#define CUDA_INTERVAL_H
+
+#include "cuda_interval_lib.h"
+#include "interval.h"
+
+// Stack in local memory. Managed independently for each thread.
+template <class T, int N> class local_stack
+{
+private:
+    T   buf[N];
+    int tos;
+
+public:
+    __device__ local_stack()
+        : tos(-1)
+    {
+    }
+    __device__ T const &top() const { return buf[tos]; }
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/interval/cuda_interval.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/interval/cuda_interval.h:309-328
+```cpp
+
+template <class T>
+__global__ void
+test_interval_newton(interval_gpu<T> *buffer, int *nresults, interval_gpu<T> i, int implementation_choice)
+{
+    // JP: `blockIdx`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int                     thread_id = blockIdx.x * BLOCK_SIZE + threadIdx.x;
+    typedef interval_gpu<T> I;
+
+    // Intervals to return
+    global_stack<I, DEPTH_RESULT, THREADS> result(buffer, thread_id);
+
+    switch (implementation_choice) {
+    case 0:
+        newton_interval_naive<T, THREADS>(result, i, thread_id);
+        break;
+
+    case 1:
+        newton_interval<T, THREADS>(result, i, thread_id);
+        break;
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/interval/cuda_interval.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `cuda_interval_lib.h`
+
+Source: cpp/2_Concepts_and_Techniques/interval/cuda_interval_lib.h:29-47
+```cpp
+#ifndef CUDA_INTERVAL_LIB_H
+#define CUDA_INTERVAL_LIB_H
+
+#include "cuda_interval_rounded_arith.h"
+
+// Interval template class and basic operations
+// Interface inspired from the Boost Interval library (www.boost.org)
+
+template <class T> class interval_gpu
+{
+public:
+    __device__ __host__ interval_gpu();
+    __device__ __host__ interval_gpu(T const &v);
+    __device__ __host__ interval_gpu(T const &l, T const &u);
+
+    __device__ __host__ T const &lower() const;
+    __device__ __host__ T const &upper() const;
+
+    static __device__ __host__ interval_gpu empty();
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/interval/cuda_interval_lib.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/interval/cuda_interval_lib.h:198-217
+```cpp
+    return I(rnd.div_down(xl, yl), rnd.div_up(xu, yu));
+}
+
+template <class T> inline __device__ interval_gpu<T> div_positive(interval_gpu<T> const &x, T const &yu)
+{
+    // assert(yu > 0);
+    if (x.lower() == 0 && x.upper() == 0)
+        return x;
+
+    rounded_arith<T>        rnd;
+    typedef interval_gpu<T> I;
+    const T                &xl = x.lower();
+    const T                &xu = x.upper();
+
+    if (xu < 0)
+        return I(rnd.neg_inf(), rnd.div_up(xu, yu));
+    else if (xl < 0)
+        return I(rnd.neg_inf(), rnd.pos_inf());
+    else
+        return I(rnd.div_down(xl, yu), rnd.pos_inf());
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/interval/cuda_interval_lib.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `cuda_interval_rounded_arith.h`
+
+Source: cpp/2_Concepts_and_Techniques/interval/cuda_interval_rounded_arith.h:32-52
+```cpp
+#ifndef CUDA_INTERVAL_ROUNDED_ARITH_H
+#define CUDA_INTERVAL_ROUNDED_ARITH_H
+
+// Generic class, no actual implementation yet
+template <class T> struct rounded_arith
+{
+    __device__ T add_down(const T &x, const T &y);
+    __device__ T add_up(const T &x, const T &y);
+    __device__ T sub_down(const T &x, const T &y);
+    __device__ T sub_up(const T &x, const T &y);
+    __device__ T mul_down(const T &x, const T &y);
+    __device__ T mul_up(const T &x, const T &y);
+    __device__ T div_down(const T &x, const T &y);
+    __device__ T div_up(const T &x, const T &y);
+    __device__ T median(const T &x, const T &y);
+    __device__ T sqrt_down(const T &x);
+    __device__ T sqrt_up(const T &x);
+    __device__ T int_down(const T &x);
+    __device__ T int_up(const T &x);
+
+    __device__ T          pos_inf();
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/interval/cuda_interval_rounded_arith.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `interval.cu`
+
+Source: cpp/2_Concepts_and_Techniques/interval/interval.cu:41-65
+```cuda
+const static char *sSDKsample = "Interval Computing";
+
+#include <iostream>
+#include <stdio.h>
+
+#include "cpu_interval.h"
+#include "cuda_interval.h"
+#include "helper_cuda.h"
+#include "interval.h"
+
+int main(int argc, char *argv[])
+{
+    int implementation_choice = 0;
+
+    printf("[%s]  starting ...\n\n", sSDKsample);
+
+    if (checkCmdLineFlag(argc, (const char **)argv, "n")) {
+        implementation_choice = getCmdLineArgumentInt(argc, (const char **)argv, "n");
+    }
+
+    // Pick the best GPU available, or if the developer selects one at the command
+    // line
+    int            devID = findCudaDevice(argc, (const char **)argv);
+    cudaDeviceProp deviceProp;
+    cudaGetDeviceProperties(&deviceProp, devID);
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/interval/interval.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/interval/interval.cu:82-136
+```cuda
+        printf("GPU naive implementation\n");
+    }
+
+    interval_gpu<T> *d_result;
+    int             *d_nresults;
+    int             *h_nresults = new int[THREADS];
+    // JP: `cudaEvent_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+    cudaEvent_t      start, stop;
+
+    CHECKED_CALL(cudaSetDevice(devID));
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    CHECKED_CALL(cudaMalloc((void **)&d_result, THREADS * DEPTH_RESULT * sizeof(*d_result)));
+    CHECKED_CALL(cudaMalloc((void **)&d_nresults, THREADS * sizeof(*d_nresults)));
+    CHECKED_CALL(cudaEventCreate(&start));
+    CHECKED_CALL(cudaEventCreate(&stop));
+
+    // We need L1 cache to store the stack (only applicable to sm_20 and higher)
+    CHECKED_CALL(cudaFuncSetCacheConfig(test_interval_newton<T>, cudaFuncCachePreferL1));
+
+    // Increase the stack size large enough for the non-inlined and recursive
+    // function calls (only applicable to sm_20 and higher)
+    CHECKED_CALL(cudaDeviceSetLimit(cudaLimitStackSize, 8192));
+
+    interval_gpu<T> i(0.01f, 4.0f);
+    std::cout << "Searching for roots in [" << i.lower() << ", " << i.upper() << "]...\n";
+
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    CHECKED_CALL(cudaEventRecord(start, 0));
+
+    for (int it = 0; it < NUM_RUNS; ++it) {
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+        test_interval_newton<T><<<GRID_SIZE, BLOCK_SIZE>>>(d_result, d_nresults, i, implementation_choice);
+        CHECKED_CALL(cudaGetLastError());
+    }
+
+    CHECKED_CALL(cudaEventRecord(stop, 0));
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    CHECKED_CALL(cudaDeviceSynchronize());
+
+    I_CPU *h_result = new I_CPU[THREADS * DEPTH_RESULT];
+    // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    CHECKED_CALL(cudaMemcpy(h_result, d_result, THREADS * DEPTH_RESULT * sizeof(*d_result), cudaMemcpyDeviceToHost));
+    CHECKED_CALL(cudaMemcpy(h_nresults, d_nresults, THREADS * sizeof(*d_nresults), cudaMemcpyDeviceToHost));
+
+    std::cout << "Found " << h_nresults[0] << " intervals that may contain the root(s)\n";
+    std::cout.precision(15);
+
+    for (int i = 0; i != h_nresults[0]; ++i) {
+        std::cout << " i[" << i << "] ="
+                  << " [" << h_result[THREADS * i + 0].lower() << ", " << h_result[THREADS * i + 0].upper() << "]\n";
+    }
+
+    float time;
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    CHECKED_CALL(cudaEventElapsedTime(&time, start, stop));
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/interval/interval.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `interval.h`
+
+Source: cpp/2_Concepts_and_Techniques/interval/interval.h:29-53
+```cpp
+#ifndef INTERVAL_H
+#define INTERVAL_H
+
+#define DEVICE   0
+#define TYPE     double
+#define NUM_RUNS (100)
+
+typedef TYPE T;
+
+int const BLOCK_SIZE   = 64;
+int const GRID_SIZE    = 1024;
+int const THREADS      = GRID_SIZE * BLOCK_SIZE;
+int const DEPTH_RESULT = 128;
+
+#define CHECKED_CALL(func)                                                                                            \
+    do {                                                                                                              \
+        cudaError_t err = (func);                                                                                     \
+        if (err != cudaSuccess) {                                                                                     \
+            printf(                                                                                                   \
+                "%s(%d): ERROR: %s returned %s (err#%d)\n", __FILE__, __LINE__, #func, cudaGetErrorString(err), err); \
+            exit(EXIT_FAILURE);                                                                                       \
+        }                                                                                                             \
+    } while (0)
+
+#endif
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/interval/interval.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

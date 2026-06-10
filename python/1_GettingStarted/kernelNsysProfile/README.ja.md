@@ -81,6 +81,90 @@ English anchor: read `kernelNsysProfile` as a focused example of the CUDA concep
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `kernelNsysProfile.py`
+
+Source: python/1_GettingStarted/kernelNsysProfile/kernelNsysProfile.py:2-20
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    distribution and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `python/1_GettingStarted/kernelNsysProfile/kernelNsysProfile.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/1_GettingStarted/kernelNsysProfile/kernelNsysProfile.py:47-66
+```python
+- Phase 2: Compile and execute cuda.core custom kernels (profiling focus)
+- Phase 3: Verify correctness with CuPy reference implementation
+- Phase 4: Validate results
+"""
+
+import argparse
+import sys
+from pathlib import Path
+
+try:
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
+    import cupy as cp
+    import numpy as np
+    import nvtx
+    from cuda.core import Device, LaunchConfig, launch
+except ImportError as e:
+    print(f"Error: Required package not found: {e}")
+    print("Please install from requirements.txt:")
+    print("  pip install -r requirements.txt")
+    sys.exit(1)
+```
+
+> JP: この抜粋は `python/1_GettingStarted/kernelNsysProfile/kernelNsysProfile.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/1_GettingStarted/kernelNsysProfile/kernelNsysProfile.py:72-91
+```python
+# CUDA C++ kernel definitions
+# For larger projects, separating kernels into a separate file is also valid.
+KERNELS_CODE = """
+template<typename T>
+__global__ void vector_add(const T* a, const T* b, T* c, size_t N) {
+    const unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    for (size_t i = tid; i < N; i += gridDim.x * blockDim.x) {
+        c[i] = a[i] + b[i];
+    }
+}
+
+template<typename T>
+__global__ void saxpy(const T alpha, const T* x, T* y, size_t N) {
+    const unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    for (size_t i = tid; i < N; i += gridDim.x * blockDim.x) {
+        y[i] = alpha * x[i] + y[i];
+    }
+}
+
+template<typename T>
+```
+
+> JP: この抜粋は `python/1_GettingStarted/kernelNsysProfile/kernelNsysProfile.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

@@ -82,6 +82,116 @@ English anchor: read `launchConfigTuning` as a focused example of the CUDA conce
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `launchConfigTuning.py`
+
+Source: python/2_CoreConcepts/launchConfigTuning/launchConfigTuning.py:2-20
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/launchConfigTuning/launchConfigTuning.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/launchConfigTuning/launchConfigTuning.py:40-59
+```python
+    # JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
+    from cuda.core import (
+        Device,
+        EventOptions,
+        LaunchConfig,
+        # JP: `ManagedMemoryResource` は unified memory resource を Python object として保持します。host/device の移動と同期 timing を意識します。
+        ManagedMemoryResource,
+        ManagedMemoryResourceOptions,
+        Program,
+        ProgramOptions,
+        launch,
+    )
+except ImportError as e:
+    print(f"Error: Required package not found: {e}")
+    print("Please install from requirements.txt:")
+    print("  pip install -r requirements.txt")
+    sys.exit(1)
+
+
+# =============================================================================
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/launchConfigTuning/launchConfigTuning.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/launchConfigTuning/launchConfigTuning.py:65-84
+```python
+extern "C" __global__
+void vector_add(const float* __restrict__ a,
+                const float* __restrict__ b,
+                float* __restrict__ c,
+                int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
+    for (int i = idx; i < n; i += stride) {
+        c[i] = a[i] + b[i];
+    }
+}
+"""
+
+# Reduction Kernel - Sensitive to block size due to shared memory (grid-stride load)
+REDUCTION_KERNEL = r"""
+extern "C" __global__
+void reduce_sum(const float* __restrict__ input,
+                float* __restrict__ partial_sums,
+                int n) {
+    extern __shared__ float sdata[];
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/launchConfigTuning/launchConfigTuning.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/launchConfigTuning/launchConfigTuning.py:90-109
+```python
+    float sum = 0.0f;
+    for (unsigned int i = blockIdx.x * blockDim.x + tid; i < n; i += stride) {
+        sum += input[i];
+    }
+    sdata[tid] = sum;
+    __syncthreads();
+
+    // Perform reduction in shared memory
+    for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            sdata[tid] += sdata[tid + s];
+        }
+        __syncthreads();
+    }
+
+    // Write result for this block
+    if (tid == 0) {
+        partial_sums[blockIdx.x] = sdata[0];
+    }
+}
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/launchConfigTuning/launchConfigTuning.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

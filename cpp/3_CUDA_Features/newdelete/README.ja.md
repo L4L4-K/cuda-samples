@@ -74,13 +74,259 @@ English anchor: read `newdelete` as a focused example of the CUDA concepts used 
 ## Concrete Reading Path
 
 - `container.hpp`: focus on `atomicAdd`, `atomic`.
-- `newdelete.cu`: focus on `threadIdx`, `__shared__`, `cudaMalloc`, `cudaFree`, `blockIdx`.
+- `newdelete.cu`: focus on `threadIdx`, `__shared__`, `launch`, `cudaMalloc`, `cudaFree`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/3_CUDA_Features/newdelete/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(newdelete LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for newdelete
+add_executable(newdelete newdelete.cu)
+
+target_compile_options(newdelete PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(newdelete PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(newdelete PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/newdelete/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `container.hpp`
+
+Source: cpp/3_CUDA_Features/newdelete/container.hpp:35-53
+```cpp
+template <class T> class Container
+{
+public:
+    __device__ Container() { ; }
+
+    __device__ virtual ~Container() { ; }
+
+    __device__ virtual void push(T e) = 0;
+
+    __device__ virtual bool pop(T &e) = 0;
+};
+
+////////////////////////////////////////////////////////////////////////////////
+//
+// Vector class derived from Container class using linear memory as data storage
+// NOTE: This education purpose implementation has restricted functionality.
+//       For example, concurrent push and pop operations will not work
+//       correctly.
+//
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/newdelete/container.hpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/newdelete/container.hpp:59-78
+```cpp
+    // Constructor, data is allocated on the heap
+    // NOTE: This must be called from only one thread
+    __device__ Vector(int max_size)
+        : m_top(-1)
+    {
+        m_data = new T[max_size];
+    }
+
+    // Constructor, data uses preallocated buffer via placement new
+    __device__ Vector(int max_size, T *preallocated_buffer)
+        : m_top(-1)
+    {
+        m_data = new (preallocated_buffer) T[max_size];
+    }
+
+    // Destructor, data is freed
+    // NOTE: This must be called from only one thread
+    __device__ ~Vector()
+    {
+        if (m_data)
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/newdelete/container.hpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `newdelete.cu`
+
+Source: cpp/3_CUDA_Features/newdelete/newdelete.cu:33-85
+```cuda
+#include <cooperative_groups.h>
+#include <stdio.h>
+
+namespace cg = cooperative_groups;
+#include <algorithm>
+#include <helper_cuda.h>
+#include <stdlib.h>
+#include <vector>
+
+const char *sSDKsample = "newdelete";
+
+#include "container.hpp"
+
+////////////////////////////////////////////////////////////////////////////////
+//
+// Kernels to allocate and instantiate Container objects on the device heap
+//
+////////////////////////////////////////////////////////////////////////////////
+
+__global__ void vectorCreate(Container<int> **g_container, int max_size)
+{
+    // The Vector object and the data storage are allocated in device heap memory.
+    // This makes it persistent for the lifetime of the CUDA context.
+    // The grid has only one thread as only a single object instance is needed.
+
+    *g_container = new Vector<int>(max_size);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//
+// Kernels to fill and consume shared Container objects.
+//
+////////////////////////////////////////////////////////////////////////////////
+
+__global__ void containerFill(Container<int> **g_container)
+{
+    // All threads of the grid cooperatively populate the shared Container object
+    // with data.
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    if (threadIdx.x == 0) {
+        (*g_container)->push(blockIdx.x);
+    }
+}
+
+__global__ void containerConsume(Container<int> **g_container, int *d_result)
+{
+    // All threads of the grid cooperatively consume the data from the shared
+    // Container object.
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    int v;
+
+    if ((*g_container)->pop(v)) {
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/newdelete/newdelete.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/newdelete/newdelete.cu:215-234
+```cuda
+bool checkResult(int *d_result, int N)
+{
+    std::vector<int> h_result;
+    h_result.resize(N);
+
+    // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpy(&h_result[0], d_result, N * sizeof(int), cudaMemcpyDeviceToHost));
+    std::sort(h_result.begin(), h_result.end());
+
+    bool success = true;
+    bool test    = false;
+
+    int value = 0;
+
+    for (int i = 0; i < N; ++i) {
+        if (h_result[i] != -1) {
+            test = true;
+        }
+
+        if (test && (value++) != h_result[i]) {
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/newdelete/newdelete.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/newdelete/newdelete.cu:247-270
+```cuda
+
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    containerFill<<<blocks, threads>>>(d_container);
+    containerConsume<<<blocks, threads>>>(d_container, d_result);
+    containerDelete<<<1, 1>>>(d_container);
+    checkCudaErrors(cudaDeviceSynchronize());
+
+    bool success = checkResult(d_result, blocks * threads);
+
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    cudaFree(d_result);
+
+    return success;
+}
+
+bool testPlacementNew(int threads)
+{
+    int *d_result;
+    cudaMalloc(&d_result, threads * sizeof(int));
+
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
+    placementNew<<<1, threads>>>(d_result);
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
+    checkCudaErrors(cudaDeviceSynchronize());
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/newdelete/newdelete.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/newdelete/newdelete.cu:301-320
+```cuda
+//
+// MAIN
+//
+////////////////////////////////////////////////////////////////////////////////
+
+int main(int argc, char **argv)
+{
+    printf("%s Starting...\n\n", sSDKsample);
+
+    // use command-line specified CUDA device, otherwise use device with highest
+    // Gflops/s
+    findCudaDevice(argc, (const char **)argv);
+
+    // set the heap size for device size new/delete to 128 MB
+    checkCudaErrors(cudaDeviceSetLimit(cudaLimitMallocHeapSize, 128 * (1 << 20)));
+
+    Container<int> **d_container;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
+    checkCudaErrors(cudaMalloc(&d_container, sizeof(Container<int> **)));
+
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/newdelete/newdelete.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 
@@ -90,12 +336,12 @@ English anchor: read `newdelete` as a focused example of the CUDA concepts used 
 | `__shared__` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaDeviceSynchronize` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `blockIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `cudaMemcpy` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaDeviceSetLimit` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `atomicAdd` | 複数 thread が同じ address を更新する箇所です。競合と順序の意味を確認します。 |
-| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `blockDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `cudaMemcpyDeviceToHost` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `Device` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |

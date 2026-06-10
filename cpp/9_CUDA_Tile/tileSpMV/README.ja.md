@@ -81,6 +81,163 @@ English anchor: read `tileSpMV` as a focused example of the CUDA concepts used i
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/9_CUDA_Tile/tileSpMV/CMakeLists.txt:1-32
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(tileSpMV LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_CUDA_ARCHITECTURES 80 86 87 89 90 100 110 120)
+
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --enable-tile")
+
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+add_executable(tileSpMV tileSpMV.cu)
+
+target_compile_features(tileSpMV PRIVATE cxx_std_20 cuda_std_20)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileSpMV/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `tileSpMV.cu`
+
+Source: cpp/9_CUDA_Tile/tileSpMV/tileSpMV.cu:66-84
+```cuda
+#include "helper_cuda.h"
+
+#include "cuda_tile.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdio>
+#include <numeric>
+#include <random>
+#include <vector>
+
+namespace ct = cuda::tiles;
+
+//=============================================================================
+// Tile SpMV kernel: 2D SELL SpMV
+//
+// Each CTA processes one slice of ROWS rows. The inner loop walks
+// the slice's nonzeros COLS at a time. Because the SELL arrays are
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileSpMV/tileSpMV.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/9_CUDA_Tile/tileSpMV/tileSpMV.cu:212-260
+```cuda
+  int* d_slice_widths = nullptr;
+  int* d_sell_col_indices = nullptr;
+  float* d_sell_values = nullptr;
+
+  void uploadToDevice() {
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc(&d_row_perm, row_perm.size() * sizeof(int)));
+    checkCudaErrors(cudaMalloc(&d_slice_offsets,
+                               slice_offsets.size() * sizeof(int)));
+    checkCudaErrors(cudaMalloc(&d_slice_widths,
+                               slice_widths.size() * sizeof(int)));
+    checkCudaErrors(cudaMalloc(&d_sell_col_indices,
+                               sell_col_indices.size() * sizeof(int)));
+    checkCudaErrors(cudaMalloc(&d_sell_values,
+                               sell_values.size() * sizeof(float)));
+    // JP: `cudaMemcpy`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpy(d_row_perm, row_perm.data(),
+                               row_perm.size() * sizeof(int),
+                               cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(d_slice_offsets, slice_offsets.data(),
+                               slice_offsets.size() * sizeof(int),
+                               cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(d_slice_widths, slice_widths.data(),
+                               slice_widths.size() * sizeof(int),
+                               cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(d_sell_col_indices, sell_col_indices.data(),
+                               sell_col_indices.size() * sizeof(int),
+                               cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(d_sell_values, sell_values.data(),
+                               sell_values.size() * sizeof(float),
+                               cudaMemcpyHostToDevice));
+  }
+
+  void freeDevice() {
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    if (d_row_perm) checkCudaErrors(cudaFree(d_row_perm));
+    if (d_slice_offsets) checkCudaErrors(cudaFree(d_slice_offsets));
+    if (d_slice_widths) checkCudaErrors(cudaFree(d_slice_widths));
+    if (d_sell_col_indices) checkCudaErrors(cudaFree(d_sell_col_indices));
+    if (d_sell_values) checkCudaErrors(cudaFree(d_sell_values));
+    d_row_perm = nullptr;
+    d_slice_offsets = nullptr;
+    d_slice_widths = nullptr;
+    d_sell_col_indices = nullptr;
+    d_sell_values = nullptr;
+  }
+};
+
+/* Build a SellMatrix from per-row column-index and value lists. Rows
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileSpMV/tileSpMV.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/9_CUDA_Tile/tileSpMV/tileSpMV.cu:475-498
+```cuda
+  checkCudaErrors(cudaMemcpy(d_x, h_x.data(), S.num_cols * sizeof(float),
+                             cudaMemcpyHostToDevice));
+
+  /* Launch the SELL Tile kernel: one CTA per slice. */
+  // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+  spmvSell<SLICE_ROWS, TILE_COLS><<<S.num_slices>>>(
+      S.num_rows, S.d_sell_col_indices, S.d_sell_values,
+      S.d_slice_offsets, S.d_slice_widths, S.d_row_perm, d_x, d_y);
+  checkCudaErrors(cudaGetLastError());
+  // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+  checkCudaErrors(cudaDeviceSynchronize());
+
+  /* copy result back and verify */
+  std::vector<float> h_y(S.num_rows);
+  // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
+  checkCudaErrors(cudaMemcpy(h_y.data(), d_y, S.num_rows * sizeof(float),
+                             cudaMemcpyDeviceToHost));
+
+  S.freeDevice();
+  // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
+  checkCudaErrors(cudaFree(d_x));
+  checkCudaErrors(cudaFree(d_y));
+
+  if (!verify(ref_y, h_y)) {
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileSpMV/tileSpMV.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

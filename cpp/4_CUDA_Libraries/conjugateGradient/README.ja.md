@@ -74,13 +74,199 @@ English anchor: read `conjugateGradient` as a focused example of the CUDA concep
 
 ## Concrete Reading Path
 
-- `main.cpp`: focus on `cublasHandle`, `cublasStatus`, `cudaMalloc`, `cudaFree`, `CUDA_R_32F`.
+- `main.cpp`: focus on `cublasHandle`, `CUDA`, `cublasStatus`, `cudaMalloc`, `cudaFree`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/conjugateGradient/CMakeLists.txt:1-48
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(conjugateGradient LANGUAGES CXX)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for conjugateGradient
+add_executable(conjugateGradient main.cpp)
+
+target_compile_options(conjugateGradient PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(conjugateGradient PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(conjugateGradient PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_include_directories(conjugateGradient PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+target_link_libraries(conjugateGradient PRIVATE
+    CUDA::cudart
+    # JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    CUDA::cublas
+    CUDA::cusparse
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/conjugateGradient/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `main.cpp`
+
+Source: cpp/4_CUDA_Libraries/conjugateGradient/main.cpp:36-57
+```cpp
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* Using updated (v2) interfaces to cublas */
+#include <cublas_v2.h>
+#include <cuda_runtime.h>
+#include <cusparse.h>
+
+// Utilities and system includes
+#include <helper_cuda.h>      // helper function CUDA error checking and initialization
+#include <helper_functions.h> // helper for shared functions common to CUDA Samples
+
+const char *sSDKname = "conjugateGradient";
+
+/* genTridiag: generate a random tridiagonal symmetric matrix */
+void genTridiag(int *I, int *J, float *val, int N, int nz)
+{
+    I[0] = 0, J[0] = 0, J[1] = 1;
+    val[0] = (float)rand() / RAND_MAX + 10.0f;
+    val[1] = (float)rand() / RAND_MAX;
+    int start;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/conjugateGradient/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/conjugateGradient/main.cpp:116-152
+```cpp
+           deviceProp.minor);
+
+    /* Generate a random tridiagonal symmetric matrix in CSR format */
+    M = N = 1048576;
+    nz    = (N - 2) * 3 + 4;
+    I     = (int *)malloc(sizeof(int) * (N + 1));
+    J     = (int *)malloc(sizeof(int) * nz);
+    val   = (float *)malloc(sizeof(float) * nz);
+    genTridiag(I, J, val, N, nz);
+
+    x   = (float *)malloc(sizeof(float) * N);
+    rhs = (float *)malloc(sizeof(float) * N);
+
+    for (int i = 0; i < N; i++) {
+        rhs[i] = 1.0;
+        x[i]   = 0.0;
+    }
+
+    /* Get handle to the CUBLAS context */
+    // JP: `cublasHandle_t`, `cublasHandle`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    cublasHandle_t cublasHandle = 0;
+    cublasStatus_t cublasStatus;
+    cublasStatus = cublasCreate(&cublasHandle);
+
+    checkCudaErrors(cublasStatus);
+
+    /* Get handle to the CUSPARSE context */
+    cusparseHandle_t cusparseHandle = 0;
+    checkCudaErrors(cusparseCreate(&cusparseHandle));
+
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc((void **)&d_col, nz * sizeof(int)));
+    checkCudaErrors(cudaMalloc((void **)&d_row, (N + 1) * sizeof(int)));
+    checkCudaErrors(cudaMalloc((void **)&d_val, nz * sizeof(float)));
+    checkCudaErrors(cudaMalloc((void **)&d_x, N * sizeof(float)));
+    checkCudaErrors(cudaMalloc((void **)&d_r, N * sizeof(float)));
+    checkCudaErrors(cudaMalloc((void **)&d_p, N * sizeof(float)));
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/conjugateGradient/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/conjugateGradient/main.cpp:173-192
+```cpp
+    checkCudaErrors(cusparseCreateDnVec(&vecp, N, d_p, CUDA_R_32F));
+    cusparseDnVecDescr_t vecAx = NULL;
+    checkCudaErrors(cusparseCreateDnVec(&vecAx, N, d_Ax, CUDA_R_32F));
+
+    /* Initialize problem data */
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    cudaMemcpy(d_col, J, nz * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_row, I, (N + 1) * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_val, val, nz * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_x, x, N * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_r, rhs, N * sizeof(float), cudaMemcpyHostToDevice);
+
+    alpha   = 1.0;
+    alpham1 = -1.0;
+    beta    = 0.0;
+    r0      = 0.;
+
+    /* Allocate workspace for cuSPARSE */
+    size_t bufferSize = 0;
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/conjugateGradient/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/conjugateGradient/main.cpp:251-270
+```cpp
+        na           = -a;
+        cublasStatus = cublasSaxpy(cublasHandle, N, &na, d_Ax, 1, d_r, 1);
+
+        r0           = r1;
+        cublasStatus = cublasSdot(cublasHandle, N, d_r, 1, d_r, 1, &r1);
+        // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+        cudaDeviceSynchronize();
+        printf("iteration = %3d, residual = %e\n", k, sqrt(r1));
+        k++;
+    }
+
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
+    cudaMemcpy(x, d_x, N * sizeof(float), cudaMemcpyDeviceToHost);
+
+    float rsum, diff, err = 0.0;
+
+    for (int i = 0; i < N; i++) {
+        rsum = 0.0;
+
+        for (int j = I[i]; j < I[i + 1]; j++) {
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/conjugateGradient/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

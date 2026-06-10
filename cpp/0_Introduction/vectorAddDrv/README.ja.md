@@ -82,6 +82,163 @@ English anchor: read `vectorAddDrv` as a focused example of the CUDA concepts us
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/vectorAddDrv/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(vectorAddDrv LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+```
+
+> JP: この抜粋は `cpp/0_Introduction/vectorAddDrv/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `vectorAddDrv.cpp`
+
+Source: cpp/0_Introduction/vectorAddDrv/vectorAddDrv.cpp:38-56
+```cpp
+#include <cstring>
+#include <cuda.h>
+#include <iostream>
+#include <stdio.h>
+#include <string.h>
+
+// includes, project
+#include <helper_cuda_drvapi.h>
+#include <helper_functions.h>
+
+// includes, CUDA
+#include <builtin_types.h>
+
+using namespace std;
+
+// Variables
+// JP: `cuDevice`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
+CUdevice    cuDevice;
+CUcontext   cuContext;
+```
+
+> JP: この抜粋は `cpp/0_Introduction/vectorAddDrv/vectorAddDrv.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/vectorAddDrv/vectorAddDrv.cpp:72-91
+```cpp
+#ifndef FATBIN_FILE
+#define FATBIN_FILE "vectorAdd_kernel64.fatbin"
+#endif
+
+// Host code
+int main(int argc, char **argv)
+{
+    printf("Vector Addition (Driver API)\n");
+    int               N = 50000, devID = 0;
+    size_t            size            = N * sizeof(float);
+    CUctxCreateParams ctxCreateParams = {};
+
+    // Initialize
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
+    checkCudaErrors(cuInit(0));
+
+    cuDevice = findCudaDeviceDRV(argc, (const char **)argv);
+    // Create context
+    checkCudaErrors(cuCtxCreate(&cuContext, &ctxCreateParams, 0, cuDevice));
+
+```
+
+> JP: この抜粋は `cpp/0_Introduction/vectorAddDrv/vectorAddDrv.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/vectorAddDrv/vectorAddDrv.cpp:111-130
+```cpp
+
+    // Get function handle from module
+    checkCudaErrors(cuModuleGetFunction(&vecAdd_kernel, cuModule, "VecAdd_kernel"));
+
+    // Allocate input vectors h_A and h_B in host memory
+    h_A = (float *)malloc(size);
+    h_B = (float *)malloc(size);
+    h_C = (float *)malloc(size);
+
+    // Initialize input vectors
+    RandomInit(h_A, N);
+    RandomInit(h_B, N);
+
+    // Allocate vectors in device memory
+    // JP: `cuMemAlloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cuMemAlloc(&d_A, size));
+
+    checkCudaErrors(cuMemAlloc(&d_B, size));
+
+    checkCudaErrors(cuMemAlloc(&d_C, size));
+```
+
+> JP: この抜粋は `cpp/0_Introduction/vectorAddDrv/vectorAddDrv.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/vectorAddDrv/vectorAddDrv.cpp:144-163
+```cpp
+        int blocksPerGrid   = (N + threadsPerBlock - 1) / threadsPerBlock;
+
+        void *args[] = {&d_A, &d_B, &d_C, &N};
+
+        // Launch the CUDA kernel
+        // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+        checkCudaErrors(cuLaunchKernel(vecAdd_kernel, blocksPerGrid, 1, 1, threadsPerBlock, 1, 1, 0, NULL, args, NULL));
+    }
+    else {
+        // This is the new CUDA 4.0 API for Kernel Parameter Passing and Kernel
+        // Launch (advanced method)
+        int   offset = 0;
+        void *argBuffer[16];
+        *((CUdeviceptr *)&argBuffer[offset]) = d_A;
+        offset += sizeof(d_A);
+        *((CUdeviceptr *)&argBuffer[offset]) = d_B;
+        offset += sizeof(d_B);
+        *((CUdeviceptr *)&argBuffer[offset]) = d_C;
+        offset += sizeof(d_C);
+        *((int *)&argBuffer[offset]) = N;
+```
+
+> JP: この抜粋は `cpp/0_Introduction/vectorAddDrv/vectorAddDrv.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `vectorAdd_kernel.cu`
+
+Source: cpp/0_Introduction/vectorAddDrv/vectorAdd_kernel.cu:38-45
+```cuda
+extern "C" __global__ void VecAdd_kernel(const float *A, const float *B, float *C, int N)
+{
+    // JP: `blockDim`, `blockIdx`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+
+    if (i < N)
+        C[i] = A[i] + B[i];
+}
+```
+
+> JP: この抜粋は `cpp/0_Introduction/vectorAddDrv/vectorAdd_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
@@ -91,9 +248,9 @@ English anchor: read `vectorAddDrv` as a focused example of the CUDA concepts us
 | `cuMemFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
 | `cuMemcpyHtoD` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cuLaunchKernel` | Driver API の handle 境界です。context/module/function と error code を追います。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cuDevice` | Driver API の handle 境界です。context/module/function と error code を追います。 |
 | `cuModule` | Driver API の handle 境界です。context/module/function と error code を追います。 |
-| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cuContext` | Driver API の handle 境界です。context/module/function と error code を追います。 |
 | `cuInit` | Driver API の handle 境界です。context/module/function と error code を追います。 |
 | `cuCtxCreate` | Driver API の handle 境界です。context/module/function と error code を追います。 |

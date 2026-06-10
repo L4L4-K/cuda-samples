@@ -81,6 +81,116 @@ English anchor: read `multiGPUGradientAverage` as a focused example of the CUDA 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `multiGPUGradientAverage.py`
+
+Source: python/4_DistributedComputing/multiGPUGradientAverage/multiGPUGradientAverage.py:2-20
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    distribution and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `python/4_DistributedComputing/multiGPUGradientAverage/multiGPUGradientAverage.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/4_DistributedComputing/multiGPUGradientAverage/multiGPUGradientAverage.py:107-126
+```python
+
+    dev_id = rank % num_gpus  # simple mapping: rank -> GPU in round-robin
+
+    try:
+        # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
+        device = Device(dev_id)
+    except (RuntimeError, ValueError) as e:
+        if rank == 0:
+            print(f"Warning: Cannot assign GPU {dev_id}, using GPU 0. Error: {e}")
+        device = Device(0)
+
+    device.set_current()
+    # Align CuPy with cuda.core's chosen device ID
+    cp.cuda.Device(device.device_id).use()
+
+    # Create cuda.core stream and make CuPy use it
+    stream = device.create_stream()
+    cp.cuda.Stream.from_external(stream).use()
+
+    return device, stream
+```
+
+> JP: この抜粋は `python/4_DistributedComputing/multiGPUGradientAverage/multiGPUGradientAverage.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/4_DistributedComputing/multiGPUGradientAverage/multiGPUGradientAverage.py:135-154
+```python
+INIT_KERNEL = r"""
+extern "C" __global__
+void init_grad_kernel(float* grad, int n, int rank)
+{
+    // Grid-stride loop: each thread processes multiple elements
+    size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t stride = gridDim.x * blockDim.x;
+    for (size_t i = tid; i < n; i += stride) {
+        // Gradient value depends on MPI rank so we can verify reduction:
+        // grad_i = rank + 0.001 * i
+        grad[i] = rank + 0.001f * i;
+    }
+}
+"""
+
+_kernel_cache = {}
+
+
+def get_init_kernel(device: Device):
+    """Compile (or retrieve cached) init_grad_kernel for this device."""
+```
+
+> JP: この抜粋は `python/4_DistributedComputing/multiGPUGradientAverage/multiGPUGradientAverage.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/4_DistributedComputing/multiGPUGradientAverage/multiGPUGradientAverage.py:230-249
+```python
+    4. Copy the averaged gradients back to GPU.
+
+    This pattern is environment-agnostic and works on any MPI stack.
+    """
+    # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+    assert local_grad.dtype == cp.float32
+
+    # GPU -> CPU
+    local_host = local_grad.get()  # NumPy array on host
+    avg_host = local_host.copy()
+
+    # Allreduce on host buffers
+    comm.Allreduce(local_host, avg_host, op=MPI.SUM)
+
+    # Average
+    avg_host /= world_size
+
+    # CPU -> GPU
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
+    avg_grad = cp.asarray(avg_host)
+```
+
+> JP: この抜粋は `python/4_DistributedComputing/multiGPUGradientAverage/multiGPUGradientAverage.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

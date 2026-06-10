@@ -80,14 +80,175 @@ English anchor: read `immaTensorCoreGemm` as a focused example of the CUDA conce
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/3_CUDA_Features/immaTensorCoreGemm/CMakeLists.txt:1-38
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(immaTensorCoreGemm LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for immaTensorCoreGemm
+add_executable(immaTensorCoreGemm immaTensorCoreGemm.cu)
+
+target_compile_options(immaTensorCoreGemm PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(immaTensorCoreGemm PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(immaTensorCoreGemm PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/immaTensorCoreGemm/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `immaTensorCoreGemm.cu`
+
+Source: cpp/3_CUDA_Features/immaTensorCoreGemm/immaTensorCoreGemm.cu:62-85
+```cuda
+//   accesses.
+// - Note that the CTA tile size is chosen to maximize the GPU register
+// utilization,
+//   but carefully enough to avoid local memory use.
+
+#include <assert.h>
+#include <cuda.h>
+#include <mma.h>
+#include <stdio.h>
+
+// helper functions and utilities to work with CUDA
+#include <helper_cuda.h>
+#include <helper_functions.h>
+
+// Externally configurable parameters.
+
+#ifndef CPU_DEBUG
+// Set this to 1 to verify the correctness of the GPU-computed matrix.
+#define CPU_DEBUG 0
+#endif
+
+#ifndef SHARED_MEMORY_LIMIT_64K
+// Set this to 0 to use more than 64 Kb of shared memory to cache data, to
+// improve the performance of the computations on GPU.
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/immaTensorCoreGemm/immaTensorCoreGemm.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/immaTensorCoreGemm/immaTensorCoreGemm.cu:199-218
+```cuda
+    }
+}
+
+__global__ void compute_gemm_imma(const uint8_t *A, const uint8_t *B, const int *C, int *D, int alpha, int beta)
+{
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    extern __shared__ uint8_t shmem[][CHUNK_K * K + SKEW_UINT8];
+
+    // Warp and lane identification.
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    const unsigned int warpId = threadIdx.x / WARP_SIZE;
+    const unsigned int laneId = threadIdx.x % WARP_SIZE;
+
+    // Offset in shared memory from which the B matrix is stored.
+    const size_t shmem_idx_b_off = BLOCK_COL_TILES * M;
+
+    // This pointer is used to access the C and D matrix tiles this warp computes.
+    int *shmem_warp_tile_ptr = (int *)&shmem[0][0] + (warpId / 2) * SHMEM_STRIDE * K * 2 + (warpId % 2) * SHMEM_OFFSET;
+
+    // This pointer is used to stream the C and D matrices block-wide tile to and
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/immaTensorCoreGemm/immaTensorCoreGemm.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/immaTensorCoreGemm/immaTensorCoreGemm.cu:487-506
+```cuda
+            C[i * numCColumns + j] = temp * alpha + beta * C[i * numCColumns + j];
+        }
+    }
+}
+
+int main(int argc, char **argv)
+{
+    printf("Initializing...\n");
+
+    int dev = findCudaDevice(argc, (const char **)argv);
+
+    cudaDeviceProp deviceProp;
+    checkCudaErrors(cudaGetDeviceProperties(&deviceProp, dev));
+
+    // Tensor cores require a GPU of Volta (SM72) architecture or higher.
+    if (deviceProp.major < 7 || (deviceProp.major <= 7 && deviceProp.minor < 2)) {
+        printf("immaTensorCoreGemm requires SM 7.2 or higher to use Tensor Cores.  "
+               "Exiting...\n");
+        exit(EXIT_WAIVED);
+    }
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/immaTensorCoreGemm/immaTensorCoreGemm.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/immaTensorCoreGemm/immaTensorCoreGemm.cu:515-534
+```cuda
+#if CPU_DEBUG
+    int *result_hD   = NULL;
+    int *result_host = NULL;
+#endif
+
+    A_h = (uint8_t *)malloc(sizeof(uint8_t) * M_GLOBAL * K_GLOBAL);
+    B_h = (uint8_t *)malloc(sizeof(uint8_t) * K_GLOBAL * N_GLOBAL);
+    C_h = (int *)malloc(sizeof(int) * M_GLOBAL * N_GLOBAL);
+#if CPU_DEBUG
+    result_hD   = (int *)malloc(sizeof(int) * M_GLOBAL * N_GLOBAL);
+    result_host = (int *)malloc(sizeof(int) * M_GLOBAL * N_GLOBAL);
+#endif
+
+    uint8_t *A = NULL;
+    uint8_t *B = NULL;
+    int     *C = NULL;
+    int     *D = NULL;
+
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&A), sizeof(uint8_t) * M_GLOBAL * K_GLOBAL));
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/immaTensorCoreGemm/immaTensorCoreGemm.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
 | - | - |
 | `blockDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `cudaMemcpy` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
-| `__syncthreads` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
+| `__syncthreads` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
 | `threadIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `gridDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |

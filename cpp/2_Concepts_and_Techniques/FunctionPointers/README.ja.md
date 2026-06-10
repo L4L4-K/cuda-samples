@@ -79,7 +79,7 @@ English anchor: read `FunctionPointers` as a focused example of the CUDA concept
 
 ## Concrete Reading Path
 
-- `FunctionPointers.cpp`: focus on `CUDA`, `cudaGraphicsResource`, `cudaMalloc`, `cudaDeviceSynchronize`, `cudaMemcpy`.
+- `FunctionPointers.cpp`: focus on `CUDA`, `launch`, `cudaGraphicsResource`, `cudaMalloc`, `cudaDeviceSynchronize`.
 - `FunctionPointers_kernels.cu`: focus on `blockIdx`, `blockDim`, `threadIdx`, `cudaTextureObject_t`, `cudaMemcpyFromSymbol`.
 - `FunctionPointers_kernels.h`: focus on control flow and helper functions.
 
@@ -89,6 +89,293 @@ English anchor: read `FunctionPointers` as a focused example of the CUDA concept
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/2_Concepts_and_Techniques/FunctionPointers/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(FunctionPointers LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/FunctionPointers/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `FunctionPointers.cpp`
+
+Source: cpp/2_Concepts_and_Techniques/FunctionPointers/FunctionPointers.cpp:30-48
+```cpp
+#include <helper_gl.h>
+#if defined(__APPLE__) || defined(MACOSX)
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#include <GLUT/glut.h>
+#ifndef glutCloseFunc
+#define glutCloseFunc glutWMCloseFunc
+#endif
+#else
+#include <GL/freeglut.h>
+#endif
+
+// Includes
+#include <cuda_gl_interop.h>  // CUDA OpenGL interop
+#include <cuda_runtime.h>     // CUDA Runtime
+#include <helper_cuda.h>      // includes for CUDA initialization and error checking
+#include <helper_functions.h> // helper functions for timing, string parsing
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/FunctionPointers/FunctionPointers.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/FunctionPointers/FunctionPointers.cpp:133-152
+```cpp
+    // Sobel operation
+    Pixel *data = NULL;
+
+    // map PBO to get CUDA device pointer
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+    checkCudaErrors(cudaGraphicsMapResources(1, &cuda_pbo_resource, 0));
+    size_t num_bytes;
+    checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&data, &num_bytes, cuda_pbo_resource));
+    // printf("CUDA mapped PBO: May access %ld bytes\n", num_bytes);
+
+    sobelFilter(data, imWidth, imHeight, g_SobelDisplayMode, imageScale, blockOp, pointOp);
+    checkCudaErrors(cudaGraphicsUnmapResources(1, &cuda_pbo_resource, 0));
+
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glBindTexture(GL_TEXTURE_2D, texid);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo_buffer);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, imWidth, imHeight, GL_LUMINANCE, GL_UNSIGNED_BYTE, OFFSET(0));
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/FunctionPointers/FunctionPointers.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/FunctionPointers/FunctionPointers.cpp:349-368
+```cpp
+        exit(EXIT_FAILURE);
+    }
+
+    initializeData(image_path);
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    free(image_path);
+}
+
+void initGL(int *argc, char **argv)
+{
+    glutInit(argc, argv);
+    glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE);
+    glutInitWindowSize(wWidth, wHeight);
+    glutCreateWindow("Function Pointers [CUDA Edge Detection]n");
+
+    if (!isGLVersionSupported(1, 5)
+        || !areGLExtensionsSupported("GL_ARB_vertex_buffer_object GL_ARB_pixel_buffer_object")) {
+        fprintf(stderr, "Error: failed to get minimal extensions for demo\n");
+        fprintf(stderr, "This sample requires:\n");
+        fprintf(stderr, "  OpenGL version 1.5\n");
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/FunctionPointers/FunctionPointers.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/FunctionPointers/FunctionPointers.cpp:379-398
+```cpp
+    int devID = findCudaDevice(argc, (const char **)argv);
+
+    loadDefaultImage(argv[0]);
+
+    Pixel *d_result;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc((void **)&d_result, imWidth * imHeight * sizeof(Pixel)));
+
+    char *ref_file = NULL;
+    char  dump_file[256];
+
+    int mode = 0;
+    mode     = getCmdLineArgumentInt(argc, (const char **)argv, "mode");
+    getCmdLineArgumentString(argc, (const char **)argv, "file", &ref_file);
+
+    switch (mode) {
+    case 0:
+        g_SobelDisplayMode = SOBELDISPLAY_IMAGE;
+        sprintf(dump_file, "teapot512_orig.pgm");
+        break;
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/FunctionPointers/FunctionPointers.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `FunctionPointers_kernels.cu`
+
+Source: cpp/2_Concepts_and_Techniques/FunctionPointers/FunctionPointers_kernels.cu:29-55
+```cuda
+#include <cooperative_groups.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+namespace cg = cooperative_groups;
+
+#include <helper_cuda.h>
+
+#include "FunctionPointers_kernels.h"
+
+// Texture object for reading image
+cudaTextureObject_t             tex;
+// JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+extern __shared__ unsigned char LocalBlock[];
+static cudaArray               *array = NULL;
+
+#define RADIUS 1
+
+// pixel value used for thresholding function,
+// works well with sample image 'teapot512'
+#define THRESHOLD 150.0f
+
+#ifdef FIXED_BLOCKWIDTH
+#define BlockWidth  80
+#define SharedPitch 384
+#endif
+
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/FunctionPointers/FunctionPointers_kernels.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/FunctionPointers/FunctionPointers_kernels.cu:131-150
+```cuda
+// enum in FunctionPointers_kernels.h
+__device__ blockFunction_t blockFunction_table[LAST_BLOCK_FILTER];
+__device__ pointFunction_t pointFunction_table[LAST_POINT_FILTER];
+
+// Declare device side function pointers.  We retrieve them later with
+// cudaMemcpyFromSymbol to set our function tables above in some
+// particular order specified at runtime.
+__device__ blockFunction_t pComputeSobel     = ComputeSobel;
+__device__ blockFunction_t pComputeBox       = ComputeBox;
+__device__ pointFunction_t pComputeThreshold = Threshold;
+
+// Allocate host side tables to mirror the device side, and later, we
+// fill these tables with the function pointers.  This lets us send
+// the pointers to the kernel on invocation, as a method of choosing
+// which function to run.
+blockFunction_t h_blockFunction_table[2];
+pointFunction_t h_pointFunction_table[2];
+
+// Perform a filter operation on the data, using shared memory
+// The actual operation performed is
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/FunctionPointers/FunctionPointers_kernels.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/FunctionPointers/FunctionPointers_kernels.cu:319-358
+```cuda
+    }
+    else {
+        desc = cudaCreateChannelDesc<uchar4>();
+    }
+
+    // JP: `cudaMallocArray`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMallocArray(&array, &desc, iw, ih));
+    checkCudaErrors(cudaMemcpy2DToArray(
+        // JP: `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+        array, 0, 0, data, iw * Bpp * sizeof(Pixel), iw * Bpp * sizeof(Pixel), ih, cudaMemcpyHostToDevice));
+
+    cudaResourceDesc texRes;
+    memset(&texRes, 0, sizeof(cudaResourceDesc));
+
+    texRes.resType         = cudaResourceTypeArray;
+    texRes.res.array.array = array;
+
+    cudaTextureDesc texDescr;
+    memset(&texDescr, 0, sizeof(cudaTextureDesc));
+
+    checkCudaErrors(cudaCreateTextureObject(&tex, &texRes, &texDescr, NULL));
+}
+
+extern "C" void deleteTexture(void)
+{
+    // JP: `cudaFreeArray`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaFreeArray(array));
+    checkCudaErrors(cudaDestroyTextureObject(tex));
+}
+
+// Copy the pointers from the function tables to the host side
+void setupFunctionTables()
+{
+    // Dynamically assign the function table.
+    // Copy the function pointers to their appropriate locations according to the
+    // enum
+    checkCudaErrors(cudaMemcpyFromSymbol(&h_blockFunction_table[SOBEL_FILTER], pComputeSobel, sizeof(blockFunction_t)));
+    checkCudaErrors(cudaMemcpyFromSymbol(&h_blockFunction_table[BOX_FILTER], pComputeBox, sizeof(blockFunction_t)));
+
+    // do the same for the point function, where the 2nd function is NULL ("no-op"
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/FunctionPointers/FunctionPointers_kernels.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `FunctionPointers_kernels.h`
+
+Source: cpp/2_Concepts_and_Techniques/FunctionPointers/FunctionPointers_kernels.h:29-59
+```cpp
+#ifndef __SOBELFILTER_KERNELS_H_
+#define __SOBELFILTER_KERNELS_H_
+
+typedef unsigned char Pixel;
+
+// global determines which filter to invoke
+enum SobelDisplayMode { SOBELDISPLAY_IMAGE = 0, SOBELDISPLAY_SOBELTEX, SOBELDISPLAY_SOBELSHARED };
+
+// Enums to set up the function table
+// note: if you change these be sure to recompile those files
+// that include this header or ensure the .h is in the
+// dependencies for the related object files
+enum POINT_ENUM { SOBEL_FILTER = 0, BOX_FILTER, LAST_POINT_FILTER };
+
+enum BLOCK_ENUM { THRESHOLD_FILTER = 0, NULL_FILTER, LAST_BLOCK_FILTER };
+
+extern enum SobelDisplayMode g_SobelDisplayMode;
+
+extern "C" void sobelFilter(Pixel                *odata,
+                            int                   iw,
+                            int                   ih,
+                            enum SobelDisplayMode mode,
+                            float                 fScale,
+                            int                   blockOperation,
+                            int                   pointOperation);
+extern "C" void setupTexture(int iw, int ih, Pixel *data, int Bpp);
+extern "C" void deleteTexture(void);
+extern "C" void initFilter(void);
+void            setupFunctionTables();
+
+#endif
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/FunctionPointers/FunctionPointers_kernels.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
@@ -97,6 +384,7 @@ English anchor: read `FunctionPointers` as a focused example of the CUDA concept
 | `blockDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `threadIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `cudaMemcpyFromSymbol` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
 | `cudaDeviceSynchronize` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaMemcpy` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
@@ -106,7 +394,6 @@ English anchor: read `FunctionPointers` as a focused example of the CUDA concept
 | `cudaMemcpyToSymbol` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaGraphicsMapResources` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 | `cudaGraphicsResourceGetMappedPointer` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
-| `cudaGraphicsUnmapResources` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。

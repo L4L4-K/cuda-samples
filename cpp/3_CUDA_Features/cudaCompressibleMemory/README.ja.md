@@ -86,6 +86,215 @@ English anchor: read `cudaCompressibleMemory` as a focused example of the CUDA c
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/3_CUDA_Features/cudaCompressibleMemory/CMakeLists.txt:1-45
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(cudaCompressibleMemory LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for cudaCompressibleMemory
+add_executable(cudaCompressibleMemory compMalloc.cpp saxpy.cu)
+
+target_compile_options(cudaCompressibleMemory PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(cudaCompressibleMemory PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(cudaCompressibleMemory PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_include_directories(cudaCompressibleMemory PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+target_link_libraries(cudaCompressibleMemory PRIVATE
+    CUDA::cuda_driver
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/cudaCompressibleMemory/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `compMalloc.cpp`
+
+Source: cpp/3_CUDA_Features/cudaCompressibleMemory/compMalloc.cpp:29-53
+```cpp
+#include <cuda.h>
+#include <cuda_runtime_api.h>
+#include <helper_cuda.h>
+#include <stdio.h>
+#include <string.h>
+
+cudaError_t setProp(CUmemAllocationProp *prop, bool UseCompressibleMemory)
+{
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
+    CUdevice currentDevice;
+    if (cuCtxGetDevice(&currentDevice) != CUDA_SUCCESS)
+        return cudaErrorMemoryAllocation;
+
+    memset(prop, 0, sizeof(CUmemAllocationProp));
+    prop->type          = CU_MEM_ALLOCATION_TYPE_PINNED;
+    prop->location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+    prop->location.id   = currentDevice;
+
+    if (UseCompressibleMemory)
+        prop->allocFlags.compressionType = CU_MEM_ALLOCATION_COMP_GENERIC;
+
+    return cudaSuccess;
+}
+
+cudaError_t allocateCompressible(void **adr, size_t size, bool UseCompressibleMemory)
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/cudaCompressibleMemory/compMalloc.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `compMalloc.h`
+
+Source: cpp/3_CUDA_Features/cudaCompressibleMemory/compMalloc.h:29-35
+```cpp
+#ifndef COMP_MALLOC_H
+#define COMP_MALLOC_H
+
+cudaError_t allocateCompressible(void **adr, size_t size, bool UseCompressibleMemory);
+cudaError_t freeCompressible(void *ptr, size_t size, bool UseCompressibleMemory);
+
+#endif
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/cudaCompressibleMemory/compMalloc.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `saxpy.cu`
+
+Source: cpp/3_CUDA_Features/cudaCompressibleMemory/saxpy.cu:35-57
+```cuda
+#include <cuda.h>
+#include <stdio.h>
+#define CUDA_DRIVER_API
+#include "compMalloc.h"
+#include "helper_cuda.h"
+
+__global__ void saxpy(const float a, const float4 *x, const float4 *y, float4 *z, const size_t n)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    for (size_t i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += gridDim.x * blockDim.x) {
+        const float4 x4 = x[i];
+        const float4 y4 = y[i];
+        z[i]            = make_float4(a * x4.x + y4.x, a * x4.y + y4.y, a * x4.z + y4.z, a * x4.w + y4.w);
+    }
+}
+
+__global__ void init(float4 *x, float4 *y, const float val, const size_t n)
+{
+    const float4 val4 = make_float4(val, val, val, val);
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+    for (size_t i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += gridDim.x * blockDim.x) {
+        x[i] = y[i] = val4;
+    }
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/cudaCompressibleMemory/saxpy.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/cudaCompressibleMemory/saxpy.cu:71-136
+```cuda
+    int         blockSize;
+    int         minGridSize;
+    dim3        threads, blocks;
+
+    if (!compressibleZbuf) {
+        // We are on config where compressible buffer can only be initialized through cudaMemcpy
+        // hence, x & y buffers are allocated as compressible and initialized via cudaMemcpy
+        // whereas z buffer is allocated as non-compressible.
+        float4 *h_x = (float4 *)malloc(sizeof(float4) * n);
+        float4 *h_y = (float4 *)malloc(sizeof(float4) * n);
+        for (int i = 0; i < n; i++) {
+            h_x[i].x = h_x[i].y = h_x[i].z = h_x[i].w = init_val;
+            h_y[i].x = h_y[i].y = h_y[i].z = h_y[i].w = init_val;
+        }
+        // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+        checkCudaErrors(cudaMemcpy(x, h_x, sizeof(float4) * n, cudaMemcpyHostToDevice));
+        checkCudaErrors(cudaMemcpy(y, h_y, sizeof(float4) * n, cudaMemcpyHostToDevice));
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        free(h_x);
+        free(h_y);
+    }
+    else {
+        checkCudaErrors(cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, (void *)init));
+        threads = dim3(blockSize, 1, 1);
+        blocks  = dim3(minGridSize, 1, 1);
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+        init<<<blocks, threads>>>(x, y, init_val, n);
+    }
+
+    checkCudaErrors(cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, (void *)saxpy));
+    threads = dim3(blockSize, 1, 1);
+    blocks  = dim3(minGridSize, 1, 1);
+
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    checkCudaErrors(cudaEventCreate(&start));
+    checkCudaErrors(cudaEventCreate(&stop));
+    checkCudaErrors(cudaEventRecord(start));
+    saxpy<<<blocks, threads>>>(a, x, y, z, n);
+    checkCudaErrors(cudaEventRecord(stop));
+    // JP: `cudaEventSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    checkCudaErrors(cudaEventSynchronize(stop));
+    checkCudaErrors(cudaEventElapsedTime(&ms, start, stop));
+
+    const size_t size = n * sizeof(float4);
+    printf("Running saxpy with %d blocks x %d threads = %.3f ms %.3f TB/s\n",
+           blocks.x,
+           threads.x,
+           ms,
+           (size * 3) / ms / 1e9);
+}
+
+int main(int argc, char **argv)
+{
+    const size_t n = 10485760;
+
+    if (checkCmdLineFlag(argc, (const char **)argv, "help") || checkCmdLineFlag(argc, (const char **)argv, "?")) {
+        printf("Usage -device=n (n >= 0 for deviceID)\n");
+        exit(EXIT_SUCCESS);
+    }
+
+    findCudaDevice(argc, (const char **)argv);
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
+    CUdevice currentDevice;
+    checkCudaErrors(cuCtxGetDevice(&currentDevice));
+
+    // Check that the selected device supports virtual memory management
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/cudaCompressibleMemory/saxpy.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

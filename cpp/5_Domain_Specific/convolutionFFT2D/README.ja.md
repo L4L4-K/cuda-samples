@@ -77,17 +77,436 @@ English anchor: read `convolutionFFT2D` as a focused example of the CUDA concept
 
 ## Concrete Reading Path
 
-- `convolutionFFT2D.cu`: focus on `cudaResourceDesc`, `cudaTextureDesc`, `cudaDestroyTextureObject`, `cudaResourceTypeLinear`, `cudaCreateChannelDesc`.
+- `convolutionFFT2D.cu`: focus on `cudaResourceDesc`, `cudaTextureDesc`, `launch`, `cudaDestroyTextureObject`, `cudaResourceTypeLinear`.
 - `convolutionFFT2D.cuh`: focus on `blockDim`, `blockIdx`, `threadIdx`, `cudaTextureObject_t`, `launch`.
 - `convolutionFFT2D_common.h`: focus on control flow and helper functions.
 - `convolutionFFT2D_gold.cpp`: focus on control flow and helper functions.
-- `main.cpp`: focus on `cudaMalloc`, `cudaFree`, `cufftComplex`, `cudaMemcpy`, `cudaMemset`.
+- `main.cpp`: focus on `cudaMalloc`, `cudaFree`, `CUDA`, `cufftComplex`, `cudaMemcpy`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/5_Domain_Specific/convolutionFFT2D/CMakeLists.txt:1-46
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(convolutionFFT2D LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for convolutionFFT2D
+add_executable(convolutionFFT2D convolutionFFT2D.cu convolutionFFT2D_gold.cpp main.cpp)
+
+target_compile_options(convolutionFFT2D PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(convolutionFFT2D PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(convolutionFFT2D PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_include_directories(convolutionFFT2D PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+target_link_libraries(convolutionFFT2D PUBLIC
+    # JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    CUDA::cufft
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/convolutionFFT2D/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `convolutionFFT2D.cu`
+
+Source: cpp/5_Domain_Specific/convolutionFFT2D/convolutionFFT2D.cu:24-47
+```cuda
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+// JP: この file では kernel launch と thread indexing、stream/event による非同期実行と同期 を確認します。英語の識別子/API/出力文字列は保持します。
+
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// Other helpers
+#include <helper_cuda.h>
+
+// Project includes
+#include "convolutionFFT2D.cuh"
+#include "convolutionFFT2D_common.h"
+
+////////////////////////////////////////////////////////////////////////////////
+/// Position convolution kernel center at (0, 0) in the image
+////////////////////////////////////////////////////////////////////////////////
+extern "C" void
+padKernel(float *d_Dst, float *d_Src, int fftH, int fftW, int kernelH, int kernelW, int kernelY, int kernelX)
+{
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/convolutionFFT2D/convolutionFFT2D.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/convolutionFFT2D/convolutionFFT2D.cu:70-105
+```cuda
+
+    checkCudaErrors(cudaCreateTextureObject(&texFloat, &texRes, &texDescr, NULL));
+#endif
+
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    padKernel_kernel<<<grid, threads>>>(d_Dst,
+                                        d_Src,
+                                        fftH,
+                                        fftW,
+                                        kernelH,
+                                        kernelW,
+                                        kernelY,
+                                        kernelX
+#if (USE_TEXTURE)
+                                        ,
+                                        texFloat
+#endif
+    );
+    getLastCudaError("padKernel_kernel<<<>>> execution failed\n");
+
+#if (USE_TEXTURE)
+    // JP: `cudaDestroyTextureObject`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaDestroyTextureObject(texFloat));
+#endif
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Prepare data for "pad to border" addressing mode
+////////////////////////////////////////////////////////////////////////////////
+extern "C" void padDataClampToBorder(float *d_Dst,
+                                     float *d_Src,
+                                     int    fftH,
+                                     int    fftW,
+                                     int    dataH,
+                                     int    dataW,
+                                     int    kernelW,
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/convolutionFFT2D/convolutionFFT2D.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `convolutionFFT2D.cuh`
+
+Source: cpp/5_Domain_Specific/convolutionFFT2D/convolutionFFT2D.cuh:29-47
+```cuda
+#define USE_TEXTURE  1
+#define POWER_OF_TWO 1
+
+#if (USE_TEXTURE)
+#define LOAD_FLOAT(i) tex1Dfetch<float>(texFloat, i)
+#define SET_FLOAT_BASE
+#else
+#define LOAD_FLOAT(i) d_Src[i]
+#define SET_FLOAT_BASE
+#endif
+
+#include "convolutionFFT2D_common.h"
+
+////////////////////////////////////////////////////////////////////////////////
+/// Position convolution kernel center at (0, 0) in the image
+////////////////////////////////////////////////////////////////////////////////
+__global__ void padKernel_kernel(float *d_Dst,
+                                 float *d_Src,
+                                 int    fftH,
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/convolutionFFT2D/convolutionFFT2D.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/convolutionFFT2D/convolutionFFT2D.cuh:54-73
+```cuda
+                                 ,
+                                 cudaTextureObject_t texFloat
+#endif
+)
+{
+    // JP: `blockDim`, `blockIdx`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    const int y = blockDim.y * blockIdx.y + threadIdx.y;
+    const int x = blockDim.x * blockIdx.x + threadIdx.x;
+
+    if (y < kernelH && x < kernelW) {
+        int ky = y - kernelY;
+
+        if (ky < 0) {
+            ky += fftH;
+        }
+
+        int kx = x - kernelX;
+
+        if (kx < 0) {
+            kx += fftW;
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/convolutionFFT2D/convolutionFFT2D.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `convolutionFFT2D_common.h`
+
+Source: cpp/5_Domain_Specific/convolutionFFT2D/convolutionFFT2D_common.h:29-91
+```cpp
+#ifndef CONVOLUTIONFFT2D_COMMON_H
+#define CONVOLUTIONFFT2D_COMMON_H
+
+typedef unsigned int uint;
+
+#ifdef __CUDACC__
+typedef float2 fComplex;
+#else
+typedef struct
+{
+    float x;
+    float y;
+} fComplex;
+#endif
+
+////////////////////////////////////////////////////////////////////////////////
+// Helper functions
+////////////////////////////////////////////////////////////////////////////////
+// Round a / b to nearest higher integer value
+inline int iDivUp(int a, int b) { return (a % b != 0) ? (a / b + 1) : (a / b); }
+
+// Align a to nearest higher multiple of b
+inline int iAlignUp(int a, int b) { return (a % b != 0) ? (a - a % b + b) : a; }
+
+extern "C" void convolutionClampToBorderCPU(float *h_Result,
+                                            float *h_Data,
+                                            float *h_Kernel,
+                                            int    dataH,
+                                            int    dataW,
+                                            int    kernelH,
+                                            int    kernelW,
+                                            int    kernelY,
+                                            int    kernelX);
+
+extern "C" void padKernel(float *d_PaddedKernel,
+                          float *d_Kernel,
+                          int    fftH,
+                          int    fftW,
+                          int    kernelH,
+                          int    kernelW,
+                          int    kernelY,
+                          int    kernelX);
+
+extern "C" void padDataClampToBorder(float *d_PaddedData,
+                                     float *d_Data,
+                                     int    fftH,
+                                     int    fftW,
+                                     int    dataH,
+                                     int    dataW,
+                                     int    kernelH,
+                                     int    kernelW,
+                                     int    kernelY,
+                                     int    kernelX);
+
+extern "C" void modulateAndNormalize(fComplex *d_Dst, fComplex *d_Src, int fftH, int fftW, int padding);
+
+extern "C" void spPostprocess2D(void *d_Dst, void *d_Src, uint DY, uint DX, uint padding, int dir);
+
+extern "C" void spPreprocess2D(void *d_Dst, void *d_Src, uint DY, uint DX, uint padding, int dir);
+
+extern "C" void spProcess2D(void *d_Data, void *d_Data0, void *d_Kernel0, uint DY, uint DX, int dir);
+
+#endif // CONVOLUTIONFFT2D_COMMON_H
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/convolutionFFT2D/convolutionFFT2D_common.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `convolutionFFT2D_gold.cpp`
+
+Source: cpp/5_Domain_Specific/convolutionFFT2D/convolutionFFT2D_gold.cpp:29-72
+```cpp
+#include <assert.h>
+
+#include "convolutionFFT2D_common.h"
+
+////////////////////////////////////////////////////////////////////////////////
+// Reference straightforward CPU convolution
+////////////////////////////////////////////////////////////////////////////////
+extern "C" void convolutionClampToBorderCPU(float *h_Result,
+                                            float *h_Data,
+                                            float *h_Kernel,
+                                            int    dataH,
+                                            int    dataW,
+                                            int    kernelH,
+                                            int    kernelW,
+                                            int    kernelY,
+                                            int    kernelX)
+{
+    for (int y = 0; y < dataH; y++)
+        for (int x = 0; x < dataW; x++) {
+            double sum = 0;
+
+            for (int ky = -(kernelH - kernelY - 1); ky <= kernelY; ky++)
+                for (int kx = -(kernelW - kernelX - 1); kx <= kernelX; kx++) {
+                    int dy = y + ky;
+                    int dx = x + kx;
+
+                    if (dy < 0)
+                        dy = 0;
+
+                    if (dx < 0)
+                        dx = 0;
+
+                    if (dy >= dataH)
+                        dy = dataH - 1;
+
+                    if (dx >= dataW)
+                        dx = dataW - 1;
+
+                    sum += h_Data[dy * dataW + dx] * h_Kernel[(kernelY - ky) * kernelW + (kernelX - kx)];
+                }
+
+            h_Result[y * dataW + x] = (float)sum;
+        }
+}
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/convolutionFFT2D/convolutionFFT2D_gold.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `main.cpp`
+
+Source: cpp/5_Domain_Specific/convolutionFFT2D/main.cpp:31-54
+```cpp
+ * with very large kernel sizes
+ * can be efficiently implemented
+ * using FFT transformations.
+ */
+
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// Include CUDA runtime and CUFFT
+#include <cuda_runtime.h>
+#include <cufft.h>
+
+// Helper functions for CUDA
+#include <helper_cuda.h>
+#include <helper_functions.h>
+
+#include "convolutionFFT2D_common.h"
+
+////////////////////////////////////////////////////////////////////////////////
+// Helper functions
+////////////////////////////////////////////////////////////////////////////////
+int snapTransformSize(int dataSize)
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/convolutionFFT2D/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/convolutionFFT2D/main.cpp:87-106
+```cpp
+
+    float *d_Data, *d_PaddedData, *d_Kernel, *d_PaddedKernel;
+
+    fComplex *d_DataSpectrum, *d_KernelSpectrum;
+
+    // JP: `cufftHandle`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    cufftHandle fftPlanFwd, fftPlanInv;
+
+    bool                bRetVal;
+    StopWatchInterface *hTimer = NULL;
+    sdkCreateTimer(&hTimer);
+
+    printf("Testing built-in R2C / C2R FFT-based convolution\n");
+    const int kernelH = 7;
+    const int kernelW = 6;
+    const int kernelY = 3;
+    const int kernelX = 4;
+    const int dataH   = 2000;
+    const int dataW   = 2000;
+    const int fftH    = snapTransformSize(dataH + kernelH - 1);
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/convolutionFFT2D/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/convolutionFFT2D/main.cpp:119-138
+```cpp
+    checkCudaErrors(cudaMalloc((void **)&d_PaddedData, fftH * fftW * sizeof(float)));
+    checkCudaErrors(cudaMalloc((void **)&d_PaddedKernel, fftH * fftW * sizeof(float)));
+
+    checkCudaErrors(cudaMalloc((void **)&d_DataSpectrum, fftH * (fftW / 2 + 1) * sizeof(fComplex)));
+    checkCudaErrors(cudaMalloc((void **)&d_KernelSpectrum, fftH * (fftW / 2 + 1) * sizeof(fComplex)));
+    // JP: `cudaMemset`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemset(d_KernelSpectrum, 0, fftH * (fftW / 2 + 1) * sizeof(fComplex)));
+
+    printf("...generating random input data\n");
+    srand(2010);
+
+    for (int i = 0; i < dataH * dataW; i++) {
+        h_Data[i] = getRand();
+    }
+
+    for (int i = 0; i < kernelH * kernelW; i++) {
+        h_Kernel[i] = getRand();
+    }
+
+    printf("...creating R2C & C2R FFT plans for %i x %i\n", fftH, fftW);
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/convolutionFFT2D/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/convolutionFFT2D/main.cpp:153-172
+```cpp
+
+    // Not including kernel transformation into time measurement,
+    // since convolution kernel is not changed very frequently
+    printf("...transforming convolution kernel\n");
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+    checkCudaErrors(cufftExecR2C(fftPlanFwd, (cufftReal *)d_PaddedKernel, (cufftComplex *)d_KernelSpectrum));
+
+    printf("...running GPU FFT convolution: ");
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    checkCudaErrors(cudaDeviceSynchronize());
+    sdkResetTimer(&hTimer);
+    sdkStartTimer(&hTimer);
+    checkCudaErrors(cufftExecR2C(fftPlanFwd, (cufftReal *)d_PaddedData, (cufftComplex *)d_DataSpectrum));
+    modulateAndNormalize(d_DataSpectrum, d_KernelSpectrum, fftH, fftW, 1);
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+    checkCudaErrors(cufftExecC2R(fftPlanInv, (cufftComplex *)d_DataSpectrum, (cufftReal *)d_PaddedData));
+
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
+    checkCudaErrors(cudaDeviceSynchronize());
+    sdkStopTimer(&hTimer);
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/convolutionFFT2D/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 
@@ -106,7 +525,7 @@ English anchor: read `convolutionFFT2D` as a focused example of the CUDA concept
 | `blockIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `threadIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `cudaDeviceSynchronize` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
-| `cudaCreateTextureObject` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。

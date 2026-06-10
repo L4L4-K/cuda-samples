@@ -79,6 +79,113 @@ English anchor: read `simplePrintf` as a focused example of the CUDA concepts us
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/simplePrintf/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simplePrintf LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simplePrintf
+add_executable(simplePrintf simplePrintf.cu)
+
+target_compile_options(simplePrintf PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simplePrintf PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simplePrintf PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simplePrintf/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simplePrintf.cu`
+
+Source: cpp/0_Introduction/simplePrintf/simplePrintf.cu:30-78
+```cuda
+#include <assert.h>
+#include <stdio.h>
+
+// CUDA runtime
+#include <cuda_runtime.h>
+
+// helper functions and utilities to work with CUDA
+#include <helper_cuda.h>
+#include <helper_functions.h>
+
+#ifndef MAX
+#define MAX(a, b) (a > b ? a : b)
+#endif
+
+__global__ void testKernel(int val)
+{
+    printf("[%d, %d]:\t\tValue is:%d\n",
+           // JP: `blockIdx`, `gridDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+           blockIdx.y * gridDim.x + blockIdx.x,
+           threadIdx.z * blockDim.x * blockDim.y + threadIdx.y * blockDim.x + threadIdx.x,
+           val);
+}
+
+int main(int argc, char **argv)
+{
+    int            devID;
+    cudaDeviceProp props;
+
+    // This will pick the best possible CUDA capable device
+    devID = findCudaDevice(argc, (const char **)argv);
+
+    // Get GPU information
+    checkCudaErrors(cudaGetDevice(&devID));
+    checkCudaErrors(cudaGetDeviceProperties(&props, devID));
+    printf("Device %d: \"%s\" with Compute capability %d.%d\n", devID, props.name, props.major, props.minor);
+
+    printf("printf() is called. Output:\n\n");
+
+    // Kernel configuration, where a two-dimensional grid and
+    // three-dimensional blocks are configured.
+    dim3 dimGrid(2, 2);
+    dim3 dimBlock(2, 2, 2);
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    testKernel<<<dimGrid, dimBlock>>>(10);
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    cudaDeviceSynchronize();
+
+    return EXIT_SUCCESS;
+}
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simplePrintf/simplePrintf.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-06-10T08:01:00Z",
+  "status": "DONE",
+  "branch": "ja-study/local-annotations",
+  "head": "a34395f42e181140fda8b971916e54b13e0acef3",
+  "counts": {
+    "markdown_files_scanned": 1094,
+    "markdown_files_with_snippets": 276,
+    "total_snippets": 1776,
+    "malformed_snippets": 0,
+    "stale_snippets": 0,
+    "missing_required_snippets": 0,
+    "sample_readmes": 255,
+    "theme_guides": 16,
+    "major_companion_docs": 5
+  },
+  "malformed_snippets": [],
+  "stale_snippets": [],
+  "missing_required_snippets": []
+}

@@ -85,6 +85,307 @@ English anchor: read `quasirandomGenerator` as a focused example of the CUDA con
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/5_Domain_Specific/quasirandomGenerator/CMakeLists.txt:1-41
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(quasirandomGenerator LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for quasirandomGenerator
+add_executable(quasirandomGenerator quasirandomGenerator.cpp quasirandomGenerator_gold.cpp quasirandomGenerator_kernel.cu)
+
+target_compile_options(quasirandomGenerator PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(quasirandomGenerator PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(quasirandomGenerator PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_include_directories(quasirandomGenerator PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/quasirandomGenerator/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `quasirandomGenerator.cpp`
+
+Source: cpp/5_Domain_Specific/quasirandomGenerator/quasirandomGenerator.cpp:30-48
+```cpp
+#include <cuda_runtime.h>
+
+// Utilities and system includes
+#include <helper_cuda.h>
+#include <helper_functions.h>
+
+#include "quasirandomGenerator_common.h"
+
+////////////////////////////////////////////////////////////////////////////////
+// CPU code
+////////////////////////////////////////////////////////////////////////////////
+extern "C" void initQuasirandomGenerator(unsigned int table[QRNG_DIMENSIONS][QRNG_RESOLUTION]);
+
+extern "C" float getQuasirandomValue(unsigned int table[QRNG_DIMENSIONS][QRNG_RESOLUTION], int i, int dim);
+
+extern "C" double getQuasirandomValue63(INT64 i, int dim);
+extern "C" double MoroInvCNDcpu(unsigned int p);
+
+////////////////////////////////////////////////////////////////////////////////
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/quasirandomGenerator/quasirandomGenerator.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/quasirandomGenerator/quasirandomGenerator.cpp:52-111
+```cpp
+extern "C" void quasirandomGeneratorGPU(float *d_Output, unsigned int seed, unsigned int N);
+extern "C" void inverseCNDgpu(float *d_Output, unsigned int *d_Input, unsigned int N);
+
+const int N = 1048576;
+
+int main(int argc, char **argv)
+{
+    // Start logs
+    printf("%s Starting...\n\n", argv[0]);
+
+    unsigned int tableCPU[QRNG_DIMENSIONS][QRNG_RESOLUTION];
+
+    float *h_OutputGPU, *d_Output;
+
+    int    dim, pos;
+    double delta, ref, sumDelta, sumRef, L1norm, gpuTime;
+
+    StopWatchInterface *hTimer = NULL;
+
+    if (sizeof(INT64) != 8) {
+        printf("sizeof(INT64) != 8\n");
+        return 0;
+    }
+
+    sdkCreateTimer(&hTimer);
+
+    printf("Allocating GPU memory...\n");
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc((void **)&d_Output, QRNG_DIMENSIONS * N * sizeof(float)));
+
+    printf("Allocating CPU memory...\n");
+    h_OutputGPU = (float *)malloc(QRNG_DIMENSIONS * N * sizeof(float));
+
+    printf("Initializing QRNG tables...\n\n");
+    initQuasirandomGenerator(tableCPU);
+
+    initTableGPU(tableCPU);
+
+    printf("Testing QRNG...\n\n");
+    // JP: `cudaMemset`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemset(d_Output, 0, QRNG_DIMENSIONS * N * sizeof(float)));
+    int numIterations = 20;
+
+    for (int i = -1; i < numIterations; i++) {
+        if (i == 0) {
+            // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+            checkCudaErrors(cudaDeviceSynchronize());
+            sdkResetTimer(&hTimer);
+            sdkStartTimer(&hTimer);
+        }
+
+        quasirandomGeneratorGPU(d_Output, 0, N);
+    }
+
+    checkCudaErrors(cudaDeviceSynchronize());
+    sdkStopTimer(&hTimer);
+    gpuTime = sdkGetTimerValue(&hTimer) / (double)numIterations * 1e-3;
+    printf("quasirandomGenerator, Throughput = %.4f GNumbers/s, Time = %.5f s, Size "
+           "= %u Numbers, NumDevsUsed = %u, Workgroup = %u\n",
+           (double)QRNG_DIMENSIONS * (double)N * 1.0E-9 / gpuTime,
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/quasirandomGenerator/quasirandomGenerator.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/quasirandomGenerator/quasirandomGenerator.cpp:178-187
+```cpp
+    printf("L1 norm: %E\n\n", L1norm = sumDelta / sumRef);
+
+    printf("Shutting down...\n");
+    sdkDeleteTimer(&hTimer);
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    free(h_OutputGPU);
+    checkCudaErrors(cudaFree(d_Output));
+
+    exit(L1norm < 1e-6 ? EXIT_SUCCESS : EXIT_FAILURE);
+}
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/quasirandomGenerator/quasirandomGenerator.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `quasirandomGenerator_common.h`
+
+Source: cpp/5_Domain_Specific/quasirandomGenerator/quasirandomGenerator_common.h:29-41
+```cpp
+#ifndef QUASIRANDOMGENERATOR_COMMON_H
+#define QUASIRANDOMGENERATOR_COMMON_H
+
+////////////////////////////////////////////////////////////////////////////////
+// Global types and constants
+////////////////////////////////////////////////////////////////////////////////
+typedef long long int INT64;
+
+#define QRNG_DIMENSIONS 3
+#define QRNG_RESOLUTION 31
+#define INT_SCALE       (1.0f / (float)0x80000001U)
+
+#endif
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/quasirandomGenerator/quasirandomGenerator_common.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `quasirandomGenerator_gold.cpp`
+
+Source: cpp/5_Domain_Specific/quasirandomGenerator/quasirandomGenerator_gold.cpp:29-47
+```cpp
+#include <math.h>
+#include <stdio.h>
+
+#include "quasirandomGenerator_common.h"
+
+////////////////////////////////////////////////////////////////////////////////
+// Table generation functions
+////////////////////////////////////////////////////////////////////////////////
+// Internal 64(63)-bit table
+static INT64 cjn[63][QRNG_DIMENSIONS];
+
+static int GeneratePolynomials(int buffer[QRNG_DIMENSIONS], bool primitive)
+{
+    int i, j, n, p1, p2, l;
+    int e_p1, e_p2, e_b;
+
+    // generate all polynomials to buffer
+    for (n = 1, buffer[0] = 0x2, p2 = 0, l = 0; n < QRNG_DIMENSIONS; ++n) {
+        // search for the next irreducible polynomial
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/quasirandomGenerator/quasirandomGenerator_gold.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/quasirandomGenerator/quasirandomGenerator_gold.cpp:59-78
+```cpp
+                // divide p2 by buffer[i] until the end
+                for (p2 = (buffer[i] << ((e_p2 = e_p1) - e_b)) ^ p1; p2 >= buffer[i];
+                     p2 = (buffer[i] << (e_p2 - e_b)) ^ p2) {
+                    for (; (p2 & (1 << e_p2)) == 0; --e_p2) {
+                    }
+                } // compute new degree of p2
+
+                // division without remainder!!! p1 is not irreducible
+                if (p2 == 0) {
+                    break;
+                }
+            }
+
+            // all divisions were with remainder - p1 is irreducible
+            if (p2 != 0) {
+                e_p2 = 0;
+
+                if (primitive) {
+                    // check that p1 has only one cycle (i.e. is monic, or primitive)
+                    j   = ~(0xffffffff << (e_p1 + 1));
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/quasirandomGenerator/quasirandomGenerator_gold.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `quasirandomGenerator_kernel.cu`
+
+Source: cpp/5_Domain_Specific/quasirandomGenerator/quasirandomGenerator_kernel.cu:29-84
+```cuda
+#ifndef QUASIRANDOMGENERATOR_KERNEL_CUH
+#define QUASIRANDOMGENERATOR_KERNEL_CUH
+
+#include <helper_cuda.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "quasirandomGenerator_common.h"
+
+// Fast integer multiplication
+#define MUL(a, b) __umul24(a, b)
+
+////////////////////////////////////////////////////////////////////////////////
+// Niederreiter quasirandom number generation kernel
+////////////////////////////////////////////////////////////////////////////////
+static __constant__ unsigned int c_Table[QRNG_DIMENSIONS][QRNG_RESOLUTION];
+
+static __global__ void quasirandomGeneratorKernel(float *d_Output, unsigned int seed, unsigned int N)
+{
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    unsigned int *dimBase = &c_Table[threadIdx.y][0];
+    unsigned int  tid     = MUL(blockDim.x, blockIdx.x) + threadIdx.x;
+    unsigned int  threadN = MUL(blockDim.x, gridDim.x);
+
+    for (unsigned int pos = tid; pos < N; pos += threadN) {
+        unsigned int result = 0;
+        unsigned int data   = seed + pos;
+
+        for (int bit = 0; bit < QRNG_RESOLUTION; bit++, data >>= 1)
+            if (data & 1) {
+                result ^= dimBase[bit];
+            }
+
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+        d_Output[MUL(threadIdx.y, N) + pos] = (float)(result + 1) * INT_SCALE;
+    }
+}
+
+// Table initialization routine
+extern "C" void initTableGPU(unsigned int tableCPU[QRNG_DIMENSIONS][QRNG_RESOLUTION])
+{
+    checkCudaErrors(cudaMemcpyToSymbol(c_Table, tableCPU, QRNG_DIMENSIONS * QRNG_RESOLUTION * sizeof(unsigned int)));
+}
+
+// Host-side interface
+extern "C" void quasirandomGeneratorGPU(float *d_Output, unsigned int seed, unsigned int N)
+{
+    dim3 threads(128, QRNG_DIMENSIONS);
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    quasirandomGeneratorKernel<<<128, threads>>>(d_Output, seed, N);
+    getLastCudaError("quasirandomGeneratorKernel() execution failed.\n");
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Moro's Inverse Cumulative Normal Distribution function approximation
+////////////////////////////////////////////////////////////////////////////////
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/quasirandomGenerator/quasirandomGenerator_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
@@ -96,9 +397,9 @@ English anchor: read `quasirandomGenerator` as a focused example of the CUDA con
 | `cudaMemcpy` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `blockDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaMemcpyToSymbol` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaMemcpyDeviceToHost` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
-| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `blockIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `gridDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 

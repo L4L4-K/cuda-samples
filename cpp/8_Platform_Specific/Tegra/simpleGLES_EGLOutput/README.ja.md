@@ -78,7 +78,7 @@ English anchor: read `simpleGLES_EGLOutput` as a focused example of the CUDA con
 ## Concrete Reading Path
 
 - `graphics_interface_egloutput_via_egl.c`: focus on `CUDA`, `Device`.
-- `simpleGLES_EGLOutput.cu`: focus on `CUDA`, `cudaGraphicsResource`, `blockIdx`, `blockDim`, `threadIdx`.
+- `simpleGLES_EGLOutput.cu`: focus on `CUDA`, `launch`, `cudaGraphicsResource`, `blockIdx`, `blockDim`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
@@ -86,10 +86,211 @@ English anchor: read `simpleGLES_EGLOutput` as a focused example of the CUDA con
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/8_Platform_Specific/Tegra/simpleGLES_EGLOutput/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../../cmake/Modules")
+
+project(simpleGLES_EGLOutput LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 87 110)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/simpleGLES_EGLOutput/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `graphics_interface_egloutput_via_egl.c`
+
+Source: cpp/8_Platform_Specific/Tegra/simpleGLES_EGLOutput/graphics_interface_egloutput_via_egl.c:29-48
+```c
+// Display *display;
+int screen;
+// Window win = 0;
+
+#include <GLES3/gl31.h>
+#include <assert.h>
+#include <drm_fourcc.h>
+#include <xf86drm.h>
+#include <xf86drmMode.h>
+// #include <GLES3/gl3ext.h> // not (yet) needed
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+
+#define MAX_DEVICES 16
+
+static PFNEGLQUERYDEVICESEXTPROC                eglQueryDevicesEXT                = NULL;
+static PFNEGLQUERYDEVICESTRINGEXTPROC           eglQueryDeviceStringEXT           = NULL;
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/simpleGLES_EGLOutput/graphics_interface_egloutput_via_egl.c` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `mesh.frag.glsl`
+
+Source: cpp/8_Platform_Specific/Tegra/simpleGLES_EGLOutput/mesh.frag.glsl:28-31
+```glsl
+void main()
+{
+    gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
+}
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/simpleGLES_EGLOutput/mesh.frag.glsl` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `mesh.vert.glsl`
+
+Source: cpp/8_Platform_Specific/Tegra/simpleGLES_EGLOutput/mesh.vert.glsl:28-33
+```glsl
+attribute vec4 position;
+
+void main()
+{
+    gl_Position = position;
+}
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/simpleGLES_EGLOutput/mesh.vert.glsl` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleGLES_EGLOutput.cu`
+
+Source: cpp/8_Platform_Specific/Tegra/simpleGLES_EGLOutput/simpleGLES_EGLOutput.cu:30-48
+```cuda
+    This example demonstrates how to use the CUDA C bindings to OpenGL ES to
+    dynamically modify a vertex buffer using a CUDA C kernel.
+
+    The steps are:
+    1. Create an empty vertex buffer object (VBO)
+    2. Register the VBO with CUDA C
+    3. Map the VBO for writing from CUDA C
+    4. Run CUDA C kernel to modify the vertex positions
+    5. Unmap the VBO
+    6. Render the results using OpenGL ES
+
+    Host code
+*/
+
+// includes, system
+#include <math.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/simpleGLES_EGLOutput/simpleGLES_EGLOutput.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/simpleGLES_EGLOutput/simpleGLES_EGLOutput.cu:167-186
+```cuda
+//! Simple kernel to modify vertex positions in sine wave pattern
+//! @param data  data in global memory
+///////////////////////////////////////////////////////////////////////////////
+__global__ void simple_vbo_kernel(float4 *pos, unsigned int width, unsigned int height, float time)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    // calculate uv coordinates
+    float u = x / (float)width;
+    float v = y / (float)height;
+    u       = u * 2.0f - 1.0f;
+    v       = v * 2.0f - 1.0f;
+
+    // calculate simple sine wave pattern
+    float freq = 4.0f;
+    float w    = sinf(u * freq + time) * cosf(v * freq + time) * 0.5f;
+
+    // write output vertex
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/simpleGLES_EGLOutput/simpleGLES_EGLOutput.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/simpleGLES_EGLOutput/simpleGLES_EGLOutput.cu:202-221
+```cuda
+// JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+void runCuda(struct cudaGraphicsResource **vbo_resource)
+{
+    // map OpenGL buffer object for writing from CUDA
+    float4 *dptr;
+    cudaGraphicsMapResources(1, vbo_resource, 0);
+    size_t num_bytes;
+    cudaGraphicsResourceGetMappedPointer((void **)&dptr, &num_bytes, *vbo_resource);
+    // printf("Sample CUDA mapped VBO: May access %ld bytes\n", num_bytes);
+
+    // execute the kernel
+    //    dim3 block(8, 8, 1);
+    //    dim3 grid(mesh_width / block.x, mesh_height / block.y, 1);
+    //    kernel<<< grid, block>>>(dptr, mesh_width, mesh_height, g_fAnim);
+
+    launch_kernel(dptr, mesh_width, mesh_height, g_fAnim);
+
+    // unmap buffer object
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+    cudaGraphicsUnmapResources(1, vbo_resource, 0);
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/simpleGLES_EGLOutput/simpleGLES_EGLOutput.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/simpleGLES_EGLOutput/simpleGLES_EGLOutput.cu:245-269
+```cuda
+//! Run the Cuda part of the computation
+////////////////////////////////////////////////////////////////////////////////
+void runAutoTest(int devID, char **argv, char *ref_file)
+{
+    char *reference_file = NULL;
+    void *imageData      = malloc(mesh_width * mesh_height * sizeof(float));
+
+    // execute the kernel
+    launch_kernel((float4 *)d_vbo_buffer, mesh_width, mesh_height, g_fAnim);
+
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    cudaDeviceSynchronize();
+    getLastCudaError("launch_kernel failed");
+
+    // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    cudaMemcpy(imageData, d_vbo_buffer, mesh_width * mesh_height * sizeof(float), cudaMemcpyDeviceToHost);
+
+    sdkDumpBin2(imageData, mesh_width * mesh_height * sizeof(float), "simpleGL.bin");
+    reference_file = sdkFindFilePath(ref_file, argv[0]);
+
+    if (reference_file
+        // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+        && !sdkCompareBin2BinFloat("simpleGL.bin",
+                                   reference_file,
+                                   mesh_width * mesh_height * sizeof(float),
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/simpleGLES_EGLOutput/simpleGLES_EGLOutput.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
 | - | - |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaGraphicsResource` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 | `cudaDeviceSynchronize` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaMemcpy` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
@@ -103,7 +304,6 @@ English anchor: read `simpleGLES_EGLOutput` as a focused example of the CUDA con
 | `cudaGraphicsResourceGetMappedPointer` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 | `cudaGraphicsUnmapResources` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
-| `Device` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。
@@ -166,7 +366,7 @@ The sample may display a window or produce/validate image-like output; exact vis
 
 ## Exercises
 
-- `cudaGraphicsResource` の直前と直後で、どの memory/resource が有効になったかをメモする。
+- `launch` の直前と直後で、どの memory/resource が有効になったかをメモする。
 - source file を上から読み、setup、GPU work、sync、validation、cleanup の行番号を抜き出す。
 - problem size や input size を変更した場合に、境界チェックや allocation size が破綻しないか説明する。
 - stream timeline を描き、copy、kernel、event、host wait の位置を分ける。

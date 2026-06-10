@@ -76,13 +76,140 @@ English anchor: read `matrixMulSharedMem` as a focused example of the CUDA conce
 
 ## Concrete Reading Path
 
-- `matrixMulSharedMem.py`: focus on `launch`, `CUDA`, `cuBLASLt`, `Stream`, `cp.float32`.
+- `matrixMulSharedMem.py`: focus on `CUDA`, `launch`, `cuBLASLt`, `Stream`, `cp.float32`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `matrixMulSharedMem.py`
+
+Source: python/2_CoreConcepts/matrixMulSharedMem/matrixMulSharedMem.py:2-20
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/matrixMulSharedMem/matrixMulSharedMem.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/matrixMulSharedMem/matrixMulSharedMem.py:65-101
+```python
+#define TILE_SIZE 16
+
+extern "C" __global__
+void matmul_shared(const float* A, const float* B, float* C,
+                   int M, int N, int K) {
+    __shared__ float As[TILE_SIZE][TILE_SIZE];
+    __shared__ float Bs[TILE_SIZE][TILE_SIZE];
+
+    int bx = blockIdx.x, by = blockIdx.y;
+    int tx = threadIdx.x, ty = threadIdx.y;
+    int row = by * TILE_SIZE + ty;
+    int col = bx * TILE_SIZE + tx;
+
+    float sum = 0.0f;
+    int numTiles = (K + TILE_SIZE - 1) / TILE_SIZE;
+
+    for (int t = 0; t < numTiles; t++) {
+        int aCol = t * TILE_SIZE + tx;
+        int bRow = t * TILE_SIZE + ty;
+
+        As[ty][tx] = (row < M && aCol < K) ? A[row * K + aCol] : 0.0f;
+        Bs[ty][tx] = (bRow < K && col < N) ? B[bRow * N + col] : 0.0f;
+        __syncthreads();
+
+        #pragma unroll
+        for (int k = 0; k < TILE_SIZE; k += 4) {
+            sum += As[ty][k]     * Bs[k][tx];
+            sum += As[ty][k + 1] * Bs[k + 1][tx];
+            sum += As[ty][k + 2] * Bs[k + 2][tx];
+            sum += As[ty][k + 3] * Bs[k + 3][tx];
+        }
+        __syncthreads();
+    }
+
+    if (row < M && col < N) {
+        C[row * N + col] = sum;
+    }
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/matrixMulSharedMem/matrixMulSharedMem.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/matrixMulSharedMem/matrixMulSharedMem.py:115-134
+```python
+    print("Matrix Multiplication with Shared Memory (GEMM)")
+    print("=" * 60)
+
+    # Initialize device and stream
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
+    device = Device(device_id)
+    device.set_current()
+    stream = device.create_stream()
+    print(f"\nDevice: {device.name}")
+    print(f"Compute Capability: sm_{device.arch}")
+
+    # Make CuPy use our cuda.core stream
+    cp.cuda.Stream.from_external(stream).use()
+
+    # Compile custom kernel
+    arch = f"sm_{device.arch}"
+    # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
+    program = Program(MATMUL_KERNEL, code_type="c++", options=ProgramOptions(arch=arch))
+    kernel = program.compile(target_type="cubin").get_kernel("matmul_shared")
+    print("Custom kernel compiled [OK]")
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/matrixMulSharedMem/matrixMulSharedMem.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/matrixMulSharedMem/matrixMulSharedMem.py:154-173
+```python
+    try:
+        # -------------------------------------------------------------------------
+        # nvmath GEMM (cuBLASLt)
+        # -------------------------------------------------------------------------
+        print("\n" + "-" * 60)
+        # JP: `cuBLASLt`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。 CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+        print("NVMATH (cuBLASLt) - plan once, execute many")
+        print("-" * 60)
+
+        # JP: streams_events: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+        with nvmath_advanced.Matmul(d_A, d_B, stream=int(stream.handle)) as mm:
+            mm.plan()
+            d_C_nvmath = mm.execute()
+            stream.sync()
+
+            start = stream.record(options=event_opts)
+            for _ in range(num_iterations):
+                d_C_nvmath = mm.execute()
+            end = stream.record(options=event_opts)
+            end.sync()
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/matrixMulSharedMem/matrixMulSharedMem.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

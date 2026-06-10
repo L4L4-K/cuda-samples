@@ -330,14 +330,14 @@ English anchor: read `4_CUDA_Libraries` as a focused example of the CUDA concept
 
 ## Concrete Reading Path
 
-- `FilterBorderControlNPP/FilterBorderControlNPP.cpp`: focus on `nppStreamCtx`, `npp`, `nppiFree`, `cudaError`, `CUDA`.
-- `MersenneTwisterGP11213/MersenneTwister.cpp`: focus on `curandGenerator_t`, `curandGenerateUniform`, `cudaStreamSynchronize`, `curand`, `cudaStream_t`.
-- `batchCUBLAS/batchCUBLAS.cpp`: focus on `cudaSuccess`, `cuGet`, `cudaError_t`, `cublasOperation_t`, `CUBLASTEST_FAILED`.
+- `FilterBorderControlNPP/FilterBorderControlNPP.cpp`: focus on `nppStreamCtx`, `CUDA`, `npp`, `nppiFree`, `cudaError`.
+- `MersenneTwisterGP11213/MersenneTwister.cpp`: focus on `curandGenerator_t`, `CUDA`, `curandGenerateUniform`, `cudaStreamSynchronize`, `curand`.
+- `batchCUBLAS/batchCUBLAS.cpp`: focus on `cudaSuccess`, `cuGet`, `CUDA`, `cudaError_t`, `cublasOperation_t`.
 - `batchCUBLAS/batchCUBLAS.h`: focus on `cuGet`, `cuEqual`, `CUDA`, `cuRand`, `CUDA_ZNEW`.
-- `boxFilterNPP/boxFilterNPP.cpp`: focus on `nppStreamCtx`, `cudaError`, `npp`, `CUDA`, `cudaSuccess`.
-- `cannyEdgeDetectorNPP/cannyEdgeDetectorNPP.cpp`: focus on `nppStreamCtx`, `cudaError`, `npp`, `CUDA`, `cudaSuccess`.
-- `conjugateGradient/main.cpp`: focus on `cublasHandle`, `cublasStatus`, `cudaMalloc`, `cudaFree`, `CUDA_R_32F`.
-- `conjugateGradientCudaGraphs/conjugateGradientCudaGraphs.cu`: focus on `cublasHandle`, `cudaMalloc`, `cusparseHandle`, `cudaMemcpyAsync`, `CUDA_R_32F`.
+- `boxFilterNPP/boxFilterNPP.cpp`: focus on `nppStreamCtx`, `CUDA`, `cudaError`, `npp`, `cudaSuccess`.
+- `cannyEdgeDetectorNPP/cannyEdgeDetectorNPP.cpp`: focus on `nppStreamCtx`, `CUDA`, `cudaError`, `npp`, `cudaSuccess`.
+- `conjugateGradient/main.cpp`: focus on `cublasHandle`, `CUDA`, `cublasStatus`, `cudaMalloc`, `cudaFree`.
+- `conjugateGradientCudaGraphs/conjugateGradientCudaGraphs.cu`: focus on `cublasHandle`, `CUDA`, `cudaMalloc`, `launch`, `cusparseHandle`.
 - `conjugateGradientMultiBlockCG/conjugateGradientMultiBlockCG.cu`: focus on `cudaFree`, `cudaMallocManaged`, `CUDA`, `__shared__`, `threadIdx`.
 - `conjugateGradientMultiDeviceCG/conjugateGradientMultiDeviceCG.cu`: focus on `cudaMemAdvise`, `cudaMallocManaged`, `cudaFree`, `cudaSetDevice`, `cudaMemPrefetchAsync`.
 - Additional source files: 51 more support files. Use the same setup/work/sync/cleanup lens.
@@ -347,6 +347,61 @@ English anchor: read `4_CUDA_Libraries` as a focused example of the CUDA concept
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/CMakeLists.txt:1-42
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+add_subdirectory(FilterBorderControlNPP)
+add_subdirectory(MersenneTwisterGP11213)
+add_subdirectory(batchCUBLAS)
+add_subdirectory(boxFilterNPP)
+add_subdirectory(cannyEdgeDetectorNPP)
+add_subdirectory(conjugateGradient)
+add_subdirectory(conjugateGradientCudaGraphs)
+add_subdirectory(conjugateGradientMultiBlockCG)
+add_subdirectory(conjugateGradientMultiDeviceCG)
+add_subdirectory(conjugateGradientPrecond)
+add_subdirectory(conjugateGradientUM)
+add_subdirectory(cubDeviceFind)
+add_subdirectory(cubDeviceSegmentedScan)
+add_subdirectory(cubDeviceTransform)
+add_subdirectory(cudaNvSci)
+# JP: `cuSolverDn_LinearSolver`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。 CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+add_subdirectory(cuSolverDn_LinearSolver)
+add_subdirectory(cuSolverRf)
+add_subdirectory(cuSolverSp_LinearSolver)
+add_subdirectory(cuSolverSp_LowlevelCholesky)
+add_subdirectory(cuSolverSp_LowlevelQR)
+add_subdirectory(freeImageInteropNPP)
+add_subdirectory(histEqualizationNPP)
+add_subdirectory(jitLto)
+add_subdirectory(libcuxxMdspan)
+add_subdirectory(libcuxxRandom)
+add_subdirectory(lineOfSight)
+add_subdirectory(matrixMulCUBLAS)
+add_subdirectory(nvJPEG)
+add_subdirectory(nvJPEG_encoder)
+add_subdirectory(oceanFFT)
+add_subdirectory(randomFog)
+add_subdirectory(simpleCUBLAS)
+add_subdirectory(simpleCUBLASXT)
+add_subdirectory(simpleCUBLAS_LU)
+add_subdirectory(simpleCUFFT)
+add_subdirectory(simpleCUFFT_2d_MGPU)
+add_subdirectory(simpleCUFFT_MGPU)
+add_subdirectory(simpleCUFFT_callback)
+add_subdirectory(watershedSegmentationNPP)
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

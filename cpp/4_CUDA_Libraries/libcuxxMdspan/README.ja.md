@@ -70,13 +70,179 @@ English anchor: read `libcuxxMdspan` as a focused example of the CUDA concepts u
 
 ## Concrete Reading Path
 
-- `libcuxxMdspan.cu`: focus on `blockIdx`, `threadIdx`, `cudaMemcpy`, `blockDim`, `cudaMalloc`.
+- `libcuxxMdspan.cu`: focus on `blockIdx`, `threadIdx`, `cudaMemcpy`, `launch`, `blockDim`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/libcuxxMdspan/CMakeLists.txt:1-28
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(libcuxxMdspan LANGUAGES C CXX CUDA)
+
+# Disable response file for libraries on QNX as qcc does not support lib paths with double quotes
+if(CMAKE_SYSTEM_NAME STREQUAL "QNX")
+    set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_LIBRARIES OFF)
+endif()
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Fetch CCCL (CUB + libcu++ + Thrust) via CPM. The toolkit that ships
+# with CUDA 13.2 bundles CCCL 3.2, but this sample uses APIs added in
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/libcuxxMdspan/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `libcuxxMdspan.cu`
+
+Source: cpp/4_CUDA_Libraries/libcuxxMdspan/libcuxxMdspan.cu:51-69
+```cuda
+#include <stdio.h>
+#include <stdlib.h>
+#include <vector>
+
+/* Includes, cuda */
+#include <cuda_runtime.h>
+#include <helper_cuda.h>
+
+/* Includes, cccl */
+#include <cuda/mdspan>
+#include <cuda/std/array>
+#include <cuda/std/cstdint>
+#include <cuda/std/mdspan>
+
+#define ROWS 8
+#define COLS 8
+#define TILE 8 /* matches ROWS / COLS for simplicity */
+
+using extents2d = cuda::std::dextents<cuda::std::size_t, 2>;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/libcuxxMdspan/libcuxxMdspan.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/libcuxxMdspan/libcuxxMdspan.cu:73-92
+```cuda
+ * cuda::to_device_mdspan (which uses layout_stride_relaxed and int64_t
+ * extents). */
+template <typename Tensor>
+__global__ void scale_rows_kernel(Tensor tensor)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    const int r = blockIdx.y * blockDim.y + threadIdx.y;
+    const int c = blockIdx.x * blockDim.x + threadIdx.x;
+    if (r < static_cast<int>(tensor.extent(0)) && c < static_cast<int>(tensor.extent(1))) {
+        tensor(r, c) *= static_cast<float>(r + 1);
+    }
+}
+
+/* Kernel B: block-tile transpose driven by a shared_memory_mdspan.
+ * Each block loads a TILE x TILE tile from the input into shared memory
+ * through a cuda::shared_memory_mdspan, transposes in shared, and writes
+ * to the output. */
+template <typename InTensor, typename OutTensor>
+__global__ void shared_tile_transpose_kernel(InTensor in, OutTensor out)
+{
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/libcuxxMdspan/libcuxxMdspan.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/libcuxxMdspan/libcuxxMdspan.cu:101-120
+```cuda
+
+    if (r < static_cast<int>(in.extent(0)) && c < static_cast<int>(in.extent(1))) {
+        smem(tr, tc) = in(r, c);
+    }
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
+    __syncthreads();
+
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+    const int r_out = blockIdx.x * TILE + tr;
+    const int c_out = blockIdx.y * TILE + tc;
+    if (r_out < static_cast<int>(out.extent(0)) && c_out < static_cast<int>(out.extent(1))) {
+        out(r_out, c_out) = smem(tc, tr);
+    }
+}
+
+struct DLTensorStorage
+{
+    ::DLTensor                              tensor{};
+    cuda::std::array<cuda::std::int64_t, 2> shape{};
+    cuda::std::array<cuda::std::int64_t, 2> strides{};
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/libcuxxMdspan/libcuxxMdspan.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/libcuxxMdspan/libcuxxMdspan.cu:133-172
+```cuda
+    s.tensor.strides     = s.strides.data();
+    s.tensor.byte_offset = 0;
+    return s;
+}
+
+int main(int argc, char **argv)
+{
+    int devID = findCudaDevice(argc, (const char **)argv);
+    cudaDeviceProp props;
+    checkCudaErrors(cudaGetDeviceProperties(&props, devID));
+    printf("Device: %s (Compute Capability %d.%d)\n\n", props.name, props.major, props.minor);
+
+    float       *d_in  = nullptr;
+    float       *d_out = nullptr;
+    const size_t nelem = static_cast<size_t>(ROWS) * COLS;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc(&d_in, nelem * sizeof(float)));
+    checkCudaErrors(cudaMalloc(&d_out, nelem * sizeof(float)));
+
+    std::vector<float> host(nelem);
+    for (int r = 0; r < ROWS; ++r) {
+        for (int c = 0; c < COLS; ++c) {
+            host[r * COLS + c] = static_cast<float>(r * COLS + c);
+        }
+    }
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpy(d_in, host.data(), nelem * sizeof(float), cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemset(d_out, 0, nelem * sizeof(float)));
+
+    DLTensorStorage in_dl  = make_row_major_dltensor(d_in, ROWS, COLS, devID);
+    DLTensorStorage out_dl = make_row_major_dltensor(d_out, ROWS, COLS, devID);
+
+    auto in_md  = cuda::to_device_mdspan<float, 2>(in_dl.tensor);
+    auto out_md = cuda::to_device_mdspan<float, 2>(out_dl.tensor);
+
+    printf("cuda::to_device_mdspan produced a 2-D device_mdspan of shape (%zu, %zu)\n\n",
+           in_md.extent(0),
+           in_md.extent(1));
+
+    dim3 block(8, 8);
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/libcuxxMdspan/libcuxxMdspan.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 
@@ -88,14 +254,14 @@ English anchor: read `libcuxxMdspan` as a focused example of the CUDA concepts u
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
 | `cudaDeviceSynchronize` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `blockDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `cudaGetDeviceProperties` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaMemset` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
-| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `__shared__` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |
-| `__syncthreads` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |
 | `cudaMemcpyHostToDevice` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaGetLastError` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
+| `cudaMemcpyDeviceToHost` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。

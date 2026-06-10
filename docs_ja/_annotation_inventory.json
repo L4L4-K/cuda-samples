@@ -59587,28 +59587,28 @@
     "status": "DONE",
     "jp_count": 22,
     "jp_lines": [
-      129,
-      135,
-      141,
-      147,
-      153,
-      159,
-      165,
-      171,
-      177,
-      183,
-      189,
-      195,
-      201,
-      207,
-      213,
-      219,
-      225,
-      596,
-      754,
-      1121,
-      1124,
-      1273
+      131,
+      137,
+      143,
+      149,
+      155,
+      161,
+      167,
+      173,
+      179,
+      185,
+      191,
+      197,
+      203,
+      209,
+      215,
+      221,
+      227,
+      598,
+      756,
+      1123,
+      1126,
+      1275
     ],
     "top_only": false,
     "generic_only": false,
@@ -59627,11 +59627,15 @@
   {
     "path": "tools/regenerate_sample_readmes_ja.py",
     "status": "DONE",
-    "jp_count": 1,
+    "jp_count": 5,
     "jp_lines": [
-      6
+      6,
+      196,
+      235,
+      263,
+      341
     ],
-    "top_only": true,
+    "top_only": false,
     "generic_only": false,
     "inaccurate_comment_flags": [],
     "detected_anchors": [],
@@ -59648,10 +59652,12 @@
   {
     "path": "tools/regenerate_theme_guides_ja.py",
     "status": "DONE",
-    "jp_count": 2,
+    "jp_count": 4,
     "jp_lines": [
       6,
-      165
+      138,
+      157,
+      210
     ],
     "top_only": false,
     "generic_only": false,
@@ -59663,6 +59669,39 @@
     "grouped_anchors": [],
     "anchor_count": 0,
     "covered_anchor_count": 0,
+    "missing_anchor_count": 0,
+    "grouped_anchor_count": 0,
+    "reasons": []
+  },
+  {
+    "path": "tools/verify_md_code_snippets.py",
+    "status": "DONE",
+    "jp_count": 6,
+    "jp_lines": [
+      6,
+      83,
+      140,
+      156,
+      226,
+      276
+    ],
+    "top_only": false,
+    "generic_only": false,
+    "inaccurate_comment_flags": [],
+    "detected_anchors": [
+      {
+        "name": "validation",
+        "count": 2
+      }
+    ],
+    "anchors_with_nearby_jp": [
+      "validation"
+    ],
+    "missing_anchors": [],
+    "missing_anchor_examples": [],
+    "grouped_anchors": [],
+    "anchor_count": 2,
+    "covered_anchor_count": 2,
     "missing_anchor_count": 0,
     "grouped_anchor_count": 0,
     "reasons": []

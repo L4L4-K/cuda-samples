@@ -91,6 +91,462 @@ English anchor: read `histogram` as a focused example of the CUDA concepts used 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/2_Concepts_and_Techniques/histogram/CMakeLists.txt:1-41
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(histogram LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for histogram
+add_executable(histogram histogram256.cu histogram64.cu histogram_gold.cpp main.cpp)
+
+target_compile_options(histogram PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(histogram PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(histogram PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_include_directories(histogram PUBLIC
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/histogram/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `histogram256.cu`
+
+Source: cpp/2_Concepts_and_Techniques/histogram/histogram256.cu:24-47
+```cuda
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+// JP: この file では memory ownership と host/device transfer、kernel launch と thread indexing、stream/event による非同期実行と同期 を確認します。英語の識別子/API/出力文字列は保持します。
+
+#include <assert.h>
+#include <cooperative_groups.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+namespace cg = cooperative_groups;
+#include <helper_cuda.h>
+
+#include "histogram_common.h"
+
+////////////////////////////////////////////////////////////////////////////////
+// Shortcut shared memory atomic addition functions
+////////////////////////////////////////////////////////////////////////////////
+
+#define TAG_MASK 0xFFFFFFFFU
+inline __device__ void addByte(uint *s_WarpHist, uint data, uint threadTag) { atomicAdd(s_WarpHist + data, 1); }
+
+inline __device__ void addWord(uint *s_WarpHist, uint data, uint tag)
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/histogram/histogram256.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/histogram/histogram256.cu:56-75
+```cuda
+{
+    // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    cg::thread_block cta = cg::this_thread_block();
+    // Per-warp subhistogram storage
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    __shared__ uint s_Hist[HISTOGRAM256_THREADBLOCK_MEMORY];
+    uint           *s_WarpHist = s_Hist + (threadIdx.x >> LOG2_WARP_SIZE) * HISTOGRAM256_BIN_COUNT;
+
+// Clear shared memory storage for current threadblock before processing
+#pragma unroll
+
+    for (uint i = 0; i < (HISTOGRAM256_THREADBLOCK_MEMORY / HISTOGRAM256_THREADBLOCK_SIZE); i++) {
+        s_Hist[threadIdx.x + i * HISTOGRAM256_THREADBLOCK_SIZE] = 0;
+    }
+
+    // Cycle through the entire data set, update subhistograms for each warp
+    const uint tag = threadIdx.x << (UINT_BITS - LOG2_WARP_SIZE);
+
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/histogram/histogram256.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/histogram/histogram256.cu:145-169
+```cuda
+
+// Internal memory allocation
+extern "C" void initHistogram256(void)
+{
+    checkCudaErrors(
+        // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+        cudaMalloc((void **)&d_PartialHistograms, PARTIAL_HISTOGRAM256_COUNT * HISTOGRAM256_BIN_COUNT * sizeof(uint)));
+}
+
+// Internal memory deallocation
+// JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+extern "C" void closeHistogram256(void) { checkCudaErrors(cudaFree(d_PartialHistograms)); }
+
+extern "C" void histogram256(uint *d_Histogram, void *d_Data, uint byteCount)
+{
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+    assert(byteCount % sizeof(uint) == 0);
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    histogram256Kernel<<<PARTIAL_HISTOGRAM256_COUNT, HISTOGRAM256_THREADBLOCK_SIZE>>>(
+        d_PartialHistograms, (uint *)d_Data, byteCount / sizeof(uint));
+    getLastCudaError("histogram256Kernel() execution failed\n");
+
+    mergeHistogram256Kernel<<<HISTOGRAM256_BIN_COUNT, MERGE_THREADBLOCK_SIZE>>>(
+        d_Histogram, d_PartialHistograms, PARTIAL_HISTOGRAM256_COUNT);
+    getLastCudaError("mergeHistogram256Kernel() execution failed\n");
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/histogram/histogram256.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `histogram64.cu`
+
+Source: cpp/2_Concepts_and_Techniques/histogram/histogram64.cu:24-47
+```cuda
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+// JP: この file では memory ownership と host/device transfer、kernel launch と thread indexing、stream/event による非同期実行と同期 を確認します。英語の識別子/API/出力文字列は保持します。
+
+#include <assert.h>
+#include <cooperative_groups.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+namespace cg = cooperative_groups;
+#include <helper_cuda.h>
+
+#include "histogram_common.h"
+
+////////////////////////////////////////////////////////////////////////////////
+// GPU-specific common definitions
+////////////////////////////////////////////////////////////////////////////////
+// Data type used for input data fetches
+typedef uint4 data_t;
+
+// May change on future hardware, so better parametrize the code
+#define SHARED_MEMORY_BANKS 16
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/histogram/histogram64.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/histogram/histogram64.cu:74-93
+```cuda
+    // each group of SHARED_MEMORY_BANKS threads accesses consecutive shared
+    // memory banks
+    // and the same bytes [0..3] within the banks
+    // Because of this permutation block size should be a multiple of 4 *
+    // SHARED_MEMORY_BANKS
+    const uint threadPos = ((threadIdx.x & ~(SHARED_MEMORY_BANKS * 4 - 1)) << 0)
+                         | ((threadIdx.x & (SHARED_MEMORY_BANKS - 1)) << 2)
+                         | ((threadIdx.x & (SHARED_MEMORY_BANKS * 3)) >> 4);
+
+    // Per-thread histogram storage
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    __shared__ uchar s_Hist[HISTOGRAM64_THREADBLOCK_SIZE * HISTOGRAM64_BIN_COUNT];
+    uchar           *s_ThreadBase = s_Hist + threadPos;
+
+// Initialize shared memory (writing 32-bit words)
+#pragma unroll
+
+    for (uint i = 0; i < (HISTOGRAM64_BIN_COUNT / 4); i++) {
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+        ((uint *)s_Hist)[threadIdx.x + i * HISTOGRAM64_THREADBLOCK_SIZE] = 0;
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/histogram/histogram64.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/histogram/histogram64.cu:182-207
+```cuda
+// Internal memory allocation
+extern "C" void initHistogram64(void)
+{
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+    assert(HISTOGRAM64_THREADBLOCK_SIZE % (4 * SHARED_MEMORY_BANKS) == 0);
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc((void **)&d_PartialHistograms,
+                               MAX_PARTIAL_HISTOGRAM64_COUNT * HISTOGRAM64_BIN_COUNT * sizeof(uint)));
+}
+
+// Internal memory deallocation
+// JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+extern "C" void closeHistogram64(void) { checkCudaErrors(cudaFree(d_PartialHistograms)); }
+
+// Round a / b to nearest higher integer value
+inline uint iDivUp(uint a, uint b) { return (a % b != 0) ? (a / b + 1) : (a / b); }
+
+// Snap a to nearest lower multiple of b
+inline uint iSnapDown(uint a, uint b) { return a - a % b; }
+
+extern "C" void histogram64(uint *d_Histogram, void *d_Data, uint byteCount)
+{
+    const uint histogramCount = iDivUp(byteCount, HISTOGRAM64_THREADBLOCK_SIZE * iSnapDown(255, sizeof(data_t)));
+
+    assert(byteCount % sizeof(data_t) == 0);
+    assert(histogramCount <= MAX_PARTIAL_HISTOGRAM64_COUNT);
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/histogram/histogram64.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `histogram_common.h`
+
+Source: cpp/2_Concepts_and_Techniques/histogram/histogram_common.h:29-85
+```cpp
+#ifndef HISTOGRAM_COMMON_H
+#define HISTOGRAM_COMMON_H
+
+////////////////////////////////////////////////////////////////////////////////
+// Common definitions
+////////////////////////////////////////////////////////////////////////////////
+#define HISTOGRAM64_BIN_COUNT  64
+#define HISTOGRAM256_BIN_COUNT 256
+#define UINT_BITS              32
+typedef unsigned int  uint;
+typedef unsigned char uchar;
+
+////////////////////////////////////////////////////////////////////////////////
+// GPU-specific common definitions
+////////////////////////////////////////////////////////////////////////////////
+#define LOG2_WARP_SIZE 5U
+#define WARP_SIZE      (1U << LOG2_WARP_SIZE)
+
+// May change on future hardware, so better parametrize the code
+#define SHARED_MEMORY_BANKS 16
+
+// Threadblock size: must be a multiple of (4 * SHARED_MEMORY_BANKS)
+// because of the bit permutation of threadIdx.x
+#define HISTOGRAM64_THREADBLOCK_SIZE (4 * SHARED_MEMORY_BANKS)
+
+// Warps ==subhistograms per threadblock
+#define WARP_COUNT 6
+
+// Threadblock size
+#define HISTOGRAM256_THREADBLOCK_SIZE (WARP_COUNT * WARP_SIZE)
+
+// Shared memory per threadblock
+#define HISTOGRAM256_THREADBLOCK_MEMORY (WARP_COUNT * HISTOGRAM256_BIN_COUNT)
+
+#define UMUL(a, b)    ((a) * (b))
+#define UMAD(a, b, c) (UMUL((a), (b)) + (c))
+
+////////////////////////////////////////////////////////////////////////////////
+// Reference CPU histogram
+////////////////////////////////////////////////////////////////////////////////
+extern "C" void histogram64CPU(uint *h_Histogram, void *h_Data, uint byteCount);
+
+extern "C" void histogram256CPU(uint *h_Histogram, void *h_Data, uint byteCount);
+
+////////////////////////////////////////////////////////////////////////////////
+// GPU histogram
+////////////////////////////////////////////////////////////////////////////////
+extern "C" void initHistogram64(void);
+extern "C" void initHistogram256(void);
+extern "C" void closeHistogram64(void);
+extern "C" void closeHistogram256(void);
+
+extern "C" void histogram64(uint *d_Histogram, void *d_Data, uint byteCount);
+
+extern "C" void histogram256(uint *d_Histogram, void *d_Data, uint byteCount);
+
+#endif
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/histogram/histogram_common.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `histogram_gold.cpp`
+
+Source: cpp/2_Concepts_and_Techniques/histogram/histogram_gold.cpp:29-64
+```cpp
+#include <assert.h>
+
+#include "histogram_common.h"
+
+extern "C" void histogram64CPU(uint *h_Histogram, void *h_Data, uint byteCount)
+{
+    for (uint i = 0; i < HISTOGRAM64_BIN_COUNT; i++)
+        h_Histogram[i] = 0;
+
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+    assert(sizeof(uint) == 4 && (byteCount % 4) == 0);
+
+    for (uint i = 0; i < (byteCount / 4); i++) {
+        uint data = ((uint *)h_Data)[i];
+        h_Histogram[(data >> 2) & 0x3FU]++;
+        h_Histogram[(data >> 10) & 0x3FU]++;
+        h_Histogram[(data >> 18) & 0x3FU]++;
+        h_Histogram[(data >> 26) & 0x3FU]++;
+    }
+}
+
+extern "C" void histogram256CPU(uint *h_Histogram, void *h_Data, uint byteCount)
+{
+    for (uint i = 0; i < HISTOGRAM256_BIN_COUNT; i++)
+        h_Histogram[i] = 0;
+
+    assert(sizeof(uint) == 4 && (byteCount % 4) == 0);
+
+    for (uint i = 0; i < (byteCount / 4); i++) {
+        uint data = ((uint *)h_Data)[i];
+        h_Histogram[(data >> 0) & 0xFFU]++;
+        h_Histogram[(data >> 8) & 0xFFU]++;
+        h_Histogram[(data >> 16) & 0xFFU]++;
+        h_Histogram[(data >> 24) & 0xFFU]++;
+    }
+}
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/histogram/histogram_gold.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `main.cpp`
+
+Source: cpp/2_Concepts_and_Techniques/histogram/main.cpp:35-61
+```cpp
+#include <cuda_runtime.h>
+
+// Utility and system includes
+#include <helper_cuda.h>
+#include <helper_functions.h> // helper for shared that are common to CUDA Samples
+
+// project include
+#include "histogram_common.h"
+
+const int          numRuns    = 16;
+const static char *sSDKsample = "[histogram]\0";
+
+int main(int argc, char **argv)
+{
+    uchar              *h_Data;
+    uint               *h_HistogramCPU, *h_HistogramGPU;
+    uchar              *d_Data;
+    uint               *d_Histogram;
+    StopWatchInterface *hTimer       = NULL;
+    int                 PassFailFlag = 1;
+    uint                byteCount    = 64 * 1048576;
+    uint                uiSizeMult   = 1;
+
+    cudaDeviceProp deviceProp;
+    deviceProp.major = 0;
+    deviceProp.minor = 0;
+
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/histogram/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/histogram/main.cpp:83-129
+```cpp
+        byteCount *= uiSizeMult;
+    }
+
+    printf("Initializing data...\n");
+    printf("...allocating CPU memory.\n");
+    h_Data         = (uchar *)malloc(byteCount);
+    h_HistogramCPU = (uint *)malloc(HISTOGRAM256_BIN_COUNT * sizeof(uint));
+    h_HistogramGPU = (uint *)malloc(HISTOGRAM256_BIN_COUNT * sizeof(uint));
+
+    printf("...generating input data\n");
+    srand(2009);
+
+    for (uint i = 0; i < byteCount; i++) {
+        h_Data[i] = rand() % 256;
+    }
+
+    printf("...allocating GPU memory and copying input data\n\n");
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc((void **)&d_Data, byteCount));
+    checkCudaErrors(cudaMalloc((void **)&d_Histogram, HISTOGRAM256_BIN_COUNT * sizeof(uint)));
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpy(d_Data, h_Data, byteCount, cudaMemcpyHostToDevice));
+
+    {
+        printf("Starting up 64-bin histogram...\n\n");
+        initHistogram64();
+
+        printf("Running 64-bin GPU histogram for %u bytes (%u runs)...\n\n", byteCount, numRuns);
+
+        for (int iter = -1; iter < numRuns; iter++) {
+            // iter == -1 -- warmup iteration
+            if (iter == 0) {
+                // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+                cudaDeviceSynchronize();
+                sdkResetTimer(&hTimer);
+                sdkStartTimer(&hTimer);
+            }
+
+            histogram64(d_Histogram, d_Data, byteCount);
+        }
+
+        cudaDeviceSynchronize();
+        sdkStopTimer(&hTimer);
+        double dAvgSecs = 1.0e-3 * (double)sdkGetTimerValue(&hTimer) / (double)numRuns;
+        printf("histogram64() time (average) : %.5f sec, %.4f MB/sec\n\n",
+               dAvgSecs,
+               ((double)byteCount * 1.0e-6) / dAvgSecs);
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/histogram/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/histogram/main.cpp:211-230
+```cpp
+        closeHistogram256();
+    }
+
+    printf("Shutting down...\n");
+    sdkDeleteTimer(&hTimer);
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaFree(d_Histogram));
+    checkCudaErrors(cudaFree(d_Data));
+    free(h_HistogramGPU);
+    free(h_HistogramCPU);
+    free(h_Data);
+
+    printf("\nNOTE: The CUDA Samples are not meant for performance measurements. "
+           "Results may vary when GPU Boost is enabled.\n\n");
+
+    printf("%s - Test Summary\n", sSDKsample);
+
+    // pass or fail (for both 64 bit and 256 bit histograms)
+    if (!PassFailFlag) {
+        printf("Test failed!\n");
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/histogram/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

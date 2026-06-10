@@ -93,6 +93,478 @@ English anchor: read `FDTD3d` as a focused example of the CUDA concepts used in 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/5_Domain_Specific/FDTD3d/CMakeLists.txt:1-41
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(FDTD3d LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for FDTD3d
+add_executable(FDTD3d src/FDTD3d.cpp src/FDTD3dGPU.cu src/FDTD3dReference.cpp)
+
+target_compile_options(FDTD3d PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(FDTD3d PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(FDTD3d PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_include_directories(FDTD3d PRIVATE
+    inc
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/FDTD3d/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `inc/FDTD3d.h`
+
+Source: cpp/5_Domain_Specific/FDTD3d/inc/FDTD3d.h:29-55
+```cpp
+#ifndef _FDTD3D_H_
+#define _FDTD3D_H_
+
+// The values are set to give reasonable runtimes, they can
+// be changed but note that running very large dimensions can
+// take a very long time and you should avoid running on your
+// primary display in this case.
+#define k_dim_min 96
+#define k_dim_max 376
+#define k_dim_qa  248
+
+// Note that the radius is defined here as exactly 4 since the
+// kernel code uses a constant. If you want a different radius
+// you must change the kernel accordingly.
+#define k_radius_min     4
+#define k_radius_max     4
+#define k_radius_default 4
+
+// The values are set to give reasonable runtimes, they can
+// be changed but note that running a very large number of
+// timesteps can take a very long time and you should avoid
+// running on your primary display in this case.
+#define k_timesteps_min     1
+#define k_timesteps_max     10
+#define k_timesteps_default 5
+
+#endif
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/FDTD3d/inc/FDTD3d.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `inc/FDTD3dGPU.h`
+
+Source: cpp/5_Domain_Specific/FDTD3d/inc/FDTD3dGPU.h:29-57
+```cpp
+#ifndef _FDTD3DGPU_H_
+#define _FDTD3DGPU_H_
+
+#include <cstddef>
+#if defined(WIN32) || defined(_WIN32) || defined(WIN64) || defined(_WIN64) && defined(_MSC_VER)
+typedef unsigned __int64 memsize_t;
+#else
+#include <stdint.h>
+typedef uint64_t memsize_t;
+#endif
+
+#define k_blockDimX    32
+#define k_blockDimMaxY 16
+#define k_blockSizeMin 128
+#define k_blockSizeMax (k_blockDimX * k_blockDimMaxY)
+
+bool getTargetDeviceGlobalMemSize(memsize_t *result, const int argc, const char **argv);
+bool fdtdGPU(float       *output,
+             const float *input,
+             const float *coeff,
+             const int    dimx,
+             const int    dimy,
+             const int    dimz,
+             const int    radius,
+             const int    timesteps,
+             const int    argc,
+             const char **argv);
+
+#endif
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/FDTD3d/inc/FDTD3dGPU.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `inc/FDTD3dGPUKernel.cuh`
+
+Source: cpp/5_Domain_Specific/FDTD3d/inc/FDTD3dGPUKernel.cuh:29-59
+```cuda
+#include <cooperative_groups.h>
+
+#include "FDTD3dGPU.h"
+
+namespace cg = cooperative_groups;
+
+// Note: If you change the RADIUS, you should also change the unrolling below
+#define RADIUS 4
+
+__constant__ float stencil[RADIUS + 1];
+
+__global__ void
+FiniteDifferencesKernel(float *output, const float *input, const int dimx, const int dimy, const int dimz)
+{
+    bool      validr = true;
+    bool      validw = true;
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    const int gtidx  = blockIdx.x * blockDim.x + threadIdx.x;
+    const int gtidy  = blockIdx.y * blockDim.y + threadIdx.y;
+    const int ltidx  = threadIdx.x;
+    const int ltidy  = threadIdx.y;
+    const int workx  = blockDim.x;
+    const int worky  = blockDim.y;
+    // Handle to thread block group
+    cg::thread_block cta = cg::this_thread_block();
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    __shared__ float tile[k_blockDimMaxY + 2 * RADIUS][k_blockDimX + 2 * RADIUS];
+
+    const int stride_y = dimx + 2 * RADIUS;
+    const int stride_z = stride_y * (dimy + 2 * RADIUS);
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/FDTD3d/inc/FDTD3dGPUKernel.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `inc/FDTD3dReference.h`
+
+Source: cpp/5_Domain_Specific/FDTD3d/inc/FDTD3dReference.h:29-61
+```cpp
+#ifndef _FDTD3DREFERENCE_H_
+#define _FDTD3DREFERENCE_H_
+
+void generateRandomData(float      *data,
+                        const int   dimx,
+                        const int   dimy,
+                        const int   dimz,
+                        const float lowerBound,
+                        const float upperBound);
+void generatePatternData(float      *data,
+                         const int   dimx,
+                         const int   dimy,
+                         const int   dimz,
+                         const float lowerBound,
+                         const float upperBound);
+bool fdtdReference(float       *output,
+                   const float *input,
+                   const float *coeff,
+                   const int    dimx,
+                   const int    dimy,
+                   const int    dimz,
+                   const int    radius,
+                   const int    timesteps);
+// JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+bool compareData(const float *output,
+                 const float *reference,
+                 const int    dimx,
+                 const int    dimy,
+                 const int    dimz,
+                 const int    radius,
+                 const float  tolerance = 0.0001f);
+
+#endif
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/FDTD3d/inc/FDTD3dReference.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `src/FDTD3d.cpp`
+
+Source: cpp/5_Domain_Specific/FDTD3d/src/FDTD3d.cpp:26-65
+```cpp
+ */
+// JP: この file では stream/event による非同期実行と同期、Tensor Core/WMMA の tile と data type、performance measurement と memory access pattern を確認します。英語の識別子/API/出力文字列は保持します。
+
+#include "FDTD3d.h"
+
+#include <assert.h>
+#include <helper_functions.h>
+#include <iomanip>
+#include <iostream>
+#include <math.h>
+
+#include "FDTD3dGPU.h"
+#include "FDTD3dReference.h"
+
+#ifndef CLAMP
+#define CLAMP(a, min, max) (MIN(max, MAX(a, min)))
+#endif
+
+//// Name of the log file
+// const char *printfFile = "FDTD3d.txt";
+
+// Forward declarations
+bool runTest(int argc, const char **argv);
+void showHelp(const int argc, const char **argv);
+
+int main(int argc, char **argv)
+{
+    bool bTestResult = false;
+    // Start the log
+    printf("%s Starting...\n\n", argv[0]);
+
+    // Check help flag
+    if (checkCmdLineFlag(argc, (const char **)argv, "help")) {
+        printf("Displaying help on console\n");
+        showHelp(argc, (const char **)argv);
+        bTestResult = true;
+    }
+    else {
+        // Execute
+        bTestResult = runTest(argc, (const char **)argv);
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/FDTD3d/src/FDTD3d.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/FDTD3d/src/FDTD3d.cpp:192-211
+```cpp
+    outerDimz  = dimz + 2 * radius;
+    volumeSize = outerDimx * outerDimy * outerDimz;
+
+    // Allocate memory
+    host_output = (float *)calloc(volumeSize, sizeof(float));
+    input       = (float *)malloc(volumeSize * sizeof(float));
+    coeff       = (float *)malloc((radius + 1) * sizeof(float));
+
+    // Create coefficients
+    for (int i = 0; i <= radius; i++) {
+        coeff[i] = 0.1f;
+    }
+
+    // Generate data
+    printf(" generateRandomData\n\n");
+    generateRandomData(input, outerDimx, outerDimy, outerDimz, lowerBound, upperBound);
+    printf("FDTD on %d x %d x %d volume with symmetric filter radius %d for %d "
+           "timesteps...\n\n",
+           dimx,
+           dimy,
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/FDTD3d/src/FDTD3d.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `src/FDTD3dGPU.cu`
+
+Source: cpp/5_Domain_Specific/FDTD3d/src/FDTD3dGPU.cu:29-47
+```cuda
+#include <algorithm>
+#include <helper_cuda.h>
+#include <helper_functions.h>
+#include <iostream>
+
+#include "FDTD3dGPU.h"
+#include "FDTD3dGPUKernel.cuh"
+
+bool getTargetDeviceGlobalMemSize(memsize_t *result, const int argc, const char **argv)
+{
+    int    deviceCount  = 0;
+    int    targetDevice = 0;
+    size_t memsize      = 0;
+
+    // Get the number of CUDA enabled GPU devices
+    printf(" cudaGetDeviceCount\n");
+    checkCudaErrors(cudaGetDeviceCount(&deviceCount));
+
+    // Select target device (device 0 by default)
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/FDTD3d/src/FDTD3dGPU.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/FDTD3d/src/FDTD3dGPU.cu:109-131
+```cuda
+    checkCudaErrors(cudaGetDeviceCount(&deviceCount));
+
+    // Select target device (device 0 by default)
+    targetDevice = findCudaDevice(argc, (const char **)argv);
+
+    checkCudaErrors(cudaSetDevice(targetDevice));
+
+    // Allocate memory buffers
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc((void **)&bufferOut, paddedVolumeSize * sizeof(float)));
+    checkCudaErrors(cudaMalloc((void **)&bufferIn, paddedVolumeSize * sizeof(float)));
+
+    // Check for a command-line specified block size
+    int userBlockSize;
+
+    if (checkCmdLineFlag(argc, (const char **)argv, "block-size")) {
+        userBlockSize = getCmdLineArgumentInt(argc, argv, "block-size");
+        // Constrain to a multiple of k_blockDimX
+        userBlockSize = (userBlockSize / k_blockDimX * k_blockDimX);
+
+        // Constrain within allowed bounds
+        userBlockSize = MIN(MAX(userBlockSize, k_blockSizeMin), k_blockSizeMax);
+    }
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/FDTD3d/src/FDTD3dGPU.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/FDTD3d/src/FDTD3dGPU.cu:156-187
+```cuda
+        printf("invalid block size, x (%d) and y (%d) must be >= radius (%d).\n", dimBlock.x, dimBlock.y, RADIUS);
+        exit(EXIT_FAILURE);
+    }
+
+    // Copy the input to the device input buffer
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpy(bufferIn + padding, input, volumeSize * sizeof(float), cudaMemcpyHostToDevice));
+
+    // Copy the input to the device output buffer (actually only need the halo)
+    checkCudaErrors(cudaMemcpy(bufferOut + padding, input, volumeSize * sizeof(float), cudaMemcpyHostToDevice));
+
+    // Copy the coefficients to the device coefficient buffer
+    checkCudaErrors(cudaMemcpyToSymbol(stencil, (void *)coeff, (radius + 1) * sizeof(float)));
+
+#ifdef GPU_PROFILING
+
+    // Create the events
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    checkCudaErrors(cudaEventCreate(&profileStart));
+    checkCudaErrors(cudaEventCreate(&profileEnd));
+
+#endif
+
+    // Execute the FDTD
+    float *bufferSrc = bufferIn + padding;
+    float *bufferDst = bufferOut + padding;
+    printf(" GPU FDTD loop\n");
+
+#ifdef GPU_PROFILING
+    // Enqueue start event
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    checkCudaErrors(cudaEventRecord(profileStart, 0));
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/FDTD3d/src/FDTD3dGPU.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/FDTD3d/src/FDTD3dGPU.cu:191-229
+```cuda
+        printf("\tt = %d ", it);
+
+        // Launch the kernel
+        printf("launch kernel\n");
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+        FiniteDifferencesKernel<<<dimGrid, dimBlock>>>(bufferDst, bufferSrc, dimx, dimy, dimz);
+
+        // Toggle the buffers
+        // Visual Studio 2005 does not like std::swap
+        //    std::swap<float *>(bufferSrc, bufferDst);
+        float *tmp = bufferDst;
+        bufferDst  = bufferSrc;
+        bufferSrc  = tmp;
+    }
+
+    printf("\n");
+
+#ifdef GPU_PROFILING
+    // Enqueue end event
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    checkCudaErrors(cudaEventRecord(profileEnd, 0));
+#endif
+
+    // Wait for the kernel to complete
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    checkCudaErrors(cudaDeviceSynchronize());
+
+    // Read the result back, result is in bufferSrc (after final toggle)
+    checkCudaErrors(cudaMemcpy(output, bufferSrc, volumeSize * sizeof(float), cudaMemcpyDeviceToHost));
+
+// Report time
+#ifdef GPU_PROFILING
+    float elapsedTimeMS = 0;
+
+    if (profileTimesteps > 0) {
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+        checkCudaErrors(cudaEventElapsedTime(&elapsedTimeMS, profileStart, profileEnd));
+    }
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/FDTD3d/src/FDTD3dGPU.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `src/FDTD3dReference.cpp`
+
+Source: cpp/5_Domain_Specific/FDTD3d/src/FDTD3dReference.cpp:29-47
+```cpp
+#include "FDTD3dReference.h"
+
+#include <cmath>
+#include <cstdlib>
+#include <iomanip>
+#include <iostream>
+#include <stdio.h>
+
+void generateRandomData(float      *data,
+                        const int   dimx,
+                        const int   dimy,
+                        const int   dimz,
+                        const float lowerBound,
+                        const float upperBound)
+{
+    srand(0);
+
+    for (int iz = 0; iz < dimz; iz++) {
+        for (int iy = 0; iy < dimy; iy++) {
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/FDTD3d/src/FDTD3dReference.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/FDTD3d/src/FDTD3dReference.cpp:147-166
+```cpp
+
+    printf("\n");
+
+    if (intermediate)
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        free(intermediate);
+
+    return true;
+}
+
+// JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+bool compareData(const float *output,
+                 const float *reference,
+                 const int    dimx,
+                 const int    dimy,
+                 const int    dimz,
+                 const int    radius,
+                 const float  tolerance)
+{
+    for (int iz = -radius; iz < dimz + radius; iz++) {
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/FDTD3d/src/FDTD3dReference.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

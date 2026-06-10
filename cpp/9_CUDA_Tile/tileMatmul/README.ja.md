@@ -73,13 +73,166 @@ English anchor: read `tileMatmul` as a focused example of the CUDA concepts used
 
 ## Concrete Reading Path
 
-- `tileMatmul.cu`: focus on `cudaMalloc`, `cudaMemcpy`, `cudaFree`, `cudaMemcpyHostToDevice`, `launch`.
+- `tileMatmul.cu`: focus on `cudaMalloc`, `cudaMemcpy`, `cudaFree`, `launch`, `cudaMemcpyHostToDevice`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/9_CUDA_Tile/tileMatmul/CMakeLists.txt:1-32
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(tileMatmul LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_CUDA_ARCHITECTURES 80 86 87 89 90 100 110 120)
+
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --enable-tile")
+
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common ../Benchmark_Common)
+
+# Source file
+add_executable(tileMatmul tileMatmul.cu)
+
+target_compile_features(tileMatmul PRIVATE cxx_std_20 cuda_std_20)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileMatmul/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `tileMatmul.cu`
+
+Source: cpp/9_CUDA_Tile/tileMatmul/tileMatmul.cu:42-60
+```cuda
+#include "helper_cuda.h"
+#include "matmul_benchmark.h"
+
+#include "cuda_tile.h"
+#include "cuda_fp16.h"
+
+#include <cstdlib>
+#include <cstdio>
+#include <vector>
+
+constexpr int TILE_BLOCK_M = 32;
+constexpr int TILE_BLOCK_N = 64;
+constexpr int TILE_BLOCK_K = 64;
+constexpr int LOAD_LATENCY = 5;
+constexpr int STORE_LATENCY = 5;
+
+/*
+ * Baseline Tile C++ matmul. This keeps the same tensor_span, partition_view,
+ * and ct::mma structure as the optimized kernel, but avoids optimization
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileMatmul/tileMatmul.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/9_CUDA_Tile/tileMatmul/tileMatmul.cu:215-289
+```cuda
+    matmul_cpu(h_expected.data(), h_A.data(), h_B.data(), M, N, K);
+  }
+
+  __half *d_A, *d_B;
+  float *d_C;
+  // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+  checkCudaErrors(cudaMalloc(&d_A, M * K * sizeof(__half)));
+  checkCudaErrors(cudaMalloc(&d_B, K * N * sizeof(__half)));
+  checkCudaErrors(cudaMalloc(&d_C, M * N * sizeof(float)));
+  // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+  checkCudaErrors(cudaMemcpy(d_A, h_A.data(), M * K * sizeof(__half), cudaMemcpyHostToDevice));
+  checkCudaErrors(cudaMemcpy(d_B, h_B.data(), K * N * sizeof(__half), cudaMemcpyHostToDevice));
+
+  bool passed = true;
+  // both kernels run only when the matmul()'s precondition is met
+  if (M % TILE_BLOCK_M == 0 && N % TILE_BLOCK_N == 0 && K % TILE_BLOCK_K == 0) {
+    dim3 grid(M / TILE_BLOCK_M, N / TILE_BLOCK_N);
+    auto run_kernel = [&](const char* name, auto kernel_launch) {
+      // clear C before each benchmarked kernel for independent validation
+      checkCudaErrors(cudaMemset(d_C, 0, M * N * sizeof(float)));
+
+      BenchmarkResult result = run_benchmark(name,
+          [&]() {
+            // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+            kernel_launch();
+            checkCudaErrors(cudaGetLastError());
+          },
+          [&]() {
+            std::vector<float> h_C(M * N);
+            // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
+            checkCudaErrors(cudaMemcpy(h_C.data(), d_C, M * N * sizeof(float),
+                                       cudaMemcpyDeviceToHost));
+
+            return verify_matmul_result(name, h_C.data(), h_expected.data(), M, N);
+          },
+          M, N, K);
+
+      print_result(result);
+      return result.correct;
+    };
+
+    // run and validate the optimized kernel
+    passed &= run_kernel("matmul", [&]() {
+      // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
+      matmul<<<grid, 1>>>(d_C, d_A, d_B, M, N, K);
+    });
+
+    // run and validate the baseline kernel
+    passed &= run_kernel("matmul_naive", [&]() {
+      matmul_naive<<<grid, 1>>>(d_C, d_A, d_B, M, N, K);
+    });
+
+  } else {
+    std::fprintf(stderr,
+                 "Skipping M=%d, N=%d, K=%d as the optimized kernel assumes "
+                 "dimensions divisible by TILE_BLOCK_M=%d, TILE_BLOCK_N=%d, "
+                 "TILE_BLOCK_K=%d.\n",
+                 M, N, K, TILE_BLOCK_M, TILE_BLOCK_N, TILE_BLOCK_K);
+    passed = false;
+  }
+
+  // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+  checkCudaErrors(cudaFree(d_A));
+  checkCudaErrors(cudaFree(d_B));
+  checkCudaErrors(cudaFree(d_C));
+
+  if (!passed) {
+    std::exit(EXIT_FAILURE);
+  }
+}
+
+int main(int argc, char** argv) {
+  parse_benchmark_args(argc, argv);
+  run_with_size(1024, 1024, 1024);
+}
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileMatmul/tileMatmul.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 
@@ -88,8 +241,8 @@ English anchor: read `tileMatmul` as a focused example of the CUDA concepts used
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
 | `cudaMemcpy` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
-| `cudaMemcpyHostToDevice` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
+| `cudaMemcpyHostToDevice` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaMemset` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaGetLastError` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaMemcpyDeviceToHost` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |

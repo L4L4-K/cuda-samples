@@ -79,6 +79,186 @@ English anchor: read `cdpBezierTessellation` as a focused example of the CUDA co
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `BezierLineCDP.cu`
+
+Source: cpp/3_CUDA_Features/cdpBezierTessellation/BezierLineCDP.cu:29-47
+```cuda
+#include <cuda_runtime_api.h>
+#include <helper_cuda.h>
+#include <stdio.h>
+#include <string.h>
+
+__forceinline__ __device__ float2 operator+(float2 a, float2 b)
+{
+    float2 c;
+    c.x = a.x + b.x;
+    c.y = a.y + b.y;
+    return c;
+}
+
+__forceinline__ __device__ float2 operator-(float2 a, float2 b)
+{
+    float2 c;
+    c.x = a.x - b.x;
+    c.y = a.y - b.y;
+    return c;
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/cdpBezierTessellation/BezierLineCDP.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/cdpBezierTessellation/BezierLineCDP.cu:65-84
+```cuda
+    int     nVertices;
+};
+
+__global__ void computeBezierLinePositions(int lidx, BezierLine *bLines, int nTessPoints)
+{
+    // JP: `threadIdx`, `blockDim`, `blockIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int idx = threadIdx.x + blockDim.x * blockIdx.x;
+
+    if (idx < nTessPoints) {
+        float u   = (float)idx / (float)(nTessPoints - 1);
+        float omu = 1.0f - u;
+
+        float B3u[3];
+
+        B3u[0] = omu * omu;
+        B3u[1] = 2.0f * u * omu;
+        B3u[2] = u * u;
+
+        float2 position = {0, 0};
+
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/cdpBezierTessellation/BezierLineCDP.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/cdpBezierTessellation/BezierLineCDP.cu:100-135
+```cuda
+                        / length(bLines[lidx].CP[2] - bLines[lidx].CP[0]);
+        int nTessPoints = min(max((int)(curvature * 16.0f), 4), MAX_TESSELLATION);
+
+        if (bLines[lidx].vertexPos == NULL) {
+            bLines[lidx].nVertices = nTessPoints;
+            // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+            cudaMalloc((void **)&bLines[lidx].vertexPos, nTessPoints * sizeof(float2));
+        }
+
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+        computeBezierLinePositions<<<ceilf((float)bLines[lidx].nVertices / 32.0f), 32>>>(
+            lidx, bLines, bLines[lidx].nVertices);
+    }
+}
+
+__global__ void freeVertexMem(BezierLine *bLines, int nLines)
+{
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+    int lidx = threadIdx.x + blockDim.x * blockIdx.x;
+
+    if (lidx < nLines)
+        // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        cudaFree(bLines[lidx].vertexPos);
+}
+
+unsigned int checkCapableSM35Device(int argc, char **argv)
+{
+    // Get device properties
+    cudaDeviceProp properties;
+    int            device_count = 0, device = -1;
+
+    if (checkCmdLineFlag(argc, (const char **)argv, "device")) {
+        device = getCmdLineArgumentInt(argc, (const char **)argv, "device");
+
+        cudaDeviceProp properties;
+        checkCudaErrors(cudaGetDeviceProperties(&properties, device));
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/cdpBezierTessellation/BezierLineCDP.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/cdpBezierTessellation/BezierLineCDP.cu:169-188
+```cuda
+    return EXIT_SUCCESS;
+}
+
+#define N_LINES   256
+#define BLOCK_DIM 64
+int main(int argc, char **argv)
+{
+    BezierLine *bLines_h = new BezierLine[N_LINES];
+
+    float2 last = {0, 0};
+
+    for (int i = 0; i < N_LINES; i++) {
+        bLines_h[i].CP[0] = last;
+
+        for (int j = 1; j < 3; j++) {
+            bLines_h[i].CP[j].x = (float)rand() / (float)RAND_MAX;
+            bLines_h[i].CP[j].y = (float)rand() / (float)RAND_MAX;
+        }
+
+        last                  = bLines_h[i].CP[2];
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/cdpBezierTessellation/BezierLineCDP.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `CMakeLists.txt`
+
+Source: cpp/3_CUDA_Features/cdpBezierTessellation/CMakeLists.txt:1-46
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(cdpBezierTessellation LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+# The aarch64/sbsa_aarch64 CUDA toolkit are support on Tegra since 13.0, so need to check which version of the toolkit is installed
+string(FIND "${CUDAToolkit_INCLUDE_DIRS}" "aarch64-linux" _aarch64_linux_ctk)
+string(FIND "${CUDAToolkit_INCLUDE_DIRS}" "aarch64-qnx" _aarch64_qnx_ctk)
+if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64" AND (NOT _aarch64_linux_ctk EQUAL -1 OR NOT _aarch64_qnx_ctk EQUAL -1))
+    set(CMAKE_CUDA_ARCHITECTURES 87 110)
+else()
+    set(CMAKE_CUDA_ARCHITECTURES 75 80 86 89 90 100 110 120)
+endif()
+
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for cdpBezierTessellation
+add_executable(cdpBezierTessellation BezierLineCDP.cu)
+
+target_compile_options(cdpBezierTessellation PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(cdpBezierTessellation PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(cdpBezierTessellation PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/cdpBezierTessellation/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

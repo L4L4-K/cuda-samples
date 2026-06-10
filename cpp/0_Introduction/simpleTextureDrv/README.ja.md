@@ -85,6 +85,183 @@ English anchor: read `simpleTextureDrv` as a focused example of the CUDA concept
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/simpleTextureDrv/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleTextureDrv LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleTextureDrv/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleTextureDrv.cpp`
+
+Source: cpp/0_Introduction/simpleTextureDrv/simpleTextureDrv.cpp:43-61
+```cpp
+#include <cstring>
+#include <iostream>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// includes, CUDA
+#include <builtin_types.h>
+#include <cuda.h>
+// includes, project
+#include <helper_cuda_drvapi.h>
+#include <helper_functions.h>
+
+using namespace std;
+
+const char *image_filename = "teapot512.pgm";
+const char *ref_filename   = "ref_rotated.pgm";
+float       angle          = 0.5f; // angle to rotate image by (in radians)
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleTextureDrv/simpleTextureDrv.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleTextureDrv/simpleTextureDrv.cpp:93-112
+```cpp
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    if (checkCmdLineFlag(argc, (const char **)argv, "help")) {
+        showHelp();
+        return 0;
+    }
+
+    runTest(argc, argv);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//! Run a simple test for CUDA
+////////////////////////////////////////////////////////////////////////////////
+void runTest(int argc, char **argv)
+{
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleTextureDrv/simpleTextureDrv.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleTextureDrv/simpleTextureDrv.cpp:134-153
+```cpp
+
+    size_t size = width * height * sizeof(float);
+    printf("Loaded '%s', %d x %d pixels\n", image_filename, width, height);
+
+    // load reference image from image (output)
+    float *h_data_ref = (float *)malloc(size);
+    char  *ref_path   = sdkFindFilePath(ref_filename, argv[0]);
+
+    if (ref_path == NULL) {
+        printf("Unable to find reference file %s\n", ref_filename);
+        exit(EXIT_FAILURE);
+    }
+
+    sdkLoadPGM(ref_path, &h_data_ref, &width, &height);
+
+    // allocate device memory for result
+    CUdeviceptr d_data = (CUdeviceptr)NULL;
+    // JP: `cuMemAlloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cuMemAlloc(&d_data, size));
+
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleTextureDrv/simpleTextureDrv.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleTextureDrv/simpleTextureDrv.cpp:197-216
+```cpp
+    if (1) {
+        // This is the new CUDA 4.0 API for Kernel Parameter passing and Kernel
+        // Launching (simpler method)
+        void *args[5] = {&d_data, &width, &height, &angle, &TexObject};
+
+        // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+        checkCudaErrors(cuLaunchKernel(
+            transform, (width / block_size), (height / block_size), 1, block_size, block_size, 1, 0, NULL, args, NULL));
+        checkCudaErrors(cuCtxSynchronize());
+        sdkCreateTimer(&timer);
+        sdkStartTimer(&timer);
+
+        // launch kernel again for performance measurement
+        checkCudaErrors(cuLaunchKernel(
+            transform, (width / block_size), (height / block_size), 1, block_size, block_size, 1, 0, NULL, args, NULL));
+    }
+    else {
+        // This is the new CUDA 4.0 API for Kernel Parameter passing and Kernel
+        // Launching (advanced method)
+        int  offset = 0;
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleTextureDrv/simpleTextureDrv.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleTexture_kernel.cu`
+
+Source: cpp/0_Introduction/simpleTextureDrv/simpleTexture_kernel.cu:29-56
+```cuda
+#ifndef _SIMPLETEXTURE_KERNEL_H_
+#define _SIMPLETEXTURE_KERNEL_H_
+#include <cuda.h>
+
+////////////////////////////////////////////////////////////////////////////////
+//! Transform an image using texture lookups
+//! @param g_odata  output data in global memory
+////////////////////////////////////////////////////////////////////////////////
+extern "C" __global__ void transformKernel(float *g_odata, int width, int height, float theta, CUtexObject tex)
+{
+    // calculate normalized texture coordinates
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    float u  = (float)x - (float)width / 2;
+    float v  = (float)y - (float)height / 2;
+    float tu = u * cosf(theta) - v * sinf(theta);
+    float tv = v * cosf(theta) + u * sinf(theta);
+
+    tu /= (float)width;
+    tv /= (float)height;
+
+    // read from texture and write to global memory
+    g_odata[y * width + x] = tex2D<float>(tex, tu + 0.5f, tv + 0.5f);
+}
+
+#endif // #ifndef _SIMPLETEXTURE_KERNEL_H_
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleTextureDrv/simpleTexture_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

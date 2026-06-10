@@ -75,7 +75,7 @@ English anchor: read `batchCUBLAS` as a focused example of the CUDA concepts use
 
 ## Concrete Reading Path
 
-- `batchCUBLAS.cpp`: focus on `cudaSuccess`, `cuGet`, `cudaError_t`, `cublasOperation_t`, `CUBLASTEST_FAILED`.
+- `batchCUBLAS.cpp`: focus on `cudaSuccess`, `cuGet`, `CUDA`, `cudaError_t`, `cublasOperation_t`.
 - `batchCUBLAS.h`: focus on `cuGet`, `cuEqual`, `CUDA`, `cuRand`, `CUDA_ZNEW`.
 
 > **日本語**
@@ -83,6 +83,244 @@ English anchor: read `batchCUBLAS` as a focused example of the CUDA concepts use
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/batchCUBLAS/CMakeLists.txt:1-47
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(batchCUBLAS LANGUAGES CXX)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for batchCUBLAS
+add_executable(batchCUBLAS batchCUBLAS.cpp)
+
+target_compile_options(batchCUBLAS PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(batchCUBLAS PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(batchCUBLAS PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_include_directories(batchCUBLAS PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+target_link_libraries(batchCUBLAS PRIVATE
+    # JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    CUDA::cublas
+    CUDA::cudart
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/batchCUBLAS/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `batchCUBLAS.cpp`
+
+Source: cpp/4_CUDA_Libraries/batchCUBLAS/batchCUBLAS.cpp:34-57
+```cpp
+#include <ctype.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#if defined(WIN32) || defined(_WIN32) || defined(WIN64) || defined(_WIN64)
+#include <float.h>
+#endif
+
+/* Using updated (v2) interfaces to cublas and cusparse */
+#include <cublas_v2.h>
+#include <cuda_runtime.h>
+
+// Utilities and system includes
+#include <helper_cuda.h>
+
+#include "batchCUBLAS.h"
+
+const char *sSDKname = "batchCUBLAS";
+
+//==============================================================================
+// Device information utilities
+//==============================================================================
+
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/batchCUBLAS/batchCUBLAS.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/batchCUBLAS/batchCUBLAS.cpp:136-155
+```cpp
+#define BENCH_MATRIX_N                (128)
+
+#define CLEANUP()                          \
+    do {                                   \
+        if (A)                             \
+            free(A);                       \
+        if (B)                             \
+            free(B);                       \
+        if (C)                             \
+            free(C);                       \
+        for (int i = 0; i < opts.N; ++i) { \
+            if (devPtrA[i])                \
+                cudaFree(devPtrA[i]);      \
+            if (devPtrB[i])                \
+                cudaFree(devPtrB[i]);      \
+            if (devPtrC[i])                \
+                cudaFree(devPtrC[i]);      \
+        }                                  \
+        if (devPtrA)                       \
+            free(devPtrA);                 \
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/batchCUBLAS/batchCUBLAS.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/batchCUBLAS/batchCUBLAS.cpp:178-212
+```cpp
+    int        N; // number of multiplications
+};
+
+template <typename T_ELEM> struct gemmTestParams
+{
+    // JP: `cublasOperation_t`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    cublasOperation_t transa;
+    cublasOperation_t transb;
+    int               m;
+    int               n;
+    int               k;
+    T_ELEM            alpha;
+    T_ELEM            beta;
+};
+
+//==============================================================================
+// template wrappers for cuda functions
+//==============================================================================
+
+// JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+static inline cublasStatus_t cublasXgemm(cublasHandle_t    handle,
+                                         cublasOperation_t transa,
+                                         cublasOperation_t transb,
+                                         int               m,
+                                         int               n,
+                                         int               k,
+                                         float            *alpha,
+                                         const float      *A,
+                                         int               lda,
+                                         float            *B,
+                                         int               ldb,
+                                         float            *beta,
+                                         float            *C,
+                                         int               ldc)
+{
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/batchCUBLAS/batchCUBLAS.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/batchCUBLAS/batchCUBLAS.cpp:468-487
+```cpp
+            CLEANUP();
+            fprintf(stderr, "!!!! GPU memory allocation error\n");
+            return CUBLASTEST_FAILED;
+        }
+
+        // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+        err1 = cudaMemcpy(devPtrA_dev, devPtrA, opts.N * sizeof(*devPtrA), cudaMemcpyHostToDevice);
+        err2 = cudaMemcpy(devPtrB_dev, devPtrB, opts.N * sizeof(*devPtrB), cudaMemcpyHostToDevice);
+        err3 = cudaMemcpy(devPtrC_dev, devPtrC, opts.N * sizeof(*devPtrC), cudaMemcpyHostToDevice);
+
+        if ((err1 != cudaSuccess) || (err2 != cudaSuccess) || (err3 != cudaSuccess)) {
+            CLEANUP();
+            fprintf(stderr, "!!!! cannot copy pointer array to device\n");
+            return CUBLASTEST_FAILED;
+        }
+    }
+
+    A = (T_ELEM *)malloc(matrixSizeA * sizeof(A[0]));
+    B = (T_ELEM *)malloc(matrixSizeB * sizeof(B[0]));
+    C = (T_ELEM *)malloc(matrixSizeC * sizeof(C[0]));
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/batchCUBLAS/batchCUBLAS.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `batchCUBLAS.h`
+
+Source: cpp/4_CUDA_Libraries/batchCUBLAS/batchCUBLAS.h:34-52
+```cpp
+#include <cublas_v2.h>
+#include <cuda_runtime_api.h>
+#include <math.h>
+#include <stdlib.h>
+
+#define SWITCH_CHAR '-'
+
+#define REFFUNC(funcname)    ref_##funcname
+#define TESTGEN(funcname)    get_##funcname##_params
+#define TESTPARAMS(funcname) funcname##TestParams
+
+#define DEV_VER_DBL_SUPPORT (130)
+#define DEV_VER_ALL_SUPPORT (999)
+
+/* Errors Tests to be returned by all the Cublas test */
+#define CUBLASTEST_PASSED 0
+#define CUBLASTEST_FAILED 1
+#define CUBLASTEST_WAIVED 2
+
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/batchCUBLAS/batchCUBLAS.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/batchCUBLAS/batchCUBLAS.h:90-109
+```cpp
+    } xx;
+    xx.f = x;
+    return xx.i;
+}
+
+// JP: `cuRand`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。 CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+static __inline__ unsigned cuRand(void)
+{
+    /* George Marsaglia's fast inline random number generator */
+#define CUDA_ZNEW (cuda_z = 36969 * (cuda_z & 65535) + (cuda_z >> 16))
+#define CUDA_WNEW (cuda_w = 18000 * (cuda_w & 65535) + (cuda_w >> 16))
+#define CUDA_MWC  ((CUDA_ZNEW << 16) + CUDA_WNEW)
+#define CUDA_SHR3                            \
+    (cuda_jsr = cuda_jsr ^ (cuda_jsr << 17), \
+     cuda_jsr = cuda_jsr ^ (cuda_jsr >> 13), \
+     cuda_jsr = cuda_jsr ^ (cuda_jsr << 5))
+#define CUDA_CONG (cuda_jcong = 69069 * cuda_jcong + 1234567)
+#define KISS      ((CUDA_MWC ^ CUDA_CONG) + CUDA_SHR3)
+    static unsigned int cuda_z = 362436069, cuda_w = 521288629;
+    static unsigned int cuda_jsr = 123456789, cuda_jcong = 380116160;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/batchCUBLAS/batchCUBLAS.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

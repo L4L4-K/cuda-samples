@@ -83,6 +83,241 @@ English anchor: read `simpleCallback` as a focused example of the CUDA concepts 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/simpleCallback/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleCallback LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simpleCallback
+add_executable(simpleCallback simpleCallback.cu multithreading.cpp)
+
+target_compile_options(simpleCallback PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleCallback PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simpleCallback PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleCallback/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `multithreading.cpp`
+
+Source: cpp/0_Introduction/simpleCallback/multithreading.cpp:29-47
+```cpp
+#include "multithreading.h"
+
+#if defined(WIN32) || defined(_WIN32) || defined(WIN64) || defined(_WIN64)
+// Create thread
+CUTThread cutStartThread(CUT_THREADROUTINE func, void *data)
+{
+    return CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)func, data, 0, NULL);
+}
+
+// Wait for thread to finish
+void cutEndThread(CUTThread thread)
+{
+    WaitForSingleObject(thread, INFINITE);
+    CloseHandle(thread);
+}
+
+// Wait for multiple threads
+void cutWaitForThreads(const CUTThread *threads, int num)
+{
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleCallback/multithreading.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleCallback/multithreading.cpp:79-98
+```cpp
+}
+
+// Wait for barrier release.
+void cutWaitForBarrier(CUTBarrier *barrier) { WaitForSingleObject(barrier->barrierEvent, INFINITE); }
+
+// Destroy barrier
+void cutDestroyBarrier(CUTBarrier *barrier) {}
+
+#else
+// Create thread
+CUTThread cutStartThread(CUT_THREADROUTINE func, void *data)
+{
+    pthread_t thread;
+    pthread_create(&thread, NULL, func, data);
+    return thread;
+}
+
+// Wait for thread to finish
+void cutEndThread(CUTThread thread) { pthread_join(thread, NULL); }
+
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleCallback/multithreading.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `multithreading.h`
+
+Source: cpp/0_Introduction/simpleCallback/multithreading.h:29-47
+```cpp
+#ifndef MULTITHREADING_H
+#define MULTITHREADING_H
+
+// Simple portable thread library.
+
+#if defined(WIN32) || defined(_WIN32) || defined(WIN64) || defined(_WIN64)
+// Windows threads.
+#include <windows.h>
+
+typedef HANDLE CUTThread;
+typedef unsigned(WINAPI *CUT_THREADROUTINE)(void *);
+
+struct CUTBarrier
+{
+    CRITICAL_SECTION criticalSection;
+    HANDLE           barrierEvent;
+    int              releaseCount;
+    int              count;
+};
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleCallback/multithreading.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleCallback/multithreading.h:90-102
+```cpp
+    void cutIncrementBarrier(CUTBarrier *barrier);
+
+    // Wait for barrier release.
+    void cutWaitForBarrier(CUTBarrier *barrier);
+
+    // Destroy barrier
+    void cutDestroyBarrier(CUTBarrier *barrier);
+
+#ifdef __cplusplus
+} // extern "C"
+#endif
+
+#endif // MULTITHREADING_H
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleCallback/multithreading.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleCallback.cu`
+
+Source: cpp/0_Introduction/simpleCallback/simpleCallback.cu:44-121
+```cuda
+#include <stdio.h>
+
+// helper functions and utilities to work with CUDA
+#include <helper_cuda.h>
+#include <helper_functions.h>
+
+#include "multithreading.h"
+
+const int N_workloads             = 8;
+const int N_elements_per_workload = 100000;
+
+CUTBarrier thread_barrier;
+
+// JP: `cudaStream_t`, `cudaError_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+void CUDART_CB myStreamCallback(cudaStream_t event, cudaError_t status, void *data);
+
+struct heterogeneous_workload
+{
+    int id;
+    int cudaDeviceID;
+
+    int         *h_data;
+    int         *d_data;
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    cudaStream_t stream;
+
+    bool success;
+};
+
+__global__ void incKernel(int *data, int N)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (i < N)
+        data[i]++;
+}
+
+// JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+CUT_THREADPROC launch(void *void_arg)
+{
+    heterogeneous_workload *workload = (heterogeneous_workload *)void_arg;
+
+    // Select GPU for this CPU thread
+    checkCudaErrors(cudaSetDevice(workload->cudaDeviceID));
+
+    // Allocate Resources
+    checkCudaErrors(cudaStreamCreate(&workload->stream));
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc(&workload->d_data, N_elements_per_workload * sizeof(int)));
+    // JP: `cudaHostAlloc`, `cudaHostAllocPortable`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
+    checkCudaErrors(cudaHostAlloc(&workload->h_data, N_elements_per_workload * sizeof(int), cudaHostAllocPortable));
+
+    // CPU thread generates data
+    for (int i = 0; i < N_elements_per_workload; ++i) {
+        workload->h_data[i] = workload->id + i;
+    }
+
+    // Schedule work for GPU in CUDA stream without blocking the CPU thread
+    // Note: Dedicated streams enable concurrent execution of workloads on the GPU
+    dim3 block(512);
+    dim3 grid((N_elements_per_workload + block.x - 1) / block.x);
+
+    // JP: `cudaMemcpyAsync`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpyAsync(workload->d_data,
+                                    workload->h_data,
+                                    N_elements_per_workload * sizeof(int),
+                                    cudaMemcpyHostToDevice,
+                                    workload->stream));
+    incKernel<<<grid, block, 0, workload->stream>>>(workload->d_data, N_elements_per_workload);
+    checkCudaErrors(cudaMemcpyAsync(workload->h_data,
+                                    workload->d_data,
+                                    N_elements_per_workload * sizeof(int),
+                                    cudaMemcpyDeviceToHost,
+                                    workload->stream));
+
+    // New in CUDA 5.0: Add a CPU callback which is called once all currently
+    // pending operations in the CUDA stream have finished
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleCallback/simpleCallback.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

@@ -82,6 +82,173 @@ English anchor: read `jitLto` as a focused example of the CUDA concepts used in 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/jitLto/CMakeLists.txt:1-58
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(jitLto LANGUAGES CXX)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# This sample is not supported on QNX
+if(CMAKE_SYSTEM_NAME STREQUAL "QNX")
+    message(STATUS "Will not build sample ${PROJECT_NAME} - not supported on QNX")
+    return()
+endif()
+
+# Source file
+# Add target for jitLto
+add_executable(jitLto jitLto.cpp)
+
+target_compile_options(jitLto PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(jitLto PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(jitLto PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+find_library(NVJITLINK_LIB
+             # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
+             NAME nvJitLink
+             PATHS "${CUDAToolkit_LIBRARY_DIR}" "${CMAKE_LIBRARY_PATH}")
+
+target_include_directories(jitLto PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+target_link_libraries(jitLto PRIVATE
+    CUDA::cuda_driver
+    CUDA::nvrtc
+    ${NVJITLINK_LIB}
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/jitLto/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `jitLto.cpp`
+
+Source: cpp/4_CUDA_Libraries/jitLto/jitLto.cpp:29-47
+```cpp
+#include <cstring>
+#include <cuda.h>
+#include <iostream>
+#include <nvJitLink.h>
+#include <nvrtc.h>
+
+#define NUM_THREADS 128
+#define NUM_BLOCKS  32
+
+#define NVRTC_SAFE_CALL(x)                                                                            \
+    do {                                                                                              \
+        nvrtcResult result = x;                                                                       \
+        if (result != NVRTC_SUCCESS) {                                                                \
+            std::cerr << "\nerror: " #x " failed with error " << nvrtcGetErrorString(result) << '\n'; \
+            exit(1);                                                                                  \
+        }                                                                                             \
+    } while (0)
+#define CUDA_SAFE_CALL(x)                                                     \
+    do {                                                                      \
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/jitLto/jitLto.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/jitLto/jitLto.cpp:59-95
+```cpp
+        if (result != NVJITLINK_SUCCESS) {                                       \
+            std::cerr << "\nerror: " #x " failed with error " << result << '\n'; \
+            size_t lsize;                                                        \
+            result = nvJitLinkGetErrorLogSize(h, &lsize);                        \
+            if (result == NVJITLINK_SUCCESS && lsize > 0) {                      \
+                char *log = (char *)malloc(lsize);                               \
+                result    = nvJitLinkGetErrorLog(h, log);                        \
+                if (result == NVJITLINK_SUCCESS) {                               \
+                    std::cerr << "error log: " << log << '\n';                   \
+                    free(log);                                                   \
+                }                                                                \
+            }                                                                    \
+            exit(1);                                                             \
+        }                                                                        \
+    } while (0)
+
+const char *lto_saxpy = "                                       \n\
+extern __device__ float compute(float a, float x, float y);     \n\
+                                                                \n\
+extern \"C\" __global__                                         \n\
+void saxpy(float a, float *x, float *y, float *out, size_t n)   \n\
+{                                                               \n\
+  size_t tid = blockIdx.x * blockDim.x + threadIdx.x;           \n\
+  if (tid < n) {                                                \n\
+    out[tid] = compute(a, x[tid], y[tid]);                      \n\
+  }                                                             \n\
+}                                                               \n";
+
+const char *lto_compute = "                                     \n\
+__device__  float compute(float a, float x, float y) {          \n\
+  return a * x + y;                                             \n\
+}                                                               \n";
+
+// compile code into LTOIR, returning the IR and its size
+static void getLTOIR(const char *code, const char *name, char **ltoIR, size_t *ltoIRSize)
+{
+    // Create an instance of nvrtcProgram with the code string.
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/jitLto/jitLto.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/jitLto/jitLto.cpp:124-143
+```cpp
+    NVRTC_SAFE_CALL(nvrtcGetLTOIR(prog, *ltoIR));
+    // Destroy the program.
+    NVRTC_SAFE_CALL(nvrtcDestroyProgram(&prog));
+}
+
+int main(int argc, char *argv[])
+{
+    unsigned int    cuda_major = 0;
+    unsigned int    cuda_minor = 0;
+    nvJitLinkResult res        = nvJitLinkVersion(&cuda_major, &cuda_minor);
+    if (res != NVJITLINK_SUCCESS) {
+        std::cerr << "Version check failed" << '\n';
+    }
+    else {
+        std::cout << "CUDA " << cuda_major << "." << cuda_minor << '\n';
+    }
+
+
+    char  *ltoIR1;
+    char  *ltoIR2;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/jitLto/jitLto.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

@@ -90,6 +90,371 @@ English anchor: read `tileMatmulAutotuner` as a focused example of the CUDA conc
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/9_CUDA_Tile/tileMatmulAutotuner/CMakeLists.txt:1-71
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(tileMatmulAutotuner LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+get_filename_component(CUDA_TOOLKIT_BIN_DIR "${CMAKE_CUDA_COMPILER}" DIRECTORY)
+find_program(TILEIRAS_EXECUTABLE tileiras
+    HINTS "${CUDA_TOOLKIT_BIN_DIR}"
+    REQUIRED
+)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --enable-tile")
+
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common ../Benchmark_Common)
+
+# Source files
+add_executable(tileMatmulAutotuner
+    matmul_autotuner.cpp
+    autotuner_search_space.conf
+)
+
+target_compile_features(tileMatmulAutotuner PRIVATE cxx_std_20 cuda_std_20)
+
+target_include_directories(tileMatmulAutotuner PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+
+list(GET CUDAToolkit_INCLUDE_DIRS 0 CUDA_INCLUDE_DIR)
+file(TO_CMAKE_PATH "${CUDA_INCLUDE_DIR}" CUDA_INCLUDE_DIR_FOR_DEFINE)
+file(TO_CMAKE_PATH "${TILEIRAS_EXECUTABLE}" TILEIRAS_EXECUTABLE_FOR_DEFINE)
+file(TO_CMAKE_PATH "${CMAKE_CUDA_COMPILER}" NVCC_EXECUTABLE_FOR_DEFINE)
+
+target_compile_definitions(tileMatmulAutotuner PRIVATE
+    CUDA_INCLUDE_PATH="${CUDA_INCLUDE_DIR_FOR_DEFINE}"
+    NVCC_PATH="${NVCC_EXECUTABLE_FOR_DEFINE}"
+    TILEIRAS_PATH="${TILEIRAS_EXECUTABLE_FOR_DEFINE}"
+)
+
+target_link_libraries(tileMatmulAutotuner PRIVATE
+    CUDA::cuda_driver
+    CUDA::cudart
+    # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
+    CUDA::nvrtc
+)
+
+add_custom_command(TARGET tileMatmulAutotuner POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_CURRENT_SOURCE_DIR}/matmul.cu
+    ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_CURRENT_SOURCE_DIR}/autotuner_search_space.conf
+    ${CMAKE_CURRENT_BINARY_DIR}
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileMatmulAutotuner/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `backend_common.h`
+
+Source: cpp/9_CUDA_Tile/tileMatmulAutotuner/backend_common.h:29-47
+```cpp
+#pragma once
+
+#include <cerrno>
+#include <climits>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <string>
+#include <vector>
+
+#include <helper_string.h>
+
+#if defined(WIN32) || defined(_WIN32) || defined(WIN64) || defined(_WIN64)
+#include <process.h>
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileMatmulAutotuner/backend_common.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/9_CUDA_Tile/tileMatmulAutotuner/backend_common.h:195-214
+```cpp
+    fprintf(stderr, "Error: %s:%d: %s\n", filename, line_number, message.c_str());
+    exit(EXIT_FAILURE);
+}
+
+inline char *copyFilePath(const std::string& path) {
+    char *file_path = reinterpret_cast<char *>(malloc(path.length() + 1));
+    if (file_path == NULL) {
+        fprintf(stderr, "Error: failed to allocate memory for file path\n");
+        exit(EXIT_FAILURE);
+    }
+    std::memcpy(file_path, path.c_str(), path.length() + 1);
+    return file_path;
+}
+
+inline char *findSampleFile(const char *filename, const char *executable_path) {
+    if (executable_path != NULL) {
+        std::filesystem::path executable_dir =
+            std::filesystem::path(executable_path).parent_path();
+        if (!executable_dir.empty()) {
+            std::filesystem::path candidate = executable_dir / filename;
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileMatmulAutotuner/backend_common.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `backend_nvcc.h`
+
+Source: cpp/9_CUDA_Tile/tileMatmulAutotuner/backend_nvcc.h:29-47
+```cpp
+#pragma once
+
+#include "backend_common.h"
+
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <iostream>
+#include <string>
+#include <system_error>
+#include <vector>
+
+inline CompiledKernel compileFileWithNVCC(const char *filename,
+                                          int sm_value,
+                                          int block_m, int block_n, int block_k,
+                                          const std::vector<std::string>& extra_flags) {
+    // Check CUDA include path for cuda_fp16.h
+    const char *include_path = CUDA_INCLUDE_PATH;
+    if (include_path[0] == '\0') {
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileMatmulAutotuner/backend_nvcc.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `backend_nvrtc.h`
+
+Source: cpp/9_CUDA_Tile/tileMatmulAutotuner/backend_nvrtc.h:29-47
+```cpp
+#pragma once
+
+#include "backend_common.h"
+
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <iostream>
+#include <string>
+#include <vector>
+
+#include <nvrtc.h>
+
+#define NVRTC_SAFE_CALL(Name, x)                                             \
+    do {                                                                     \
+        nvrtcResult result = x;                                              \
+        if (result != NVRTC_SUCCESS) {                                       \
+            std::cerr << "\nerror: " << Name << " failed with error " <<     \
+                      nvrtcGetErrorString(result);                           \
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileMatmulAutotuner/backend_nvrtc.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/9_CUDA_Tile/tileMatmulAutotuner/backend_nvrtc.h:152-165
+```cpp
+    }
+    std::streampos pos = inputFile.tellg();
+    size_t inputSize = pos;
+    char * memBlock = new char [inputSize + 1];
+    inputFile.seekg (0, std::ios::beg);
+    inputFile.read (memBlock, inputSize);
+    inputFile.close();
+    memBlock[inputSize] = '\x0';
+
+    // Compile the source string to PTX and Tile IR.
+    // JP: この連続する anchor 群では NVRTC/JIT compile/link output です。compile option、log、生成 code と後続 module/kernel の対応 を確認します。
+    nvrtcProgram prog;
+    NVRTC_SAFE_CALL("nvrtcCreateProgram", nvrtcCreateProgram(&prog, memBlock,
+    "testprog", 0, NULL, NULL));
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileMatmulAutotuner/backend_nvrtc.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/9_CUDA_Tile/tileMatmulAutotuner/backend_nvrtc.h:172-191
+```cpp
+    log[logSize] = '\x0';
+    std::cerr << "\n compilation log ---\n";
+    std::cerr << log;
+    std::cerr << "\n end log ---\n\n";
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    free(log);
+    NVRTC_SAFE_CALL("nvrtcCompileProgram", res);
+
+    // Fetch Tile IR and compile it to cubin before benchmarking.
+    size_t tileIRSize;
+    // JP: この連続する anchor 群では NVRTC/JIT compile/link output です。compile option、log、生成 code と後続 module/kernel の対応 を確認します。
+    NVRTC_SAFE_CALL("nvrtcGetTileIRSize", nvrtcGetTileIRSize(prog, &tileIRSize));
+    std::vector<char> tileIR(tileIRSize);
+    NVRTC_SAFE_CALL("nvrtcGetTileIR", nvrtcGetTileIR(prog, tileIR.data()));
+    CompiledKernel kernel;
+    kernel.image = compileTileIRToCubin(tileIR.data(), tileIR.size(), sm_value);
+    NVRTC_SAFE_CALL("nvrtcDestroyProgram", nvrtcDestroyProgram(&prog));
+    delete[] memBlock;
+    return kernel;
+}
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileMatmulAutotuner/backend_nvrtc.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `matmul.cu`
+
+Source: cpp/9_CUDA_Tile/tileMatmulAutotuner/matmul.cu:43-57
+```cuda
+#include "cuda_tile.h"
+#include <cuda_fp16.h>
+
+namespace ct = cuda::tiles;
+
+extern "C" __tile_global__ void matmul_tile(float* __restrict__ _C,
+                                             const __half* __restrict__ _A,
+                                             const __half* __restrict__ _B,
+                                             int _M, int _N, int _K) {
+    float* C = ct::assume_aligned<16>(_C);
+    const __half* A = ct::assume_aligned<16>(_A);
+    const __half* B = ct::assume_aligned<16>(_B);
+    auto M = ct::assume_divisible<16>(_M);
+    auto N = ct::assume_divisible<16>(_N);
+    auto K = ct::assume_divisible<16>(_K);
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileMatmulAutotuner/matmul.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `matmul_autotuner.cpp`
+
+Source: cpp/9_CUDA_Tile/tileMatmulAutotuner/matmul_autotuner.cpp:48-66
+```cpp
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <iostream>
+#include <random>
+#include <string>
+#include <vector>
+
+#include <cuda.h>
+#include <cuda_fp16.h>
+
+#include "backend_common.h"
+#include "backend_nvcc.h"
+#include "backend_nvrtc.h"
+#include "matmul_benchmark.h"
+#include <helper_cuda_drvapi.h>
+
+// global SM value (compute capability)
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileMatmulAutotuner/matmul_autotuner.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/9_CUDA_Tile/tileMatmulAutotuner/matmul_autotuner.cpp:117-136
+```cpp
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
+    CUdevice device;
+    int major = 0, minor = 0;
+
+    // initialize the CUDA Driver API
+    checkCudaErrors(cuInit(0));
+
+    // get the first device (device 0)
+    checkCudaErrors(cuDeviceGet(&device, 0));
+    checkCudaErrors(cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device));
+    checkCudaErrors(cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device));
+
+    printf("GPU Compute Capability: %d.%d\n", major, minor);
+    smValue = major * 10 + minor;
+}
+
+CompiledKernel compileFile(const char *filename,
+                           int block_m, int block_n, int block_k,
+                           CompilerBackend compiler_backend,
+                           const std::vector<std::string>& extra_flags = {}) {
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileMatmulAutotuner/matmul_autotuner.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/9_CUDA_Tile/tileMatmulAutotuner/matmul_autotuner.cpp:158-177
+```cpp
+    };
+
+    checkCudaErrors(cuModuleLoadData(&module, compiled_kernel.image.data()));
+
+    checkCudaErrors(cuModuleGetFunction(&kernel_addr, module, kMatmulKernelName));
+    // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    checkCudaErrors(cuLaunchKernel(kernel_addr,
+                gridDimX, gridDimY, 1,  // grid dim
+                1, 1, 1,                // block dim
+                sMem, 0,                // shared mem, stream
+                args,                   // arguments
+                NULL));
+    checkCudaErrors(cuCtxSynchronize());
+
+    // cleanup
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
+    checkCudaErrors(cuModuleUnload(module));
+}
+
+void autotuner(int M, int N, int K,
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileMatmulAutotuner/matmul_autotuner.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/9_CUDA_Tile/tileMatmulAutotuner/matmul_autotuner.cpp:290-309
+```cpp
+    printf("  LOAD_LATENCY=%d, STORE_LATENCY=%d, grid_x=%d, grid_y=%d\n",
+           best->load_latency, best->store_latency, best->grid_x, best->grid_y);
+    printf("  Performance: %.1f GFLOPS, %.3f ms, %.1f GB/s\n",
+           best->result.gflops, best->result.time_ms, best->result.bandwidth_gb_s);
+
+    // JP: `cuMemFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cuMemFree(d_A));
+    checkCudaErrors(cuMemFree(d_B));
+    checkCudaErrors(cuMemFree(d_C));
+}
+
+int main(int argc, char** argv) {
+    std::vector<char*> benchmark_argv;
+    CompilerBackend compiler_backend = parseCompilerBackendArgs(argc, argv, benchmark_argv);
+    parse_benchmark_args(static_cast<int>(benchmark_argv.size()), benchmark_argv.data());
+    print_device_info();
+
+    // initialize CUDA and get compute capability
+    setSMValue();
+
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileMatmulAutotuner/matmul_autotuner.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

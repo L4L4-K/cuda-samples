@@ -87,7 +87,7 @@ English anchor: read `volumeFiltering` as a focused example of the CUDA concepts
 - `volume.h`: focus on `cudaTextureReadMode`, `cudaExtent`, `cudaReadModeNormalizedFloat`, `cudaArray`, `cudaChannelFormatDesc`.
 - `volumeFilter.h`: focus on control flow and helper functions.
 - `volumeFilter_kernel.cu`: focus on `blockIdx`, `blockDim`, `threadIdx`, `launch`, `cudaExtent`.
-- `volumeFiltering.cpp`: focus on `CUDA`, `cudaDeviceSynchronize`, `cudaMemset`, `cudaGraphicsResource`, `cudaGraphicsUnregisterResource`.
+- `volumeFiltering.cpp`: focus on `CUDA`, `launch`, `cudaDeviceSynchronize`, `cudaMemset`, `cudaGraphicsResource`.
 - `volumeRender.h`: focus on `cudaTextureObject_t`.
 - `volumeRender_kernel.cu`: focus on `cudaTextureObject_t`, `cudaResourceDesc`, `cudaTextureDesc`, `blockIdx`, `blockDim`.
 
@@ -97,6 +97,530 @@ English anchor: read `volumeFiltering` as a focused example of the CUDA concepts
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/5_Domain_Specific/volumeFiltering/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(volumeFiltering LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/volumeFiltering/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `volume.cpp`
+
+Source: cpp/5_Domain_Specific/volumeFiltering/volume.cpp:30-94
+```cpp
+#include <cuda_runtime.h>
+
+// Helper functions
+#include <helper_cuda.h>
+#include <helper_math.h>
+
+#include "volume.h"
+
+void Volume_init(Volume *vol, cudaExtent dataSize, void *h_data, int allowStore)
+{
+    // create 3D array
+    vol->channelDesc = cudaCreateChannelDesc<VolumeType>();
+    checkCudaErrors(
+        cudaMalloc3DArray(&vol->content, &vol->channelDesc, dataSize, allowStore ? cudaArraySurfaceLoadStore : 0));
+    vol->size = dataSize;
+
+    if (h_data) {
+        // copy data to 3D array
+        cudaMemcpy3DParms copyParams = {0};
+        copyParams.srcPtr =
+            make_cudaPitchedPtr(h_data, dataSize.width * sizeof(VolumeType), dataSize.width, dataSize.height);
+        copyParams.dstArray = vol->content;
+        copyParams.extent   = dataSize;
+        // JP: `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+        copyParams.kind     = cudaMemcpyHostToDevice;
+        checkCudaErrors(cudaMemcpy3D(&copyParams));
+    }
+
+    if (allowStore) {
+        cudaResourceDesc surfRes;
+        memset(&surfRes, 0, sizeof(cudaResourceDesc));
+        surfRes.resType         = cudaResourceTypeArray;
+        surfRes.res.array.array = vol->content;
+
+        checkCudaErrors(cudaCreateSurfaceObject(&vol->volumeSurf, &surfRes));
+    }
+
+    cudaResourceDesc texRes;
+    memset(&texRes, 0, sizeof(cudaResourceDesc));
+
+    texRes.resType         = cudaResourceTypeArray;
+    texRes.res.array.array = vol->content;
+
+    cudaTextureDesc texDescr;
+    memset(&texDescr, 0, sizeof(cudaTextureDesc));
+
+    texDescr.normalizedCoords = true;
+    texDescr.filterMode       = cudaFilterModeLinear;
+    texDescr.addressMode[0]   = cudaAddressModeWrap;
+    texDescr.addressMode[1]   = cudaAddressModeWrap;
+    texDescr.addressMode[2]   = cudaAddressModeWrap;
+    texDescr.readMode         = cudaReadModeNormalizedFloat; // VolumeTypeInfo<VolumeType>::readMode;
+
+    checkCudaErrors(cudaCreateTextureObject(&vol->volumeTex, &texRes, &texDescr, NULL));
+}
+
+void Volume_deinit(Volume *vol)
+{
+    // JP: `cudaDestroyTextureObject`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaDestroyTextureObject(vol->volumeTex));
+    checkCudaErrors(cudaDestroySurfaceObject(vol->volumeSurf));
+    // JP: `cudaFreeArray`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaFreeArray(vol->content));
+    vol->content = 0;
+}
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/volumeFiltering/volume.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `volume.h`
+
+Source: cpp/5_Domain_Specific/volumeFiltering/volume.h:29-89
+```cpp
+#ifndef _VOLUME_H_
+#define _VOLUME_H_
+
+#include <cuda_runtime.h>
+
+typedef unsigned char VolumeType;
+
+extern "C"
+{
+
+    struct Volume
+    {
+        cudaArray            *content;
+        cudaExtent            size;
+        cudaChannelFormatDesc channelDesc;
+        cudaTextureObject_t   volumeTex;
+        cudaSurfaceObject_t   volumeSurf;
+    };
+
+    void Volume_init(Volume *vol, cudaExtent size, void *data, int allowStore);
+    void Volume_deinit(Volume *vol);
+};
+
+//////////////////////////////////////////////////////////////////////////
+
+#ifdef __CUDACC__
+
+/* Helper class to do popular integer storage to float conversions if required
+ */
+
+template <typename T> struct VolumeTypeInfo
+{
+};
+
+template <> struct VolumeTypeInfo<unsigned char>
+{
+    static const cudaTextureReadMode           readMode = cudaReadModeNormalizedFloat;
+    static __inline__ __device__ unsigned char convert(float sampled)
+    {
+        return (unsigned char)(__saturatef(sampled) * 255.0);
+    }
+};
+
+template <> struct VolumeTypeInfo<unsigned short>
+{
+    static const cudaTextureReadMode            readMode = cudaReadModeNormalizedFloat;
+    static __inline__ __device__ unsigned short convert(float sampled)
+    {
+        return (unsigned short)(__saturatef(sampled) * 65535.0);
+    }
+};
+
+template <> struct VolumeTypeInfo<float>
+{
+    static const cudaTextureReadMode   readMode = cudaReadModeElementType;
+    static __inline__ __device__ float convert(float sampled) { return sampled; }
+};
+
+#endif
+
+#endif
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/volumeFiltering/volume.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `volumeFilter.h`
+
+Source: cpp/5_Domain_Specific/volumeFiltering/volumeFilter.h:29-49
+```cpp
+#ifndef _VOLUMEFILTER_KERNEL_H_
+#define _VOLUMEFILTER_KERNEL_H_
+
+#define VOLUMEFILTER_MAXWEIGHTS 125
+
+#include <cuda_runtime.h>
+
+#include "volume.h"
+
+extern "C"
+{
+    Volume *VolumeFilter_runFilter(Volume *input,
+                                   Volume *output0,
+                                   Volume *output1,
+                                   int     iterations,
+                                   int     numWeights,
+                                   float4 *weights,
+                                   float   postWeightOffset);
+};
+
+#endif
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/volumeFiltering/volumeFilter.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `volumeFilter_kernel.cu`
+
+Source: cpp/5_Domain_Specific/volumeFiltering/volumeFilter_kernel.cu:29-63
+```cuda
+#ifndef _VOLUMEFILTER_KERNEL_CU_
+#define _VOLUMEFILTER_KERNEL_CU_
+
+#include <helper_cuda.h>
+#include <helper_math.h>
+
+#include "volumeFilter.h"
+
+typedef unsigned int   uint;
+typedef unsigned char  uchar;
+typedef unsigned short ushort;
+
+__constant__ float4 c_filterData[VOLUMEFILTER_MAXWEIGHTS];
+
+__global__ void d_filter_surface3d(int                 filterSize,
+                                   float               filter_offset,
+                                   cudaExtent          volumeSize,
+                                   cudaTextureObject_t volumeTexIn,
+                                   cudaSurfaceObject_t volumeTexOut)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int z = blockIdx.z * blockDim.z + threadIdx.z;
+
+    if (x >= volumeSize.width || y >= volumeSize.height || z >= volumeSize.depth) {
+        return;
+    }
+
+    float  filtered  = 0;
+    float4 basecoord = make_float4(x, y, z, 0);
+
+    for (int i = 0; i < filterSize; i++) {
+        float4 coord = basecoord + c_filterData[i];
+        filtered += tex3D<float>(volumeTexIn, coord.x, coord.y, coord.z) * c_filterData[i].w;
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/volumeFiltering/volumeFilter_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/volumeFiltering/volumeFilter_kernel.cu:95-114
+```cuda
+    unsigned int dim  = 32 / sizeof(VolumeType);
+    dim3         blockSize(dim, dim, 1);
+    dim3 gridSize(iDivUp(size.width, blockSize.x), iDivUp(size.height, blockSize.y), iDivUp(size.depth, blockSize.z));
+
+    // set weights
+    checkCudaErrors(cudaMemcpyToSymbol(c_filterData, weights, sizeof(float4) * numWeights));
+
+    for (int i = 0; i < iterations; i++) {
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+        d_filter_surface3d<<<gridSize, blockSize>>>(
+            numWeights, postWeightOffset, size, input->volumeTex, output0->volumeSurf);
+
+        getLastCudaError("filter kernel failed");
+
+        swap    = input;
+        input   = output0;
+        output0 = swap;
+
+        if (i == 0) {
+            output0 = output1;
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/volumeFiltering/volumeFilter_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `volumeFiltering.cpp`
+
+Source: cpp/5_Domain_Specific/volumeFiltering/volumeFiltering.cpp:29-47
+```cpp
+#include <helper_gl.h>
+#if defined(__APPLE__) || defined(MACOSX)
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#include <GLUT/glut.h>
+#ifndef glutCloseFunc
+#define glutCloseFunc glutWMCloseFunc
+#endif
+#else
+#include <GL/freeglut.h>
+#endif
+
+// CUDA Runtime and Interop
+#include <cuda_gl_interop.h>
+#include <cuda_runtime.h>
+
+// Helper functions
+#include <helper_functions.h>
+#include <helper_timer.h>
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/volumeFiltering/volumeFiltering.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/volumeFiltering/volumeFiltering.cpp:225-244
+```cpp
+
+    // map PBO to get CUDA device pointer
+    uint *d_output;
+    // map PBO to get CUDA device pointer
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+    checkCudaErrors(cudaGraphicsMapResources(1, &cuda_pbo_resource, 0));
+    size_t num_bytes;
+    checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&d_output, &num_bytes, cuda_pbo_resource));
+    // printf("CUDA mapped PBO: May access %ld bytes\n", num_bytes);
+
+    // clear image
+    // JP: `cudaMemset`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemset(d_output, 0, width * height * 4));
+
+    // call CUDA kernel, writing results to PBO
+    VolumeRender_render(gridSize,
+                        blockSize,
+                        d_output,
+                        width,
+                        height,
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/volumeFiltering/volumeFiltering.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/volumeFiltering/volumeFiltering.cpp:459-478
+```cpp
+{
+    width  = w;
+    height = h;
+    initPixelBuffer();
+
+    // calculate new grid size
+    gridSize = dim3(iDivUp(width, blockSize.x), iDivUp(height, blockSize.y));
+
+    glViewport(0, 0, w, h);
+
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(0.0, 1.0, 0.0, 1.0, 0.0, 1.0);
+}
+
+
+void initGL(int *argc, char **argv)
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/volumeFiltering/volumeFiltering.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/volumeFiltering/volumeFiltering.cpp:601-620
+```cpp
+    void  *h_volume = loadRawFile(path, size);
+
+    FilterKernel_init();
+    Volume_init(&volumeOriginal, volumeSize, h_volume, 0);
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    free(h_volume);
+    Volume_init(&volumeFilter0, volumeSize, NULL, 1);
+    Volume_init(&volumeFilter1, volumeSize, NULL, 1);
+    VolumeRender_init();
+    VolumeRender_setPreIntegrated(preIntegrated);
+
+    sdkCreateTimer(&timer);
+    sdkCreateTimer(&animationTimer);
+    sdkStartTimer(&animationTimer);
+
+    // calculate new grid size
+    gridSize = dim3(iDivUp(width, blockSize.x), iDivUp(height, blockSize.y));
+}
+
+//////////////////////////////////////////////////////////////////////////
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/volumeFiltering/volumeFiltering.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `volumeRender.h`
+
+Source: cpp/5_Domain_Specific/volumeFiltering/volumeRender.h:29-56
+```cpp
+#ifndef _VOLUMERENDER__H_
+#define _VOLUMERENDER__H_
+
+#include <cuda_runtime.h>
+
+#include "volume.h"
+
+extern "C"
+{
+    void VolumeRender_init();
+    void VolumeRender_deinit();
+
+    void VolumeRender_setPreIntegrated(int state);
+    void VolumeRender_setTextureFilterMode(bool bLinearFilter, Volume *volume);
+    void VolumeRender_render(dim3                gridSize,
+                             dim3                blockSize,
+                             uint               *d_output,
+                             uint                imageW,
+                             uint                imageH,
+                             float               density,
+                             float               brightness,
+                             float               transferOffset,
+                             float               transferScale,
+                             cudaTextureObject_t tex);
+    void VolumeRender_copyInvViewMatrix(float *invViewMatrix, size_t sizeofMatrix);
+};
+
+#endif
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/volumeFiltering/volumeRender.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `volumeRender_kernel.cu`
+
+Source: cpp/5_Domain_Specific/volumeFiltering/volumeRender_kernel.cu:31-49
+```cuda
+#ifndef _VOLUMERENDER_KERNEL_CU_
+#define _VOLUMERENDER_KERNEL_CU_
+
+#include <helper_cuda.h>
+#include <helper_math.h>
+
+#include "volumeRender.h"
+
+#define VOLUMERENDER_TFS            2
+#define VOLUMERENDER_TF_PREINTSIZE  1024
+#define VOLUMERENDER_TF_PREINTSTEPS 1024
+#define VOLUMERENDER_TF_PREINTRAY   4
+
+enum TFMode {
+    TF_SINGLE_1D         = 0, // single 1D TF for everything
+    TF_LAYERED_2D_PREINT = 1, // layered 2D TF uses pre-integration
+    TF_LAYERED_2D        = 2, // layered 2D TF without pre-integration behavior
+};
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/volumeFiltering/volumeRender_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/volumeFiltering/volumeRender_kernel.cu:151-170
+```cuda
+    const float3 boxMin           = make_float3(-1.0f, -1.0f, -1.0f);
+    const float3 boxMax           = make_float3(1.0f, 1.0f, 1.0f);
+
+    density *= rayscale;
+
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    uint x = blockIdx.x * blockDim.x + threadIdx.x;
+    uint y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if ((x >= imageW) || (y >= imageH))
+        return;
+
+    float u = (x / (float)imageW) * 2.0f - 1.0f;
+    float v = (y / (float)imageH) * 2.0f - 1.0f;
+
+    // calculate eye ray in world space
+    Ray eyeRay;
+    eyeRay.o = make_float3(mul(c_invViewMatrix, make_float4(0.0f, 0.0f, 0.0f, 1.0f)));
+    eyeRay.d = normalize(make_float3(u, v, -2.0f));
+    eyeRay.d = mul(c_invViewMatrix, eyeRay.d);
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/volumeFiltering/volumeRender_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/volumeFiltering/volumeRender_kernel.cu:407-426
+```cuda
+//////////////////////////////////////////////////////////////////////////
+
+void VolumeRender_setTextureFilterMode(bool bLinearFilter, Volume *vol)
+{
+    if (vol->volumeTex) {
+        // JP: `cudaDestroyTextureObject`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        checkCudaErrors(cudaDestroyTextureObject(vol->volumeTex));
+    }
+    cudaResourceDesc texRes;
+    memset(&texRes, 0, sizeof(cudaResourceDesc));
+
+    texRes.resType         = cudaResourceTypeArray;
+    texRes.res.array.array = vol->content;
+
+    cudaTextureDesc texDescr;
+    memset(&texDescr, 0, sizeof(cudaTextureDesc));
+
+    texDescr.normalizedCoords = true;
+    texDescr.filterMode       = bLinearFilter ? cudaFilterModeLinear : cudaFilterModePoint;
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/volumeFiltering/volumeRender_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/volumeFiltering/volumeRender_kernel.cu:451-472
+```cuda
+        checkCudaErrors(cudaFreeArray(d_transferFunc));
+        d_transferFunc = 0;
+    }
+
+    cudaChannelFormatDesc channelFloat4 = cudaCreateChannelDesc<float4>();
+    checkCudaErrors(cudaMallocArray(&d_transferFunc, &channelFloat4, numColors, 1));
+    checkCudaErrors(
+        // JP: `cudaMemcpy2DToArray`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+        cudaMemcpy2DToArray(d_transferFunc, 0, 0, colors, 0, sizeof(float4) * numColors, 1, cudaMemcpyHostToDevice));
+
+    cudaResourceDesc texRes;
+    memset(&texRes, 0, sizeof(cudaResourceDesc));
+
+    texRes.resType         = cudaResourceTypeArray;
+    texRes.res.array.array = d_transferFunc;
+
+    cudaTextureDesc texDescr;
+    memset(&texDescr, 0, sizeof(cudaTextureDesc));
+
+    texDescr.normalizedCoords = true;
+    texDescr.filterMode       = cudaFilterModeLinear;
+    texDescr.addressMode[0]   = cudaAddressModeClamp;
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/volumeFiltering/volumeRender_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
@@ -104,6 +628,7 @@ English anchor: read `volumeFiltering` as a focused example of the CUDA concepts
 | `cudaTextureObject_t` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaResourceDesc` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaExtent` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `blockIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `blockDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `threadIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
@@ -114,7 +639,6 @@ English anchor: read `volumeFiltering` as a focused example of the CUDA concepts
 | `cudaCreateTextureObject` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaAddressModeWrap` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaSurfaceObject_t` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
-| `cudaDeviceSynchronize` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。

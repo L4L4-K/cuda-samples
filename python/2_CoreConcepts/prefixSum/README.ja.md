@@ -70,13 +70,97 @@ English anchor: read `prefixSum` as a focused example of the CUDA concepts used 
 
 ## Concrete Reading Path
 
-- `prefixSum.py`: focus on `Stream`, `CUDA`, `cp.asarray`, `cp.empty_like`, `CUB`.
+- `prefixSum.py`: focus on `CUDA`, `Stream`, `cp.asarray`, `cp.empty_like`, `CUB`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `prefixSum.py`
+
+Source: python/2_CoreConcepts/prefixSum/prefixSum.py:2-20
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/prefixSum/prefixSum.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/prefixSum/prefixSum.py:60-79
+```python
+    print("=" * 60)
+    print("Prefix Sum (Scan) - Using cuda.compute")
+    print("=" * 60)
+
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
+    device = Device(0)
+    device.set_current()
+    stream = device.create_stream()
+    cp_stream = cp.cuda.Stream.from_external(stream)
+
+    ok = True
+    try:
+        print()
+        print_gpu_info(device)
+
+        h_input = np.array([3, 1, 4, 1, 5, 9, 2, 6], dtype=np.int32)
+        init_value = np.array([0], dtype=np.int32)
+
+        # =========================================================================
+        # Inclusive Scan
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/prefixSum/prefixSum.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/prefixSum/prefixSum.py:127-146
+```python
+            d_in=d_input,
+            d_out=d_output,
+            op=OpKind.PLUS,
+            init_value=init_value,
+            num_items=len(h_input),
+            # JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+            stream=stream,
+        )
+        stream.sync()
+        print(f"Output: {cp.asnumpy(d_output).tolist()}")
+
+        with cp_stream:
+            # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
+            expected = cp.asarray(np.concatenate([init_value, np.cumsum(h_input)[:-1]]))
+        ok &= verify_array_result(d_output, expected, rtol=0, atol=0)
+
+        # =========================================================================
+        # Large Array Performance
+        # =========================================================================
+        print("\n" + "-" * 60)
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/prefixSum/prefixSum.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

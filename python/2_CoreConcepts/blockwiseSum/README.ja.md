@@ -74,13 +74,123 @@ English anchor: read `blockwiseSum` as a focused example of the CUDA concepts us
 
 ## Concrete Reading Path
 
-- `blockwiseSum.py`: focus on `launch`, `blockDim`, `blockIdx`, `threadIdx`, `CUDA`.
+- `blockwiseSum.py`: focus on `CUDA`, `launch`, `blockDim`, `blockIdx`, `threadIdx`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `blockwiseSum.py`
+
+Source: python/2_CoreConcepts/blockwiseSum/blockwiseSum.py:2-20
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/blockwiseSum/blockwiseSum.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/blockwiseSum/blockwiseSum.py:29-48
+```python
+Block-wise Array Sum with Threaded Access
+
+Demonstrates thread/block indexing, strided loops, and block-wise reduction.
+
+Key Concepts:
+    Global Thread ID = blockIdx.x * blockDim.x + threadIdx.x
+    Stride = blockDim.x * gridDim.x
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "Utilities"))
+from cuda_samples_utils import verify_array_result
+
+try:
+    # JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
+    import cupy as cp
+    import numpy as np
+    from cuda.core import (
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/blockwiseSum/blockwiseSum.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/blockwiseSum/blockwiseSum.py:92-111
+```python
+    float sum = 0.0f;
+    for (size_t i = tid; i < N; i += stride) {
+        sum += input[i];
+    }
+    sdata[local_tid] = sum;
+    __syncthreads();
+
+    // Block-level tree reduction
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (local_tid < s) {
+            sdata[local_tid] += sdata[local_tid + s];
+        }
+        __syncthreads();
+    }
+
+    if (local_tid == 0) {
+        partial_sums[blockIdx.x] = sdata[0];
+    }
+}
+"""
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/blockwiseSum/blockwiseSum.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/blockwiseSum/blockwiseSum.py:129-148
+```python
+    """
+    threads_per_block = 256
+    num_blocks = 64
+
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
+    device = Device(device_id)
+    device.set_current()
+    stream = device.create_stream()
+
+    arch = f"sm_{device.arch}"
+    print(f"Device: {device.name}")
+    print(f"Compute Capability: {arch}")
+    print(f"Array size: {num_elements:,} elements\n")
+
+    try:
+        # Make CuPy use our stream
+        # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
+        cp.cuda.Stream.from_external(stream).use()
+
+        # Compile kernels
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/blockwiseSum/blockwiseSum.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

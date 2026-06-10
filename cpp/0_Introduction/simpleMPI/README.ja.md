@@ -85,6 +85,233 @@ English anchor: read `simpleMPI` as a focused example of the CUDA concepts used 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/simpleMPI/CMakeLists.txt:1-53
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleMPI LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+find_package(MPI)
+
+# Source file
+if(${MPI_FOUND})
+    # Add target for simpleMPI
+    add_executable(simpleMPI simpleMPI.cpp simpleMPI.cu)
+
+target_compile_options(simpleMPI PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleMPI PRIVATE cxx_std_17 cuda_std_17)
+
+    set_target_properties(simpleMPI PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+    target_include_directories(simpleMPI PUBLIC
+        ${MPI_INCLUDE_PATH}
+    )
+
+    target_link_libraries(simpleMPI PUBLIC
+        ${MPI_C_LIBRARIES}
+        ${MPI_CXX_LIBRARIES}
+    )
+
+else()
+    message(STATUS "MPI not found - will not build sample 'simpleMPI'")
+endif()
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleMPI/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleMPI.cpp`
+
+Source: cpp/0_Introduction/simpleMPI/simpleMPI.cpp:41-98
+```cpp
+#include <mpi.h>
+
+// System includes
+#include <iostream>
+
+using std::cerr;
+using std::cout;
+using std::endl;
+
+// User include
+#include "simpleMPI.h"
+
+// Error handling macros
+#define MPI_CHECK(call)                              \
+    if ((call) != MPI_SUCCESS) {                     \
+        cerr << "MPI error calling \"" #call "\"\n"; \
+        my_abort(-1);                                \
+    }
+
+// Host code
+// No CUDA here, only MPI
+int main(int argc, char *argv[])
+{
+    // Dimensions of the dataset
+    int blockSize       = 256;
+    int gridSize        = 10000;
+    int dataSizePerNode = gridSize * blockSize;
+
+    // Initialize MPI state
+    MPI_CHECK(MPI_Init(&argc, &argv));
+
+    // Get our MPI node number and node count
+    int commSize, commRank;
+    MPI_CHECK(MPI_Comm_size(MPI_COMM_WORLD, &commSize));
+    MPI_CHECK(MPI_Comm_rank(MPI_COMM_WORLD, &commRank));
+
+    // Generate some random numbers on the root node (node 0)
+    int    dataSizeTotal = dataSizePerNode * commSize;
+    float *dataRoot      = NULL;
+
+    // Are we the root node?
+    if (commRank == 0) {
+        cout << "Running on " << commSize << " nodes" << endl;
+        dataRoot = new float[dataSizeTotal];
+        initData(dataRoot, dataSizeTotal);
+    }
+
+    // Allocate a buffer on each node
+    float *dataNode = new float[dataSizePerNode];
+
+    // Dispatch a portion of the input data to each node
+    MPI_CHECK(
+        MPI_Scatter(dataRoot, dataSizePerNode, MPI_FLOAT, dataNode, dataSizePerNode, MPI_FLOAT, 0, MPI_COMM_WORLD));
+
+    if (commRank == 0) {
+        // No need for root data any more
+        delete[] dataRoot;
+    }
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleMPI/simpleMPI.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleMPI.cu`
+
+Source: cpp/0_Introduction/simpleMPI/simpleMPI.cu:39-110
+```cuda
+#include <iostream>
+using std::cerr;
+using std::endl;
+
+#include "simpleMPI.h"
+
+// Error handling macro
+#define CUDA_CHECK(call)                                                     \
+    if ((call) != cudaSuccess) {                                             \
+        cudaError_t err = cudaGetLastError();                                \
+        cerr << "CUDA error calling \"" #call "\", code is " << err << endl; \
+        my_abort(err);                                                       \
+    }
+
+// Device code
+// Very simple GPU Kernel that computes square roots of input numbers
+__global__ void simpleMPIKernel(float *input, float *output)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int tid     = blockIdx.x * blockDim.x + threadIdx.x;
+    output[tid] = sqrt(input[tid]);
+}
+
+// Initialize an array with random data (between 0 and 1)
+void initData(float *data, int dataSize)
+{
+    for (int i = 0; i < dataSize; i++) {
+        data[i] = (float)rand() / RAND_MAX;
+    }
+}
+
+// CUDA computation on each node
+// No MPI here, only CUDA
+void computeGPU(float *hostData, int blockSize, int gridSize)
+{
+    int dataSize = blockSize * gridSize;
+
+    // Allocate data on GPU memory
+    float *deviceInputData = NULL;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    CUDA_CHECK(cudaMalloc((void **)&deviceInputData, dataSize * sizeof(float)));
+
+    float *deviceOutputData = NULL;
+    CUDA_CHECK(cudaMalloc((void **)&deviceOutputData, dataSize * sizeof(float)));
+
+    // Copy to GPU memory
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    CUDA_CHECK(cudaMemcpy(deviceInputData, hostData, dataSize * sizeof(float), cudaMemcpyHostToDevice));
+
+    // Run kernel
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    simpleMPIKernel<<<gridSize, blockSize>>>(deviceInputData, deviceOutputData);
+
+    // Copy data back to CPU memory
+    CUDA_CHECK(cudaMemcpy(hostData, deviceOutputData, dataSize * sizeof(float), cudaMemcpyDeviceToHost));
+
+    // Free GPU memory
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    CUDA_CHECK(cudaFree(deviceInputData));
+    CUDA_CHECK(cudaFree(deviceOutputData));
+}
+
+float sum(float *data, int size)
+{
+    float accum = 0.f;
+
+    for (int i = 0; i < size; i++) {
+        accum += data[i];
+    }
+
+    return accum;
+}
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleMPI/simpleMPI.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleMPI.h`
+
+Source: cpp/0_Introduction/simpleMPI/simpleMPI.h:40-46
+```cpp
+extern "C"
+{
+    void  initData(float *data, int dataSize);
+    void  computeGPU(float *hostData, int blockSize, int gridSize);
+    float sum(float *data, int size);
+    void  my_abort(int err);
+}
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleMPI/simpleMPI.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

@@ -81,6 +81,90 @@ English anchor: read `cudaComputeLambdas` as a focused example of the CUDA conce
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `cudaComputeLambdas.py`
+
+Source: python/2_CoreConcepts/cudaComputeLambdas/cudaComputeLambdas.py:2-20
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/cudaComputeLambdas/cudaComputeLambdas.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/cudaComputeLambdas/cudaComputeLambdas.py:83-102
+```python
+    expected = int(d_in.get().sum())
+    ok = got == expected
+    print(
+        f"reduce_into(lambda a,b: a+b) over 1..10 -> {got} "
+        # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+        f"(expected {expected})  {'OK' if ok else 'FAIL'}"
+    )
+    return ok
+
+
+def demo_unary_transform_lambda() -> bool:
+    """unary_transform driven by a lambda: y = x*x + 1."""
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
+    d_in = cp.arange(8, dtype=cp.int32)
+    d_out = cp.empty_like(d_in)
+
+    cuda.compute.unary_transform(
+        d_in=d_in,
+        d_out=d_out,
+        num_items=int(d_in.size),
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/cudaComputeLambdas/cudaComputeLambdas.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/cudaComputeLambdas/cudaComputeLambdas.py:151-170
+```python
+    )
+    return ok
+
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Drive cuda.compute device algorithms with Python lambdas / callables"
+    )
+    parser.add_argument("--device", type=int, default=0, help="CUDA device id")
+    args = parser.parse_args()
+
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
+    device = Device(args.device)
+    device.set_current()
+    print_gpu_info(device)
+    print()
+
+    ok = True
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/cudaComputeLambdas/cudaComputeLambdas.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

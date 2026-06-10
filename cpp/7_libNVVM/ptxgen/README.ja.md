@@ -79,6 +79,220 @@ English anchor: read `ptxgen` as a focused example of the CUDA concepts used in 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/7_libNVVM/ptxgen/CMakeLists.txt:2-20
+```cmake
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/ptxgen/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/7_libNVVM/ptxgen/CMakeLists.txt:25-44
+```cmake
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+# JP: この連続する anchor 群では CMake CUDA target/link/architecture wiring です。source、target、optional dependency、platform condition を確認します。
+add_executable(ptxgen ptxgen.c)
+
+add_test(NAME ptxgenTest
+   COMMAND ptxgen "${CMAKE_CURRENT_SOURCE_DIR}/test.ll"
+   WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+set_tests_properties(ptxgenTest PROPERTIES FIXTURES_SETUP PTXGENTEST)
+
+target_link_libraries(ptxgen ${NVVM_LIB})
+
+if (DEFINED RUNTIME_LIBNVVM_PATH)
+  get_filename_component(_LIBNVVM_HOME "${RUNTIME_LIBNVVM_PATH}" DIRECTORY)
+else ()
+  set(_LIBNVVM_HOME "${LIBNVVM_HOME}")
+endif ()
+
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/ptxgen/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `ptxgen.c`
+
+Source: cpp/7_libNVVM/ptxgen/ptxgen.c:24-47
+```c
+// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+// OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+#include <assert.h>
+#include <nvvm.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+
+/* Two levels of indirection to stringify LIBDEVICE_MAJOR_VERSION and
+ * LIBDEVICE_MINOR_VERSION correctly. */
+#define getLibDeviceName()               _getLibDeviceName(LIBDEVICE_MAJOR_VERSION, LIBDEVICE_MINOR_VERSION)
+#define _getLibDeviceName(MAJOR, MINOR)  __getLibDeviceName(MAJOR, MINOR)
+#define __getLibDeviceName(MAJOR, MINOR) ("/libdevice/libdevice." #MAJOR #MINOR ".bc")
+
+#define getLibnvvmHome()            _getLibnvvmHome(LIBNVVM_HOME)
+#define _getLibnvvmHome(NVVM_HOME)  __getLibnvvmHome(NVVM_HOME)
+#define __getLibnvvmHome(NVVM_HOME) (#NVVM_HOME)
+
+typedef enum {
+    PTXGEN_SUCCESS                    = 0x0000,
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/ptxgen/ptxgen.c` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/7_libNVVM/ptxgen/ptxgen.c:66-85
+```c
+        fprintf(stderr, "The environment variable LIBNVVM_HOME undefined\n");
+        return PTXGEN_LIBNVVM_HOME_UNDEFINED;
+    }
+
+    const char *libdevice = getLibDeviceName();
+    *buffer               = malloc(strlen(libnvvmPath) + strlen(libdevice) + 1);
+    if (*buffer == NULL) {
+        fprintf(stderr, "Failed to allocate memory\n");
+        return PTXGEN_BAD_ALLOC_ERROR;
+    }
+
+    // Concatenate libnvvmPath with libdevice.
+    *buffer = strcat(strcpy(*buffer, libnvvmPath), libdevice);
+
+    return PTXGEN_SUCCESS;
+}
+
+static PTXGenStatus addFileToProgram(const char *filename, nvvmProgram prog, PTXGENInput inputType)
+{
+    assert(filename);
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/ptxgen/ptxgen.c` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/7_libNVVM/ptxgen/ptxgen.c:102-121
+```c
+    const size_t size = fread(buffer, 1, fileStat.st_size, f);
+    if (ferror(f)) {
+        fprintf(stderr, "Failed to read %s\n", filename);
+        fclose(f);
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        free(buffer);
+        return PTXGEN_FILE_IO_ERROR;
+    }
+    fclose(f);
+
+    // Add the input to the libNVVM program instance.
+    nvvmResult result;
+    if (inputType == PTXGEN_INPUT_LIBDEVICE)
+        result = nvvmLazyAddModuleToProgram(prog, buffer, size, filename);
+    else
+        result = nvvmAddModuleToProgram(prog, buffer, size, filename);
+    if (result != NVVM_SUCCESS) {
+        fprintf(stderr, "Failed to add the module %s to the compilation unit\n", filename);
+        free(buffer);
+        return PTXGEN_LIBNVVM_ERROR;
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/ptxgen/ptxgen.c` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/7_libNVVM/ptxgen/ptxgen.c:239-258
+```c
+    fprintf(stderr,
+            "Usage: ptxgen [OPTION]... [FILE]...\n"
+            "  [FILE] could be a .bc file or a .ll file\n");
+}
+
+int main(int argc, char *argv[])
+{
+    PTXGenStatus status = PTXGEN_SUCCESS;
+
+    if (argc == 1) {
+        showUsage();
+        return PTXGEN_INVALID_USAGE;
+    }
+
+    // Extract libNVVM options and the input file names.
+    unsigned     numOptions = 0, numFilenames = 0;
+    const char **options   = malloc((argc - 1) * sizeof(char *));
+    const char **filenames = malloc((argc - 1) * sizeof(char *));
+    assert(options && filenames);
+    for (int i = 1; i < argc; ++i) {
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/ptxgen/ptxgen.c` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `test.ll`
+
+Source: cpp/7_libNVVM/ptxgen/test.ll:2-39
+```llvm
+;
+; Redistribution and use in source and binary forms, with or without
+; modification, are permitted provided that the following conditions
+; are met:
+;  * Redistributions of source code must retain the above copyright
+;    notice, this list of conditions and the following disclaimer.
+;  * Redistributions in binary form must reproduce the above copyright
+;    notice, this list of conditions and the following disclaimer in the
+;    documentation and/or other materials provided with the distribution.
+;  * Neither the name of NVIDIA CORPORATION nor the names of its
+;    contributors may be used to endorse or promote products derived
+;    from this software without specific prior written permission.
+;
+; THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+; EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+; IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+; PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+; CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+; EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+; PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+; PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+; OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+; (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+; OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-i128:128:128-f32:32:32-f64:64:64-v16:16:16-v32:32:32-v64:64:64-v128:128:128-n16:32:64"
+target triple = "nvptx64-nvidia-cuda"
+
+define void @_Z9testEmptyv() {
+entry:
+  ret void
+}
+
+!nvvmir.version = !{!0}
+!nvvm.annotations = !{!1}
+
+!0 = !{i32 2, i32 0}
+!1 = !{void ()* @_Z9testEmptyv, !"kernel", i32 1}
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/ptxgen/test.ll` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

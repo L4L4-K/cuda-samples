@@ -82,7 +82,7 @@ English anchor: read `postProcessGL` as a focused example of the CUDA concepts u
 
 ## Concrete Reading Path
 
-- `main.cpp`: focus on `CUDA`, `cudaGraphicsResource`, `cudaArray`, `cudaGraphicsMapResources`, `cudaGraphicsUnmapResources`.
+- `main.cpp`: focus on `CUDA`, `launch`, `cudaGraphicsResource`, `cudaArray`, `cudaGraphicsMapResources`.
 - `postProcessGL.cu`: focus on `threadIdx`, `cudaTextureObject_t`, `cudaProcess`, `launch`, `blockDim`.
 
 > **日本語**
@@ -91,10 +91,272 @@ English anchor: read `postProcessGL` as a focused example of the CUDA concepts u
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/5_Domain_Specific/postProcessGL/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(postProcessGL LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/postProcessGL/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `main.cpp`
+
+Source: cpp/5_Domain_Specific/postProcessGL/main.cpp:30-48
+```cpp
+  This example demonstrates the use of CUDA/OpenGL interoperability
+  to post-process an image of a 3D scene generated in OpenGL.
+
+  The basic steps are:
+  1 - render the scene to the framebuffer
+  2 - map the color texture so that its memory is accessible from CUDA
+  4 - run CUDA to process the image, writing to memory
+      a- either mapped from a second PBO
+      b- or allocated through CUDA
+  6 - copy result
+      a- from the PBO to a texture with glTexSubImage2D()
+      b- or map the target texture and do a cuda memory copy
+  7 - display the texture with a fullscreen quad
+
+  The example also provides two solutions for the format of the image:
+    - RGBA16F : more bytes involved but easier to handle because
+      compatible with regular fragment shader
+    - RGBA8UI : 32bytes, but the teapot color must be scaled by 255 (so we
+      needed GLSL code)
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/postProcessGL/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/postProcessGL/main.cpp:215-234
+```cpp
+    cudaArray    *in_array;
+    unsigned int *out_data;
+
+#ifdef USE_TEXSUBIMAGE2D
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+    checkCudaErrors(cudaGraphicsMapResources(1, &cuda_pbo_dest_resource, 0));
+    size_t num_bytes;
+    checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&out_data, &num_bytes, cuda_pbo_dest_resource));
+// printf("CUDA mapped pointer of pbo_out: May access %ld bytes, expected %d\n",
+// num_bytes, size_tex_data);
+#else
+    out_data = cuda_dest_resource;
+#endif
+
+    // map buffer objects to get CUDA device pointers
+    checkCudaErrors(cudaGraphicsMapResources(1, &cuda_tex_screen_resource, 0));
+    // printf("Mapping tex_in\n");
+    checkCudaErrors(cudaGraphicsSubResourceGetMappedArray(&in_array, cuda_tex_screen_resource, 0, 0));
+
+    // calculate grid size
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/postProcessGL/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/postProcessGL/main.cpp:243-277
+```cpp
+
+    checkCudaErrors(cudaGraphicsUnmapResources(1, &cuda_tex_screen_resource, 0));
+#ifdef USE_TEXSUBIMAGE2D
+    checkCudaErrors(cudaGraphicsUnmapResources(1, &cuda_pbo_dest_resource, 0));
+#endif
+    // JP: `cudaDestroyTextureObject`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaDestroyTextureObject(inTexObject));
+}
+
+#ifdef USE_TEXSUBIMAGE2D
+////////////////////////////////////////////////////////////////////////////////
+//! Create PBO
+////////////////////////////////////////////////////////////////////////////////
+// JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+void createPBO(GLuint *pbo, struct cudaGraphicsResource **pbo_resource)
+{
+    // set up vertex data parameter
+    num_texels    = image_width * image_height;
+    num_values    = num_texels * 4;
+    size_tex_data = sizeof(GLubyte) * num_values;
+    void *data    = malloc(size_tex_data);
+
+    // create buffer object
+    glGenBuffers(1, pbo);
+    glBindBuffer(GL_ARRAY_BUFFER, *pbo);
+    glBufferData(GL_ARRAY_BUFFER, size_tex_data, data, GL_DYNAMIC_DRAW);
+    free(data);
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    // register this buffer object with CUDA
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+    checkCudaErrors(cudaGraphicsGLRegisterBuffer(pbo_resource, *pbo, cudaGraphicsMapFlagsNone));
+
+    SDK_CHECK_ERROR_GL();
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/postProcessGL/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/postProcessGL/main.cpp:289-308
+```cpp
+                              GL_COLOR_ATTACHMENT1_EXT,
+                              GL_COLOR_ATTACHMENT2_EXT,
+                              GL_COLOR_ATTACHMENT3_EXT};
+
+#ifndef USE_TEXSUBIMAGE2D
+static const char *glsl_drawtex_vertshader_src = "void main(void)\n"
+                                                 "{\n"
+                                                 "	gl_Position = gl_Vertex;\n"
+                                                 "	gl_TexCoord[0].xy = gl_MultiTexCoord0.xy;\n"
+                                                 "}\n";
+
+static const char *glsl_drawtex_fragshader_src = "#version 130\n"
+                                                 "uniform usampler2D texImage;\n"
+                                                 "void main()\n"
+                                                 "{\n"
+                                                 "   vec4 c = texture(texImage, gl_TexCoord[0].xy);\n"
+                                                 "	gl_FragColor = c / 255.0;\n"
+                                                 "}\n";
+#endif
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/postProcessGL/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `postProcessGL.cu`
+
+Source: cpp/5_Domain_Specific/postProcessGL/postProcessGL.cu:31-49
+```cuda
+#include <cooperative_groups.h>
+
+namespace cg = cooperative_groups;
+
+#include <helper_cuda.h>
+
+cudaTextureObject_t inTexObject;
+
+// clamp x to range [a, b]
+__device__ float clamp(float x, float a, float b) { return max(a, min(b, x)); }
+
+__device__ int clamp(int x, int a, int b) { return max(a, min(b, x)); }
+
+// convert floating point rgb color to 8-bit integer
+__device__ int rgbToInt(float r, float g, float b)
+{
+    r = clamp(r, 0.0f, 255.0f);
+    g = clamp(g, 0.0f, 255.0f);
+    b = clamp(b, 0.0f, 255.0f);
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/postProcessGL/postProcessGL.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/postProcessGL/postProcessGL.cu:93-112
+```cuda
+                            cudaTextureObject_t inTex)
+{
+    // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    cg::thread_block         cta = cg::this_thread_block();
+    extern __shared__ uchar4 sdata[];
+
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+    int bw = blockDim.x;
+    int bh = blockDim.y;
+    int x  = blockIdx.x * bw + tx;
+    int y  = blockIdx.y * bh + ty;
+
+#if 0
+    uchar4 c4 = getPixel(x, y);
+    g_odata[y*imgw+x] = rgbToInt(c4.z, c4.y, c4.x);
+#else
+    // copy tile to shared memory
+    // center region
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/postProcessGL/postProcessGL.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/postProcessGL/postProcessGL.cu:224-243
+```cuda
+    texDescr.readMode         = cudaReadModeElementType;
+
+    checkCudaErrors(cudaCreateTextureObject(&inTexObject, &texRes, &texDescr, NULL));
+
+#if 0
+    // JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    printf("CUDA Array channel descriptor, bits per component:\n");
+    printf("X %d Y %d Z %d W %d, kind %d\n",
+           desc.x,desc.y,desc.z,desc.w,desc.f);
+
+    printf("Possible values for channel format kind: i %d, u%d, f%d:\n",
+           cudaChannelFormatKindSigned, cudaChannelFormatKindUnsigned,
+           cudaChannelFormatKindFloat);
+#endif
+
+// printf("\n");
+#ifdef GPU_PROFILING
+    StopWatchInterface *timer = 0;
+    sdkCreateTimer(&timer);
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/postProcessGL/postProcessGL.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/postProcessGL/postProcessGL.cu:256-275
+```cuda
+
+#ifdef GPU_PROFILING
+    }
+
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
+    cudaDeviceSynchronize();
+    sdkStopTimer(&timer);
+    double dSeconds   = sdkGetTimerValue(&timer) / ((double)nIter * 1000.0);
+    double dNumTexels = (double)imgw * (double)imgh;
+    double mtexps     = 1.0e-6 * dNumTexels / dSeconds;
+
+    if (radius == 4) {
+        printf("\n");
+        printf("postprocessGL, Throughput = %.4f MTexels/s, Time = %.5f s, Size = "
+               "%.0f Texels, NumDevsUsed = %d, Workgroup = %u\n",
+               mtexps,
+               dSeconds,
+               dNumTexels,
+               1,
+               block.x * block.y);
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/postProcessGL/postProcessGL.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
 | - | - |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaGraphicsResource` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 | `threadIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `cudaGraphicsMapResources` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
@@ -108,7 +370,6 @@ English anchor: read `postProcessGL` as a focused example of the CUDA concepts u
 | `cudaDestroyTextureObject` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
 | `cudaGraphicsUnregisterResource` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
-| `cudaGraphicsResourceGetMappedPointer` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。
@@ -173,7 +434,7 @@ The sample may display a window or produce/validate image-like output; exact vis
 
 ## Exercises
 
-- `cudaGraphicsResource` の直前と直後で、どの memory/resource が有効になったかをメモする。
+- `launch` の直前と直後で、どの memory/resource が有効になったかをメモする。
 - source file を上から読み、setup、GPU work、sync、validation、cleanup の行番号を抜き出す。
 - problem size や input size を変更した場合に、境界チェックや allocation size が破綻しないか説明する。
 - shared memory tile の producer、consumer、barrier を図にする。

@@ -73,13 +73,200 @@ English anchor: read `UnifiedMemoryStreams` as a focused example of the CUDA con
 
 ## Concrete Reading Path
 
-- `UnifiedMemoryStreams.cu`: focus on `cudaStreamAttachMemAsync`, `cudaMallocManaged`, `cudaStream_t`, `cublasHandle_t`, `cudaMemAttachHost`.
+- `UnifiedMemoryStreams.cu`: focus on `cudaStreamAttachMemAsync`, `CUDA`, `cudaMallocManaged`, `cudaStream_t`, `cublasHandle_t`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/UnifiedMemoryStreams/CMakeLists.txt:1-57
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(UnifiedMemoryStreams LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# This sample is not supported on QNX
+if(CMAKE_SYSTEM_NAME STREQUAL "QNX")
+    message(STATUS "Will not build sample ${PROJECT_NAME} - not supported on QNX")
+    return()
+endif()
+
+# FindOpenMP: request COMPONENTS CXX only. From CMake 3.31 on, a bare find_package(OpenMP) also
+# probes OpenMP for CUDA when the project enables CUDA; that check can fail even when C++ OpenMP
+# works, and this sample only needs the C++ OpenMP package. Link OpenMP::OpenMP_CXX for libs/headers.
+find_package(OpenMP COMPONENTS CXX)
+
+if(OpenMP_CXX_FOUND)
+    # Add target for UnifiedMemoryStreams
+    add_executable(UnifiedMemoryStreams UnifiedMemoryStreams.cu)
+
+target_compile_options(UnifiedMemoryStreams PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(UnifiedMemoryStreams PRIVATE cxx_std_17 cuda_std_17)
+
+    set_target_properties(UnifiedMemoryStreams PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+    target_link_libraries(UnifiedMemoryStreams PUBLIC
+        # JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+        CUDA::cublas
+        OpenMP::OpenMP_CXX
+    )
+else()
+    message(STATUS "OpenMP not found - will not build sample 'UnifiedMemoryStreams'")
+endif()
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/UnifiedMemoryStreams/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `UnifiedMemoryStreams.cu`
+
+Source: cpp/0_Introduction/UnifiedMemoryStreams/UnifiedMemoryStreams.cu:35-53
+```cuda
+#include <algorithm>
+#include <cstdio>
+#include <ctime>
+#include <vector>
+#ifdef USE_PTHREADS
+#include <pthread.h>
+#else
+#include <omp.h>
+#endif
+#include <stdlib.h>
+
+// cuBLAS
+#include <cublas_v2.h>
+
+// utilities
+#include <helper_cuda.h>
+
+#if defined(WIN32) || defined(_WIN32) || defined(WIN64) || defined(_WIN64)
+// SRAND48 and DRAND48 don't exist on windows, but these are the equivalent
+```
+
+> JP: この抜粋は `cpp/0_Introduction/UnifiedMemoryStreams/UnifiedMemoryStreams.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/UnifiedMemoryStreams/UnifiedMemoryStreams.cu:78-109
+```cuda
+        , data(NULL)
+        , result(NULL)
+    {
+        // allocate unified memory -- the operation performed in this example will
+        // be a DGEMV
+        // JP: `cudaMallocManaged`: Unified Memory は CPU/GPU で同じ pointer を使います。prefetch や同期で移動タイミングを意識します。
+        checkCudaErrors(cudaMallocManaged(&data, sizeof(T) * size * size));
+        checkCudaErrors(cudaMallocManaged(&result, sizeof(T) * size));
+        checkCudaErrors(cudaMallocManaged(&vector, sizeof(T) * size));
+        // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+        checkCudaErrors(cudaDeviceSynchronize());
+    }
+
+    ~Task()
+    {
+        // ensure all memory is deallocated
+        checkCudaErrors(cudaDeviceSynchronize());
+        // JP: `cudaFree`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。 ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        checkCudaErrors(cudaFree(data));
+        checkCudaErrors(cudaFree(result));
+        checkCudaErrors(cudaFree(vector));
+    }
+
+    void allocate(const unsigned int s, const unsigned int unique_id)
+    {
+        // allocate unified memory outside of constructor
+        id   = unique_id;
+        size = s;
+        // JP: この連続する anchor 群では Unified Memory allocation/prefetch/advice です。migration、host/device visibility、同期位置 を確認します。
+        checkCudaErrors(cudaMallocManaged(&data, sizeof(T) * size * size));
+        checkCudaErrors(cudaMallocManaged(&result, sizeof(T) * size));
+        checkCudaErrors(cudaMallocManaged(&vector, sizeof(T) * size));
+```
+
+> JP: この抜粋は `cpp/0_Introduction/UnifiedMemoryStreams/UnifiedMemoryStreams.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/UnifiedMemoryStreams/UnifiedMemoryStreams.cu:185-204
+```cuda
+            double one  = 1.0;
+            double zero = 0.0;
+
+            // attach managed memory to my stream
+            // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+            checkCudaErrors(cublasSetStream(handle[tid + 1], stream[tid + 1]));
+            // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+            checkCudaErrors(cudaStreamAttachMemAsync(stream[tid + 1], t.data, 0, cudaMemAttachSingle));
+            checkCudaErrors(cudaStreamAttachMemAsync(stream[tid + 1], t.vector, 0, cudaMemAttachSingle));
+            checkCudaErrors(cudaStreamAttachMemAsync(stream[tid + 1], t.result, 0, cudaMemAttachSingle));
+            // call the device operation
+            // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
+            checkCudaErrors(cublasDgemv(
+                handle[tid + 1], CUBLAS_OP_N, t.size, t.size, &one, t.data, t.size, t.vector, 1, &zero, t.result, 1));
+        }
+    }
+
+    pthread_exit(NULL);
+}
+#else
+```
+
+> JP: この抜粋は `cpp/0_Introduction/UnifiedMemoryStreams/UnifiedMemoryStreams.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/UnifiedMemoryStreams/UnifiedMemoryStreams.cu:249-268
+```cuda
+        size = std::max((int)(drand48() * 1000.0), 64);
+        TaskList[i].allocate(size, i);
+    }
+}
+
+int main(int argc, char **argv)
+{
+    // set device
+    cudaDeviceProp device_prop;
+    int            dev_id = findCudaDevice(argc, (const char **)argv);
+    checkCudaErrors(cudaGetDeviceProperties(&device_prop, dev_id));
+
+    if (!device_prop.managedMemory) {
+        // This samples requires being run on a device that supports Unified Memory
+        fprintf(stderr, "Unified Memory not supported on this device\n");
+
+        exit(EXIT_WAIVED);
+    }
+
+    int computeMode;
+```
+
+> JP: この抜粋は `cpp/0_Introduction/UnifiedMemoryStreams/UnifiedMemoryStreams.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

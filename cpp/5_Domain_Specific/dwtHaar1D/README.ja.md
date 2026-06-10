@@ -79,7 +79,7 @@ English anchor: read `dwtHaar1D` as a focused example of the CUDA concepts used 
 
 ## Concrete Reading Path
 
-- `dwtHaar1D.cu`: focus on `cudaMemcpy`, `cudaMalloc`, `cudaFree`, `launch`, `cudaMemcpyHostToDevice`.
+- `dwtHaar1D.cu`: focus on `cudaMemcpy`, `cudaMalloc`, `launch`, `cudaFree`, `cudaMemcpyHostToDevice`.
 - `dwtHaar1D_kernel.cuh`: focus on `blockIdx`, `blockDim`, `threadIdx`, `__shared__`, `launch`.
 
 > **日本語**
@@ -87,6 +87,266 @@ English anchor: read `dwtHaar1D` as a focused example of the CUDA concepts used 
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/5_Domain_Specific/dwtHaar1D/CMakeLists.txt:1-43
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(dwtHaar1D LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for dwtHaar1D
+add_executable(dwtHaar1D dwtHaar1D.cu)
+
+target_compile_options(dwtHaar1D PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(dwtHaar1D PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(dwtHaar1D PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+add_custom_command(TARGET dwtHaar1D POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_CURRENT_SOURCE_DIR}/data
+    ${CMAKE_CURRENT_BINARY_DIR}/data
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/dwtHaar1D/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `dwtHaar1D.cu`
+
+Source: cpp/5_Domain_Specific/dwtHaar1D/dwtHaar1D.cu:62-102
+```cuda
+decomposition.
+
+-------------------------------------------------
+| a_0 | a_0 | a_0 | a_0 | a_0 | a_0 | a_0 | a_0 |
+-------------------------------------------------
+
+-------------------------------------------------
+| a_1 | a_1 | a_1 | a_1 | d_1 | d_1 | d_1 | d_1 |
+-------------------------------------------------
+
+-------------------------------------------------
+| a_2 | a_2 | d_2 | d_2 | d_1 | d_1 | d_1 | d_1 |
+-------------------------------------------------
+
+-------------------------------------------------
+| a_3 | d_3 | d_2 | d_2 | d_1 | d_1 | d_1 | d_1 |
+-------------------------------------------------
+
+* Host code.
+*/
+
+#ifdef _WIN32
+#define NOMINMAX
+#endif
+
+// includes, system
+#include <assert.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// includes, project
+#include <helper_cuda.h>
+#include <helper_functions.h>
+
+// constants which are used in host and device code
+#define INV_SQRT_2 0.70710678118654752440f;
+const unsigned int LOG_NUM_BANKS = 4;
+const unsigned int NUM_BANKS     = 16;
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/dwtHaar1D/dwtHaar1D.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/dwtHaar1D/dwtHaar1D.cu:110-129
+```cuda
+bool getLevels(unsigned int len, unsigned int *levels);
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    // run test
+    runTest(argc, argv);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//! Perform the wavelet decomposition
+////////////////////////////////////////////////////////////////////////////////
+void runTest(int argc, char **argv)
+{
+    bool bResult = false; // flag for final validation of the results
+
+    char      *s_fname = NULL, *r_gold_fname = NULL;
+    char       r_fname[256];
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/dwtHaar1D/dwtHaar1D.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/dwtHaar1D/dwtHaar1D.cu:195-238
+```cuda
+    if (true != getLevels(slength, &dlevels_complete)) {
+        // error message
+        fprintf(stderr, "Signal length not supported.\n");
+        // cleanup and abort
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        free(signal);
+        exit(EXIT_FAILURE);
+    }
+
+    // device in data
+    float *d_idata = NULL;
+    // device out data
+    float *d_odata = NULL;
+    // device approx_final data
+    float *approx_final = NULL;
+    // The very final approximation coefficient has to be written to the output
+    // data, all others are reused as input data in the next global step and
+    // therefore have to be written to the input data again.
+    // The following flag indicates where to copy approx_final data
+    //   - 0 is input, 1 is output
+    int approx_is_input;
+
+    // allocate device mem
+    const unsigned int smem_size = sizeof(float) * slength;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc((void **)&d_idata, smem_size));
+    checkCudaErrors(cudaMalloc((void **)&d_odata, smem_size));
+    checkCudaErrors(cudaMalloc((void **)&approx_final, smem_size));
+    // copy input data to device
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpy(d_idata, signal, smem_size, cudaMemcpyHostToDevice));
+
+    // total number of threads
+    // in the first decomposition step always one thread computes the average and
+    // detail signal for one pair of adjacent values
+    unsigned int num_threads_total_left = slength / 2;
+    // decomposition levels performed in the current / next step
+    unsigned int dlevels_step = dlevels_complete;
+
+    // 1D signal so the arrangement of elements is also 1D
+    dim3 block_size;
+    dim3 grid_size;
+
+    // number of decomposition levels left after one iteration on the device
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/dwtHaar1D/dwtHaar1D.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/dwtHaar1D/dwtHaar1D.cu:258-277
+```cuda
+        approx_is_input = 1;
+    }
+
+    // Initialize d_odata to 0.0f
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    initValue<<<grid_size, block_size>>>(d_odata, 0.0f);
+
+    // do until full decomposition is accomplished
+    while (0 != num_threads_total_left) {
+        // double the number of threads as bytes
+        unsigned int mem_shared = (2 * block_size.x) * sizeof(float);
+        // extra memory requirements to avoid bank conflicts
+        mem_shared += ((2 * block_size.x) / NUM_BANKS) * sizeof(float);
+
+        // run kernel
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
+        dwtHaar1D<<<grid_size, block_size, mem_shared>>>(
+            d_idata, d_odata, approx_final, dlevels_step, num_threads_total_left, block_size.x);
+
+        // Copy approx_final to appropriate location
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/dwtHaar1D/dwtHaar1D.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `dwtHaar1D_kernel.cuh`
+
+Source: cpp/5_Domain_Specific/dwtHaar1D/dwtHaar1D_kernel.cuh:62-80
+```cuda
+decomposition.
+
+-------------------------------------------------
+| a_0 | a_0 | a_0 | a_0 | a_0 | a_0 | a_0 | a_0 |
+-------------------------------------------------
+
+-------------------------------------------------
+| a_1 | a_1 | a_1 | a_1 | d_1 | d_1 | d_1 | d_1 |
+-------------------------------------------------
+
+-------------------------------------------------
+| a_2 | a_2 | d_2 | d_2 | d_1 | d_1 | d_1 | d_1 |
+-------------------------------------------------
+
+-------------------------------------------------
+| a_3 | d_3 | d_2 | d_2 | d_1 | d_1 | d_1 | d_1 |
+-------------------------------------------------
+
+* Device Code.
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/dwtHaar1D/dwtHaar1D_kernel.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/dwtHaar1D/dwtHaar1D_kernel.cuh:96-115
+```cuda
+{
+    // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    cg::thread_block cta = cg::this_thread_block();
+    // position of write into global memory
+    unsigned int index = (blockIdx.x * blockDim.x) + threadIdx.x;
+
+    od[index] = value;
+
+    // sync after each decomposition step
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    cg::sync(cta);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//! Compute partial wavelet decomposition on the GPU using Haar basis
+//! For each thread block the full decomposition is computed but these results
+//! have to be combined
+//! Use one thread to perform the full decomposition
+//! @param id  input data
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/dwtHaar1D/dwtHaar1D_kernel.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

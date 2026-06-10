@@ -73,13 +73,202 @@ English anchor: read `MersenneTwisterGP11213` as a focused example of the CUDA c
 
 ## Concrete Reading Path
 
-- `MersenneTwister.cpp`: focus on `curandGenerator_t`, `curandGenerateUniform`, `cudaStreamSynchronize`, `curand`, `cudaStream_t`.
+- `MersenneTwister.cpp`: focus on `curandGenerator_t`, `CUDA`, `curandGenerateUniform`, `cudaStreamSynchronize`, `curand`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/MersenneTwisterGP11213/CMakeLists.txt:1-47
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(MersenneTwisterGP11213 LANGUAGES CXX)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for MersenneTwisterGP11213
+add_executable(MersenneTwisterGP11213 MersenneTwister.cpp)
+
+target_compile_options(MersenneTwisterGP11213 PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(MersenneTwisterGP11213 PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(MersenneTwisterGP11213 PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_include_directories(MersenneTwisterGP11213 PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+target_link_libraries(MersenneTwisterGP11213 PRIVATE
+    CUDA::cudart
+    # JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    CUDA::curand
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/MersenneTwisterGP11213/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `MersenneTwister.cpp`
+
+Source: cpp/4_CUDA_Libraries/MersenneTwisterGP11213/MersenneTwister.cpp:36-70
+```cpp
+#include <curand.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// Utilities and system includes
+#include <cuda_runtime.h>
+#include <curand.h>
+#include <helper_cuda.h>
+#include <helper_functions.h>
+
+// JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+float compareResults(int rand_n, float *h_RandGPU, float *h_RandCPU);
+
+const int          DEFAULT_RAND_N = 2400000;
+const unsigned int DEFAULT_SEED   = 777;
+
+///////////////////////////////////////////////////////////////////////////////
+// Main program
+///////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    // Start logs
+    printf("%s Starting...\n\n", argv[0]);
+
+    // initialize the GPU, either identified by --device
+    // or by picking the device with highest flop rate.
+    int devID = findCudaDevice(argc, (const char **)argv);
+
+    // parsing the number of random numbers to generate
+    int rand_n = DEFAULT_RAND_N;
+
+    if (checkCmdLineFlag(argc, (const char **)argv, "count")) {
+        rand_n = getCmdLineArgumentInt(argc, (const char **)argv, "count");
+    }
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/MersenneTwisterGP11213/MersenneTwister.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/MersenneTwisterGP11213/MersenneTwister.cpp:83-102
+```cpp
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+    cudaStream_t stream;
+    checkCudaErrors(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+
+    float *d_Rand;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc((void **)&d_Rand, rand_n * sizeof(float)));
+
+    // JP: `curandGenerator_t`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    curandGenerator_t prngGPU;
+    checkCudaErrors(curandCreateGenerator(&prngGPU, CURAND_RNG_PSEUDO_MTGP32));
+    checkCudaErrors(curandSetStream(prngGPU, stream));
+    checkCudaErrors(curandSetPseudoRandomGeneratorSeed(prngGPU, seed));
+
+    curandGenerator_t prngCPU;
+    checkCudaErrors(curandCreateGeneratorHost(&prngCPU, CURAND_RNG_PSEUDO_MTGP32));
+    checkCudaErrors(curandSetPseudoRandomGeneratorSeed(prngCPU, seed));
+
+    //
+    // Example 1: Compare random numbers generated on GPU and CPU
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/MersenneTwisterGP11213/MersenneTwister.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/MersenneTwisterGP11213/MersenneTwister.cpp:106-133
+```cpp
+
+    printf("Generating random numbers on GPU...\n\n");
+    checkCudaErrors(curandGenerateUniform(prngGPU, (float *)d_Rand, rand_n));
+
+    printf("\nReading back the results...\n");
+    // JP: `cudaMemcpyAsync`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpyAsync(h_RandGPU, d_Rand, rand_n * sizeof(float), cudaMemcpyDeviceToHost, stream));
+
+    float *h_RandCPU = (float *)malloc(rand_n * sizeof(float));
+
+    printf("Generating random numbers on CPU...\n\n");
+    checkCudaErrors(curandGenerateUniform(prngCPU, (float *)h_RandCPU, rand_n));
+
+    // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    checkCudaErrors(cudaStreamSynchronize(stream));
+    printf("Comparing CPU/GPU random numbers...\n\n");
+    float L1norm = compareResults(rand_n, h_RandGPU, h_RandCPU);
+
+    //
+    // Example 2: Timing of random number generation on GPU
+    const int           numIterations = 10;
+    int                 i;
+    StopWatchInterface *hTimer;
+
+    sdkCreateTimer(&hTimer);
+    sdkResetTimer(&hTimer);
+    sdkStartTimer(&hTimer);
+
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/MersenneTwisterGP11213/MersenneTwister.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/MersenneTwisterGP11213/MersenneTwister.cpp:150-169
+```cpp
+
+    printf("Shutting down...\n");
+
+    checkCudaErrors(curandDestroyGenerator(prngGPU));
+    checkCudaErrors(curandDestroyGenerator(prngCPU));
+    // JP: `cudaStreamDestroy`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaStreamDestroy(stream));
+    checkCudaErrors(cudaFree(d_Rand));
+    sdkDeleteTimer(&hTimer);
+    checkCudaErrors(cudaFreeHost(h_RandGPU));
+    free(h_RandCPU);
+
+    exit(L1norm < 1e-6 ? EXIT_SUCCESS : EXIT_FAILURE);
+}
+
+// JP: この anchor では GPU result や file/image output の validation です。失敗時は transfer/indexing/sync の境界から疑います。
+float compareResults(int rand_n, float *h_RandGPU, float *h_RandCPU)
+{
+    int   i;
+    float rCPU, rGPU, delta;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/MersenneTwisterGP11213/MersenneTwister.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

@@ -80,6 +80,178 @@ English anchor: read `fp16ScalarProduct` as a focused example of the CUDA concep
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/fp16ScalarProduct/CMakeLists.txt:1-36
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(fp16ScalarProduct LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for asyncAPI
+add_executable(fp16ScalarProduct fp16ScalarProduct.cu)
+
+target_compile_options(fp16ScalarProduct PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(fp16ScalarProduct PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(fp16ScalarProduct PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/fp16ScalarProduct/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `fp16ScalarProduct.cu`
+
+Source: cpp/0_Introduction/fp16ScalarProduct/fp16ScalarProduct.cu:29-58
+```cuda
+#include <cstdio>
+#include <cstdlib>
+#include <ctime>
+
+#include "cuda_fp16.h"
+#include "helper_cuda.h"
+
+#define NUM_OF_BLOCKS  128
+#define NUM_OF_THREADS 128
+
+__forceinline__ __device__ void reduceInShared_intrinsics(half2 *const v)
+{
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    if (threadIdx.x < 64)
+        v[threadIdx.x] = __hadd2(v[threadIdx.x], v[threadIdx.x + 64]);
+    __syncthreads();
+    if (threadIdx.x < 32)
+        v[threadIdx.x] = __hadd2(v[threadIdx.x], v[threadIdx.x + 32]);
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
+    __syncthreads();
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+    if (threadIdx.x < 16)
+        v[threadIdx.x] = __hadd2(v[threadIdx.x], v[threadIdx.x + 16]);
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
+    __syncthreads();
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+    if (threadIdx.x < 8)
+        v[threadIdx.x] = __hadd2(v[threadIdx.x], v[threadIdx.x + 8]);
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
+    __syncthreads();
+```
+
+> JP: この抜粋は `cpp/0_Introduction/fp16ScalarProduct/fp16ScalarProduct.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/fp16ScalarProduct/fp16ScalarProduct.cu:175-194
+```cuda
+        temp.y = static_cast<float>(rand() % 2);
+        a[i]   = temp;
+    }
+}
+
+int main(int argc, char *argv[])
+{
+    srand((unsigned int)time(NULL));
+    size_t size = NUM_OF_BLOCKS * NUM_OF_THREADS * 16;
+
+    half2 *vec[2];
+    half2 *devVec[2];
+
+    float *results;
+    float *devResults;
+
+    int devID = findCudaDevice(argc, (const char **)argv);
+
+    cudaDeviceProp devProp;
+    checkCudaErrors(cudaGetDeviceProperties(&devProp, devID));
+```
+
+> JP: この抜粋は `cpp/0_Introduction/fp16ScalarProduct/fp16ScalarProduct.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/fp16ScalarProduct/fp16ScalarProduct.cu:198-229
+```cuda
+               "higher.\n");
+        return EXIT_WAIVED;
+    }
+
+    for (int i = 0; i < 2; ++i) {
+        // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
+        checkCudaErrors(cudaMallocHost((void **)&vec[i], size * sizeof *vec[i]));
+        // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+        checkCudaErrors(cudaMalloc((void **)&devVec[i], size * sizeof *devVec[i]));
+    }
+
+    checkCudaErrors(cudaMallocHost((void **)&results, NUM_OF_BLOCKS * sizeof *results));
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
+    checkCudaErrors(cudaMalloc((void **)&devResults, NUM_OF_BLOCKS * sizeof *devResults));
+
+    for (int i = 0; i < 2; ++i) {
+        generateInput(vec[i], size);
+        // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+        checkCudaErrors(cudaMemcpy(devVec[i], vec[i], size * sizeof *vec[i], cudaMemcpyHostToDevice));
+    }
+
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    scalarProductKernel_native<<<NUM_OF_BLOCKS, NUM_OF_THREADS>>>(devVec[0], devVec[1], devResults, size);
+
+    checkCudaErrors(cudaMemcpy(results, devResults, NUM_OF_BLOCKS * sizeof *results, cudaMemcpyDeviceToHost));
+
+    float result_native = 0;
+    for (int i = 0; i < NUM_OF_BLOCKS; ++i) {
+        result_native += results[i];
+    }
+    printf("Result native operators\t: %f \n", result_native);
+
+```
+
+> JP: この抜粋は `cpp/0_Introduction/fp16ScalarProduct/fp16ScalarProduct.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/fp16ScalarProduct/fp16ScalarProduct.cu:240-254
+```cuda
+    printf("Result intrinsics\t: %f \n", result_intrinsics);
+
+    printf("&&&& fp16ScalarProduct %s\n", (fabs(result_intrinsics - result_native) < 0.00001) ? "PASSED" : "FAILED");
+
+    for (int i = 0; i < 2; ++i) {
+        // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        checkCudaErrors(cudaFree(devVec[i]));
+        checkCudaErrors(cudaFreeHost(vec[i]));
+    }
+
+    checkCudaErrors(cudaFree(devResults));
+    checkCudaErrors(cudaFreeHost(results));
+
+    return EXIT_SUCCESS;
+}
+```
+
+> JP: この抜粋は `cpp/0_Introduction/fp16ScalarProduct/fp16ScalarProduct.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
@@ -93,9 +265,9 @@ English anchor: read `fp16ScalarProduct` as a focused example of the CUDA concep
 | `blockDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `blockIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `cudaFreeHost` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `__shared__` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |
 | `cudaGetDeviceProperties` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
-| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `gridDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `cudaMemcpyHostToDevice` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 

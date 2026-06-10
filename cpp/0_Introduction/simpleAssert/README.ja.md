@@ -79,6 +79,130 @@ English anchor: read `simpleAssert` as a focused example of the CUDA concepts us
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/simpleAssert/CMakeLists.txt:1-40
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleAssert LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Removes -DNDEBUG For Print specific logs in this sample.
+string(REPLACE "-DNDEBUG" "" CMAKE_CUDA_FLAGS_RELEASE "${CMAKE_CUDA_FLAGS_RELEASE}")
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simpleAssert
+add_executable(simpleAssert simpleAssert.cu)
+
+target_compile_options(simpleAssert PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleAssert PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simpleAssert PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleAssert/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleAssert.cu`
+
+Source: cpp/0_Introduction/simpleAssert/simpleAssert.cu:29-47
+```cuda
+#ifdef _WIN32
+#define WINDOWS_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/utsname.h>
+#endif
+
+// Includes, system
+#include <cassert>
+#include <stdio.h>
+
+// Includes CUDA
+#include <cuda_runtime.h>
+
+// Utilities and timing functions
+#include <helper_functions.h> // includes cuda.h and cuda_runtime_api.h
+
+// CUDA helper functions
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleAssert/simpleAssert.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleAssert/simpleAssert.cu:54-91
+```cuda
+bool testResult = true;
+
+////////////////////////////////////////////////////////////////////////////////
+// Kernels
+////////////////////////////////////////////////////////////////////////////////
+//! Tests assert function.
+//! Thread whose id > N will print assertion failed error message.
+////////////////////////////////////////////////////////////////////////////////
+__global__ void testKernel(int N)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int gtid = blockIdx.x * blockDim.x + threadIdx.x;
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+    assert(gtid < N);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Declaration, forward
+void runTest(int argc, char **argv);
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    printf("%s starting...\n", sampleName);
+
+    runTest(argc, argv);
+
+    printf("%s completed, returned %s\n", sampleName, testResult ? "OK" : "ERROR!");
+    exit(testResult ? EXIT_SUCCESS : EXIT_FAILURE);
+}
+
+void runTest(int argc, char **argv)
+{
+    int         Nblocks  = 2;
+    int         Nthreads = 32;
+    cudaError_t error;
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleAssert/simpleAssert.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

@@ -80,6 +80,136 @@ English anchor: read `simpleCooperativeGroups` as a focused example of the CUDA 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/simpleCooperativeGroups/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleCooperativeGroups LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simpleCooperativeGroups
+add_executable(simpleCooperativeGroups simpleCooperativeGroups.cu)
+
+target_compile_options(simpleCooperativeGroups PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleCooperativeGroups PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simpleCooperativeGroups PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleCooperativeGroups/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleCooperativeGroups.cu`
+
+Source: cpp/0_Introduction/simpleCooperativeGroups/simpleCooperativeGroups.cu:42-64
+```cuda
+#include <cooperative_groups.h>
+#include <stdio.h>
+
+using namespace cooperative_groups;
+
+/**
+ * CUDA device function
+ *
+ * calculates the sum of val across the group g. The workspace array, x,
+ * must be large enough to contain g.size() integers.
+ */
+__device__ int sumReduction(thread_group g, int *x, int val)
+{
+    // rank of this thread in the group
+    int lane = g.thread_rank();
+
+    // for each iteration of this loop, the number of threads active in the
+    // reduction, i, is halved, and each active thread (with index [lane])
+    // performs a single summation of it's own value with that
+    // of a "partner" (with index [lane+i]).
+    for (int i = g.size() / 2; i > 0; i /= 2) {
+        // store value for this thread in temporary array
+        x[lane] = val;
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleCooperativeGroups/simpleCooperativeGroups.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleCooperativeGroups/simpleCooperativeGroups.cu:92-111
+```cuda
+    // threadBlockGroup includes all threads in the block
+    thread_block threadBlockGroup     = this_thread_block();
+    int          threadBlockGroupSize = threadBlockGroup.size();
+
+    // workspace array in shared memory required for reduction
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。 CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    extern __shared__ int workspace[];
+
+    int input, output, expectedOutput;
+
+    // input to reduction, for each thread, is its' rank in the group
+    input = threadBlockGroup.thread_rank();
+
+    // expected output from analytical formula (n-1)(n)/2
+    // (noting that indexing starts at 0 rather than 1)
+    expectedOutput = (threadBlockGroupSize - 1) * threadBlockGroupSize / 2;
+
+    // perform reduction
+    output = sumReduction(threadBlockGroup, workspace, input);
+
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleCooperativeGroups/simpleCooperativeGroups.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleCooperativeGroups/simpleCooperativeGroups.cu:165-181
+```cuda
+
+    // we use the optional third argument to specify the size
+    // of shared memory required in the kernel
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    cgkernel<<<blocksPerGrid, threadsPerBlock, threadsPerBlock * sizeof(int)>>>();
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    err = cudaDeviceSynchronize();
+
+    if (err != cudaSuccess) {
+        fprintf(stderr, "Failed to launch kernel (error code %s)!\n", cudaGetErrorString(err));
+        exit(EXIT_FAILURE);
+    }
+
+    printf("\n...Done.\n\n");
+
+    return 0;
+}
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleCooperativeGroups/simpleCooperativeGroups.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

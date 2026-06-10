@@ -80,6 +80,166 @@ English anchor: read `reductionMultiBlockCG` as a focused example of the CUDA co
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/2_Concepts_and_Techniques/reductionMultiBlockCG/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(reductionMultiBlockCG LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for reductionMultiBlockCG
+add_executable(reductionMultiBlockCG reductionMultiBlockCG.cu)
+
+target_compile_options(reductionMultiBlockCG PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(reductionMultiBlockCG PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(reductionMultiBlockCG PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/reductionMultiBlockCG/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `reductionMultiBlockCG.cu`
+
+Source: cpp/2_Concepts_and_Techniques/reductionMultiBlockCG/reductionMultiBlockCG.cu:30-48
+```cuda
+  Parallel reduction
+
+  This sample shows how to perform a reduction operation on an array of values
+  to produce a single value in a single kernel (as opposed to two or more
+  kernel calls as shown in the "reduction" CUDA Sample).  Single-pass
+  reduction requires Cooperative Groups.
+
+  Reductions are a very common computation in parallel algorithms.  Any time
+  an array of values needs to be reduced to a single value using a binary
+  associative operator, a reduction can be used.  Example applications include
+  statistics computations such as mean and standard deviation, and image
+  processing applications such as finding the total luminance of an
+  image.
+
+  This code performs sum reductions, but any associative operator such as
+  min() or max() could also be used.
+
+  It assumes the input size is a power of 2.
+
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/reductionMultiBlockCG/reductionMultiBlockCG.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/reductionMultiBlockCG/reductionMultiBlockCG.cu:121-140
+```cuda
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+    cg::thread_block block = cg::this_thread_block();
+    cg::grid_group   grid  = cg::this_grid();
+
+    // JP: この anchor では shared memory の block-local scratchpad です。producer/consumer の順序と必要な barrier を確認します。
+    extern double __shared__ sdata[];
+
+    // Stride over grid and add the values to a shared memory buffer
+    sdata[block.thread_rank()] = 0;
+
+    for (int i = grid.thread_rank(); i < n; i += grid.size()) {
+        sdata[block.thread_rank()] += g_idata[i];
+    }
+
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
+    cg::sync(block);
+
+    // Reduce each block (called once per block)
+    reduceBlock(sdata, block);
+    // Write out the result to global memory
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/reductionMultiBlockCG/reductionMultiBlockCG.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/reductionMultiBlockCG/reductionMultiBlockCG.cu:178-197
+```cuda
+bool runTest(int argc, char **argv, int device);
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    cudaDeviceProp deviceProp = {0};
+    int            dev;
+
+    printf("%s Starting...\n\n", sSDKsample);
+
+    dev = findCudaDevice(argc, (const char **)argv);
+    checkCudaErrors(cudaGetDeviceProperties(&deviceProp, dev));
+    if (!deviceProp.cooperativeLaunch) {
+        printf("\nSelected GPU (%d) does not support Cooperative Kernel Launch, "
+               "Waiving the run\n",
+               dev);
+        exit(EXIT_WAIVED);
+    }
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/reductionMultiBlockCG/reductionMultiBlockCG.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/reductionMultiBlockCG/reductionMultiBlockCG.cu:275-299
+```cuda
+    for (int i = 0; i < testIterations; ++i) {
+        gpu_result = 0;
+        sdkStartTimer(&timer);
+        call_reduceSinglePassMultiBlockCG(n, numThreads, numBlocks, d_idata, d_odata);
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
+        cudaDeviceSynchronize();
+        sdkStopTimer(&timer);
+    }
+
+    // copy final sum from device to host
+    // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    error = cudaMemcpy(&gpu_result, d_odata, sizeof(float), cudaMemcpyDeviceToHost);
+    checkCudaErrors(error);
+
+    return gpu_result;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// The main function which runs the reduction test.
+////////////////////////////////////////////////////////////////////////////////
+bool runTest(int argc, char **argv, int device)
+{
+    int  size        = 1 << 25; // number of elements to reduce
+    bool bTestPassed = false;
+
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/reductionMultiBlockCG/reductionMultiBlockCG.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

@@ -82,6 +82,147 @@ English anchor: read `simpleP2P` as a focused example of the CUDA concepts used 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `simpleP2P.py`
+
+Source: python/4_DistributedComputing/simpleP2P/simpleP2P.py:2-51
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    distribution and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+# OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+# JP: この file では Python から CUDA work を起動する境界、memory ownership と host/device transfer、kernel launch と thread indexing を確認します。英語の識別子/API/出力文字列は保持します。
+
+import argparse
+import sys
+from pathlib import Path
+
+try:
+    import numpy as np
+    # JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
+    from cuda.core import (
+        Device,
+        DeviceMemoryResource,
+        EventOptions,
+        LaunchConfig,
+        PinnedMemoryResource,
+        Program,
+        ProgramOptions,
+        launch,
+        system,
+    )
+except ImportError as e:
+    print(f"Error: Required package not found: {e}")
+    print("Please install from requirements.txt:")
+    print("  pip install -r requirements.txt")
+    sys.exit(1)
+
+```
+
+> JP: この抜粋は `python/4_DistributedComputing/simpleP2P/simpleP2P.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/4_DistributedComputing/simpleP2P/simpleP2P.py:56-75
+```python
+# CUDA kernel for simple P2P operation
+SIMPLE_P2P_KERNEL = """
+extern "C" __global__
+void SimpleKernel(float *src, float *dst, int N) {
+    // Grid-stride loop pattern for canonical CUDA kernel
+    size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t stride = gridDim.x * blockDim.x;
+
+    for (size_t i = tid; i < N; i += stride) {
+        dst[i] = src[i] * 2.0f;
+    }
+}
+"""
+
+
+def run(num_elements=1024 * 1024 * 16):
+    """
+    Demonstrates peer-to-peer (P2P) memory access between multiple GPUs using cuda.core.
+
+    This function shows how to:
+```
+
+> JP: この抜粋は `python/4_DistributedComputing/simpleP2P/simpleP2P.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/4_DistributedComputing/simpleP2P/simpleP2P.py:179-198
+```python
+        f"MR1 accessible by {mr1.peer_accessible_by}"
+    )
+
+    # Allocate pinned host memory
+    pinned_mr = PinnedMemoryResource()
+    # JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    h0 = pinned_mr.allocate(buf_size, stream=dev0.default_stream)
+
+    print("  Memory allocated successfully")
+
+    # Create streams
+    stream0 = dev0.create_stream()
+    stream1 = dev1.create_stream()
+
+    try:
+        # P2P bandwidth test using CUDA events for accurate GPU-side timing
+        print("\nMeasuring P2P bandwidth...")
+        print("  Performing 100 ping-pong copies between GPUs...")
+
+        event_options = EventOptions(timing_enabled=True)
+```
+
+> JP: この抜粋は `python/4_DistributedComputing/simpleP2P/simpleP2P.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/4_DistributedComputing/simpleP2P/simpleP2P.py:208-227
+```python
+                # Wait for previous stream1 copy to complete (if any)
+                if sync_event1 is not None:
+                    stream0.wait(sync_event1)
+                # Copy g0 -> g1 on stream0
+                # JP: transfer: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+                g1.copy_from(g0, stream=stream0)
+                # Record event on stream0 to signal completion of this copy
+                sync_event0 = stream0.record(options=EventOptions(timing_enabled=False))
+            else:
+                # Wait for previous stream0 copy to complete
+                if sync_event0 is not None:
+                    stream1.wait(sync_event0)
+                # Copy g1 -> g0 on stream1
+                g0.copy_from(g1, stream=stream1)
+                # Record event on stream1 to signal completion of this copy
+                sync_event1 = stream1.record(options=EventOptions(timing_enabled=False))
+
+        # Wait for last stream1 copy to complete
+        if sync_event1 is not None:
+            stream0.wait(sync_event1)
+```
+
+> JP: この抜粋は `python/4_DistributedComputing/simpleP2P/simpleP2P.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

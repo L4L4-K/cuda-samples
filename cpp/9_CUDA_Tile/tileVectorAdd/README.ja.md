@@ -81,6 +81,130 @@ English anchor: read `tileVectorAdd` as a focused example of the CUDA concepts u
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/9_CUDA_Tile/tileVectorAdd/CMakeLists.txt:1-32
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(tileVectorAdd LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_CUDA_ARCHITECTURES 80 86 87 89 90 100 110 120)
+
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --enable-tile")
+
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+add_executable(tileVectorAdd tileVectorAdd.cu)
+
+target_compile_features(tileVectorAdd PRIVATE cxx_std_20 cuda_std_20)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileVectorAdd/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `tileVectorAdd.cu`
+
+Source: cpp/9_CUDA_Tile/tileVectorAdd/tileVectorAdd.cu:42-64
+```cuda
+#include "helper_cuda.h"
+
+#include "cuda_tile.h"
+#include "cuda_fp16.h"
+
+#include <cstdio>
+
+__global__ void initializeVectors(__half* a, __half* b, std::size_t n) {
+  // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+  auto idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (idx < n) {
+    a[idx] = __half{0.5 * idx};
+    b[idx] = __half{1.5 * idx};
+  }
+}
+
+/* Declares a tile kernel with '__restrict__' pointers (important for performance) */
+__tile_global__ void vectorAdd(__half* __restrict__ a,
+                               __half* __restrict__ b,
+                               __half* __restrict__ c,
+                               std::size_t n) {
+
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileVectorAdd/tileVectorAdd.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/9_CUDA_Tile/tileVectorAdd/tileVectorAdd.cu:102-143
+```cuda
+
+  int N = 8000;
+  int chunk_size = 1024;
+  int num_blocks = 1 + ((N - 1) / chunk_size);
+
+  // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+  checkCudaErrors(cudaMalloc(&d_a, N * sizeof(__half)));
+  checkCudaErrors(cudaMalloc(&d_b, N * sizeof(__half)));
+  checkCudaErrors(cudaMalloc(&d_c, N * sizeof(__half)));
+
+  // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+  initializeVectors<<<num_blocks, chunk_size>>>(d_a, d_b, N);
+  checkCudaErrors(cudaGetLastError());
+
+  vectorAdd<<<num_blocks>>>(d_a, d_b, d_c, N);
+  checkCudaErrors(cudaGetLastError());
+
+  // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+  checkCudaErrors(cudaDeviceSynchronize());
+
+  __half* h_c = new __half[N];
+  // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+  checkCudaErrors(cudaMemcpy(h_c, d_c, N * sizeof(__half), cudaMemcpyDeviceToHost));
+
+  for (int idx = 0; idx != N; ++idx) {
+    if (h_c[idx] != __half{2 * idx}) {
+      printf("Expected: h_c[%i] == %i\n", idx, 2 * idx);
+      printf("Actual:   h_c[%i] == %f\n", idx, float(h_c[idx]));
+
+      return 1;
+    }
+  }
+
+  printf("Success! Vector addition matches expected results.\n");
+
+  // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+  checkCudaErrors(cudaFree(d_a));
+  checkCudaErrors(cudaFree(d_b));
+  checkCudaErrors(cudaFree(d_c));
+
+  delete[] h_c;
+}
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileVectorAdd/tileVectorAdd.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

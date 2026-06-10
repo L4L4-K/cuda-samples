@@ -80,6 +80,212 @@ English anchor: read `simpleAWBarrier` as a focused example of the CUDA concepts
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/simpleAWBarrier/CMakeLists.txt:1-44
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleAWBarrier LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# This sample is not supported on QNX
+if(CMAKE_SYSTEM_NAME STREQUAL "QNX")
+    message(STATUS "simpleAWBarrier is not supported on QNX")
+    return()
+endif()
+
+# Source file
+# Add target for simpleAWBarrier
+add_executable(simpleAWBarrier simpleAWBarrier.cu)
+
+target_compile_options(simpleAWBarrier PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleAWBarrier PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simpleAWBarrier PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleAWBarrier/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleAWBarrier.cu`
+
+Source: cpp/0_Introduction/simpleAWBarrier/simpleAWBarrier.cu:30-66
+```cuda
+#include <stdio.h>
+
+// Includes CUDA
+#include <cooperative_groups.h>
+#include <cuda/barrier>
+#include <cuda_runtime.h>
+
+// Utilities and timing functions
+#include <helper_functions.h> // includes cuda.h and cuda_runtime_api.h
+
+// CUDA helper functions
+#include <helper_cuda.h> // helper functions for CUDA error check
+
+namespace cg = cooperative_groups;
+
+#if __CUDA_ARCH__ >= 700
+template <bool writeSquareRoot>
+__device__ void reduceBlockData(cuda::barrier<cuda::thread_scope_block> &barrier,
+                                cg::thread_block_tile<32>               &tile32,
+                                double                                  &threadSum,
+                                double                                  *result)
+{
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    extern __shared__ double tmp[];
+
+#pragma unroll
+    for (int offset = tile32.size() / 2; offset > 0; offset /= 2) {
+        threadSum += tile32.shfl_down(threadSum, offset);
+    }
+    if (tile32.thread_rank() == 0) {
+        tmp[tile32.meta_group_rank()] = threadSum;
+    }
+
+    auto token = barrier.arrive();
+
+    barrier.wait(std::move(token));
+
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleAWBarrier/simpleAWBarrier.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleAWBarrier/simpleAWBarrier.cu:144-163
+```cuda
+int runNormVecByDotProductAWBarrier(int argc, char **argv, int deviceId);
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    printf("%s starting...\n", argv[0]);
+
+    // This will pick the best possible CUDA capable device
+    int dev = findCudaDevice(argc, (const char **)argv);
+
+    int major = 0;
+    checkCudaErrors(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, dev));
+
+    // Arrive-Wait Barrier require a GPU of Volta (SM7X) architecture or higher.
+    if (major < 7) {
+        printf("simpleAWBarrier requires SM 7.0 or higher.  Exiting...\n");
+        exit(EXIT_WAIVED);
+    }
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleAWBarrier/simpleAWBarrier.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleAWBarrier/simpleAWBarrier.cu:183-219
+```cuda
+    float  *vecA, *d_vecA;
+    float  *vecB, *d_vecB;
+    double *d_partialResults;
+    int     size = 10000000;
+
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
+    checkCudaErrors(cudaMallocHost(&vecA, sizeof(float) * size));
+    checkCudaErrors(cudaMallocHost(&vecB, sizeof(float) * size));
+
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc(&d_vecA, sizeof(float) * size));
+    checkCudaErrors(cudaMalloc(&d_vecB, sizeof(float) * size));
+
+    float baseVal = 2.0;
+    for (int i = 0; i < size; i++) {
+        vecA[i] = vecB[i] = baseVal;
+    }
+
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+    cudaStream_t stream;
+    checkCudaErrors(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+
+    // JP: `cudaMemcpyAsync`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpyAsync(d_vecA, vecA, sizeof(float) * size, cudaMemcpyHostToDevice, stream));
+    checkCudaErrors(cudaMemcpyAsync(d_vecB, vecB, sizeof(float) * size, cudaMemcpyHostToDevice, stream));
+
+    // Kernel configuration, where a one-dimensional
+    // grid and one-dimensional blocks are configured.
+    int minGridSize = 0, blockSize = 0;
+    checkCudaErrors(
+        cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, (void *)normVecByDotProductAWBarrier, 0, size));
+
+    int smemSize = ((blockSize / 32) + 1) * sizeof(double);
+
+    int numBlocksPerSm = 0;
+    checkCudaErrors(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+        &numBlocksPerSm, normVecByDotProductAWBarrier, blockSize, smemSize));
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleAWBarrier/simpleAWBarrier.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleAWBarrier/simpleAWBarrier.cu:238-266
+```cuda
+        (void *)normVecByDotProductAWBarrier, dimGrid, dimBlock, kernelArgs, smemSize, stream));
+
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
+    checkCudaErrors(cudaMemcpyAsync(vecA, d_vecA, sizeof(float) * size, cudaMemcpyDeviceToHost, stream));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
+    checkCudaErrors(cudaStreamSynchronize(stream));
+
+    float        expectedResult = (baseVal / sqrt(size * baseVal * baseVal));
+    unsigned int matches        = 0;
+    for (int i = 0; i < size; i++) {
+        if ((vecA[i] - expectedResult) > 0.00001) {
+            printf("mismatch at i = %d\n", i);
+            break;
+        }
+        else {
+            matches++;
+        }
+    }
+
+    printf("Result = %s\n", matches == size ? "PASSED" : "FAILED");
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaFree(d_vecA));
+    checkCudaErrors(cudaFree(d_vecB));
+    checkCudaErrors(cudaFree(d_partialResults));
+
+    checkCudaErrors(cudaFreeHost(vecA));
+    checkCudaErrors(cudaFreeHost(vecB));
+    return matches == size;
+}
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleAWBarrier/simpleAWBarrier.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

@@ -11,8 +11,39 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_EXTS = {".cu", ".cuh", ".cpp", ".cc", ".c", ".h", ".hpp", ".py"}
+WALKTHROUGH_EXTS = {
+    ".cu",
+    ".cuh",
+    ".cpp",
+    ".cc",
+    ".c",
+    ".h",
+    ".hpp",
+    ".py",
+    ".cmake",
+    ".sh",
+    ".bat",
+    ".cmd",
+    ".ps1",
+    ".hxx",
+    ".hlsl",
+    ".glsl",
+    ".frag",
+    ".vert",
+    ".ptx",
+    ".ll",
+    ".bash",
+}
 DOC_DATA_EXTS = {".md", ".txt", ".json", ".dat", ".bin", ".ppm", ".pgm", ".bmp", ".png", ".jpg", ".jpeg"}
 SKIP_TOKENS = {"CUDA", "CUDART", "CUDAToolkit", "CMAKE_CUDA", "cudaSuccess"}
+VENDOR_OR_GENERATED_PARTS = {
+    "boost",
+    "d3dx11effect",
+    "Common/GL",
+    "cuda_drvapi_dynlink",
+    "cuda_drvapi_dynlink_cuda",
+    "ptxdump",
+}
 
 
 THEMES = {
@@ -47,6 +78,27 @@ TOKEN_RE = re.compile(
     r"cupy|cp\.[A-Za-z0-9_]+|torch|tensorflow|mpi4py|numba\.cuda|launch"
     r")\b"
 )
+SNIPPET_ANCHOR_RE = re.compile(
+    r"\b("
+    r"cudaMalloc\w*|cudaFree\w*|cudaMemcpy\w*|cudaMemset\w*|cudaStream\w*|cudaEvent\w*|"
+    r"cudaGraph\w*|cudaLaunch\w*|cuLaunchKernel|cu[A-Z][A-Za-z0-9_]*|"
+    r"nvrtc\w*|nvJitLink\w*|cublas\w*|cufft\w*|cusparse\w*|cusolver\w*|curand\w*|"
+    r"nppi\w*|npps\w*|nvjpeg\w*|nccl\w*|cub::[A-Za-z0-9_:]+|thrust::[A-Za-z0-9_:]+|"
+    r"<<<[^>]*>>>|__global__|__device__|__shared__|__syncthreads|__syncwarp|atomic[A-Za-z0-9_]*|"
+    r"blockIdx|threadIdx|blockDim|gridDim|tiled_partition|this_thread_block|this_grid|"
+    r"LaunchConfig|ProgramOptions|Program\(|Linker\(|launch\(|Device\(|Stream\(|Event\(|"
+    r"ManagedMemoryResource|DeviceMemoryResource|PinnedMemoryResource|cupy|cp\.|torch|tensorflow|"
+    r"add_executable|target_link_libraries|find_package|CUDA_ARCHITECTURES|CMAKE_CUDA"
+    r")\b"
+)
+SNIPPET_FOCUS = {
+    "setup": re.compile(r"\b(main\s*\(|argparse|find_package|add_executable|cudaSetDevice|cuInit|Device\(|Program\(|cublasCreate|cufftPlan|cusolver|cusparse|nvjpegCreate)\b"),
+    "allocation": re.compile(r"\b(cudaMalloc\w*|cudaHostAlloc|cudaMallocHost|cudaMallocManaged|malloc\(|new\s+|DeviceMemoryResource|ManagedMemoryResource|mem_alloc|workspace)\b"),
+    "transfer": re.compile(r"\b(cudaMemcpy\w*|cudaMemset\w*|copy_to|copy_from|cudaGraphicsMapResources|cudaExternalMemory|cudaIpc|cudaMemcpyPeer)\b"),
+    "work": re.compile(r"(<<<[^>]*>>>|cuLaunchKernel|cudaLaunchKernel|launch\(|cublas\w*\(|cufftExec\w*|cusolver\w*\(|cusparse\w*\(|nppi\w*\(|nvjpeg\w*\(|blockIdx|threadIdx|__shared__|__syncthreads)"),
+    "sync_validation": re.compile(r"\b(cudaDeviceSynchronize|cudaStreamSynchronize|cudaEventSynchronize|__syncthreads|assert|compare|validate|allclose|PASS|FAIL|sdkCompare)\b"),
+    "cleanup": re.compile(r"\b(cudaFree\w*|cudaDestroy\w*|cudaStreamDestroy|cudaEventDestroy|Destroy|destroy|free\(|cuMemFree\w*)\b"),
+}
 
 
 def rel(path: Path) -> str:
@@ -125,6 +177,195 @@ def files_in_sample(path: Path) -> list[Path]:
 
 def source_files(path: Path) -> list[Path]:
     return [p for p in files_in_sample(path) if p.suffix.lower() in SOURCE_EXTS]
+
+
+def is_walkthrough_source(path: Path) -> bool:
+    relative = rel(path)
+    if path.name == "CMakeLists.txt":
+        return True
+    if path.suffix.lower() not in WALKTHROUGH_EXTS:
+        return False
+    return not any(part in relative for part in VENDOR_OR_GENERATED_PARTS)
+
+
+def has_child_sample_dirs(sample: Path) -> bool:
+    return any(child.is_dir() and (child / "README.md").exists() for child in sample.iterdir())
+
+
+def walkthrough_files(sample: Path) -> list[Path]:
+    # JP: category README は配下の全サンプルを代表するので、直下の CMake だけを抜粋対象にして重複を避けます。
+    if has_child_sample_dirs(sample):
+        candidates = [p for p in sample.iterdir() if p.is_file()]
+    else:
+        candidates = [p for p in sample.rglob("*") if p.is_file()]
+    return sorted(
+        [p for p in candidates if p.name != "README.ja.md" and is_walkthrough_source(p) and read_text(p).strip()],
+        key=rel,
+    )
+
+
+def code_language(path: Path) -> str:
+    if path.name == "CMakeLists.txt" or path.suffix.lower() == ".cmake":
+        return "cmake"
+    return {
+        ".cu": "cuda",
+        ".cuh": "cuda",
+        ".cpp": "cpp",
+        ".cc": "cpp",
+        ".c": "c",
+        ".h": "cpp",
+        ".hpp": "cpp",
+        ".hxx": "cpp",
+        ".py": "python",
+        ".sh": "bash",
+        ".bash": "bash",
+        ".bat": "bat",
+        ".cmd": "bat",
+        ".ps1": "powershell",
+        ".hlsl": "hlsl",
+        ".glsl": "glsl",
+        ".frag": "glsl",
+        ".vert": "glsl",
+        ".ptx": "ptx",
+        ".ll": "llvm",
+    }.get(path.suffix.lower(), "text")
+
+
+def meaningful_start(lines: list[str]) -> int:
+    # JP: 長い license/header を抜粋しないため、最初の実コードらしい行まで進めます。
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith(("//", "/*", "*", "# Copyright", "# SPDX", "#!/")):
+            continue
+        if "Copyright" in stripped or "NVIDIA Corporation" in stripped:
+            continue
+        return index + 1
+    return 1
+
+
+def snippet_window(line_number: int, total: int, radius_before: int = 5, radius_after: int = 14) -> tuple[int, int]:
+    start = max(1, line_number - radius_before)
+    end = min(total, line_number + radius_after)
+    return start, end
+
+
+def line_is_diff_clean(line: str) -> bool:
+    return line.rstrip(" \t") == line and " \t" not in line
+
+
+def window_is_diff_clean(lines: list[str], start: int, end: int) -> bool:
+    return all(line_is_diff_clean(line) for line in lines[start - 1 : end])
+
+
+def first_clean_span(lines: list[str], start: int, max_len: int = 20) -> tuple[int, int] | None:
+    # JP: Markdown に source line を写すと git diff --check も見るため、空白違反のない連続範囲だけを選びます。
+    index = start
+    total = len(lines)
+    while index <= total:
+        while index <= total and not line_is_diff_clean(lines[index - 1]):
+            index += 1
+        if index > total:
+            return None
+        end = index
+        while end <= total and line_is_diff_clean(lines[end - 1]) and end - index < max_len:
+            end += 1
+        if end > index:
+            return index, end - 1
+        index += 1
+    return None
+
+
+def clean_window_near(lines: list[str], line_number: int) -> tuple[int, int] | None:
+    total = len(lines)
+    for before, after in ((5, 14), (3, 10), (1, 8), (0, 6), (0, 3)):
+        start, end = snippet_window(line_number, total, before, after)
+        if window_is_diff_clean(lines, start, end):
+            return start, end
+    search_start = max(1, line_number - 10)
+    return first_clean_span(lines, search_start, max_len=14)
+
+
+def merge_windows(windows: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(windows):
+        if not merged or start > merged[-1][1] + 3:
+            merged.append((start, end))
+        else:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+    return merged
+
+
+def select_snippets(path: Path) -> list[tuple[int, int]]:
+    lines = read_text(path).splitlines()
+    if not lines:
+        return []
+    start = meaningful_start(lines)
+    total = len(lines)
+    if total - start <= 70:
+        if window_is_diff_clean(lines, start, total):
+            return [(start, total)]
+        clean = first_clean_span(lines, start)
+        return [clean] if clean else []
+
+    initial = first_clean_span(lines, start, max_len=19)
+    windows: list[tuple[int, int]] = [initial] if initial else []
+    for pattern in SNIPPET_FOCUS.values():
+        for index, line in enumerate(lines[start - 1 :], start=start):
+            if pattern.search(line):
+                clean = clean_window_near(lines, index)
+                if clean:
+                    windows.append(clean)
+                break
+    if len(windows) == 1:
+        for index, line in enumerate(lines[start - 1 :], start=start):
+            if SNIPPET_ANCHOR_RE.search(line):
+                clean = clean_window_near(lines, index)
+                if clean:
+                    windows.append(clean)
+                break
+    limit = 4 if total > 180 else 3
+    return merge_windows(windows)[:limit]
+
+
+def render_snippet(path: Path, start: int, end: int) -> list[str]:
+    lines = read_text(path).splitlines()
+    code = lines[start - 1 : end]
+    result = [
+        f"Source: {rel(path)}:{start}-{end}",
+        f"```{code_language(path)}",
+        *code,
+        "```",
+        "",
+        f"> JP: この抜粋は `{rel(path)}` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。",
+        "",
+    ]
+    return result
+
+
+def render_code_walkthrough(sample: Path) -> list[str]:
+    files = walkthrough_files(sample)
+    if not files:
+        return [
+            "このディレクトリには検証対象の source/build/script file がありません。英語 README と親ディレクトリの build 設定を参照します。",
+            "",
+        ]
+    result: list[str] = [
+        "この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。",
+        "",
+    ]
+    for path in files:
+        result.append(f"### `{path.relative_to(sample).as_posix()}`")
+        result.append("")
+        snippets = select_snippets(path)
+        if not snippets:
+            result.append("このファイルは空、または抜粋できる実コード行がありません。")
+            result.append("")
+            continue
+        for start, end in snippets:
+            result.extend(render_snippet(path, start, end))
+    return result
 
 
 def token_counter(path: Path) -> Counter[str]:
@@ -532,6 +773,9 @@ def render(sample: Path) -> str:
         "読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。",
         "まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。",
     ))
+
+    lines.extend(["", "## Code Walkthrough", ""])
+    lines.extend(render_code_walkthrough(sample))
 
     lines.extend(["", "## Key APIs And Concepts", ""])
     if api_tokens:

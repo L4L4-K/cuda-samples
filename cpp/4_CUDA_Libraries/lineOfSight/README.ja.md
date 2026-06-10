@@ -73,13 +73,208 @@ English anchor: read `lineOfSight` as a focused example of the CUDA concepts use
 
 ## Concrete Reading Path
 
-- `lineOfSight.cu`: focus on `thrust::raw_pointer_cast`, `CUDA`, `cudaTextureObject_t`, `thrust::host_vector`, `thrust::device_vector`.
+- `lineOfSight.cu`: focus on `thrust::raw_pointer_cast`, `CUDA`, `launch`, `cudaTextureObject_t`, `thrust::host_vector`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/lineOfSight/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(lineOfSight LANGUAGES CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for lineOfSight
+add_executable(lineOfSight lineOfSight.cu)
+
+target_compile_options(lineOfSight PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(lineOfSight PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(lineOfSight PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/lineOfSight/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `lineOfSight.cu`
+
+Source: cpp/4_CUDA_Libraries/lineOfSight/lineOfSight.cu:37-55
+```cuda
+#ifdef _WIN32
+#define NOMINMAX
+#endif
+
+// includes, system
+#include <float.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// includes, project
+#include <helper_cuda.h>
+#include <helper_functions.h>
+#include <helper_math.h>
+
+// includes, library
+#include <thrust/copy.h>
+#include <thrust/device_vector.h>
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/lineOfSight/lineOfSight.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/lineOfSight/lineOfSight.cu:90-109
+```cuda
+__device__ __host__ float  getAngle(const Ray, float2, float);
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    int res = runTest(argc, argv);
+
+    if (res != 1) {
+        printf("Test failed!\n");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Test passed\n");
+    exit(EXIT_SUCCESS);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//! Run a line-of-sight test for CUDA
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/lineOfSight/lineOfSight.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/lineOfSight/lineOfSight.cu:151-174
+```cuda
+        }
+
+    // Allocate CUDA array in device memory
+    cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc(32, 0, 0, 0, cudaChannelFormatKindFloat);
+    cudaArray            *heightFieldArray;
+    // JP: `cudaMallocArray`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMallocArray(&heightFieldArray, &channelDesc, dim.x, dim.y));
+
+    // Initialize device memory
+    checkCudaErrors(cudaMemcpy2DToArray(heightFieldArray,
+                                        0,
+                                        0,
+                                        heightField.height,
+                                        dim.x * sizeof(float),
+                                        dim.x * sizeof(float),
+                                        dim.y,
+                                        // JP: `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+                                        cudaMemcpyHostToDevice));
+
+    cudaTextureObject_t heightFieldTex;
+    cudaResourceDesc    texRes;
+    memset(&texRes, 0, sizeof(cudaResourceDesc));
+
+    texRes.resType         = cudaResourceTypeArray;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/lineOfSight/lineOfSight.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/lineOfSight/lineOfSight.cu:227-282
+```cuda
+    sdkStartTimer(&timer);
+
+    for (uint i = 0; i < numIterations; ++i) {
+        // Compute view angle for each point along the ray
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+        computeAngles_kernel<<<grid, block>>>(ray, thrust::raw_pointer_cast(&d_angles[0]), heightFieldTex);
+        getLastCudaError("Kernel execution failed");
+
+        // Perform a max-scan operation on the array of view angles
+        thrust::inclusive_scan(d_angles.begin(), d_angles.end(), d_scannedAngles.begin(), thrust::maximum<float>());
+        getLastCudaError("Kernel execution failed");
+
+        // Compute visibility results based on the array of view angles
+        // and its scanned version
+        // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
+        computeVisibilities_kernel<<<grid, block>>>(thrust::raw_pointer_cast(&d_angles[0]),
+                                                    thrust::raw_pointer_cast(&d_scannedAngles[0]),
+                                                    ray.length,
+                                                    thrust::raw_pointer_cast(&d_visibilities[0]));
+        getLastCudaError("Kernel execution failed");
+    }
+
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    cudaDeviceSynchronize();
+    sdkStopTimer(&timer);
+    getLastCudaError("Kernel execution failed");
+
+    // Copy visibility results back to the host
+    thrust::copy(d_visibilities.begin(), d_visibilities.end(), h_visibilities.begin());
+
+    // Compare device visibility results against reference results
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+    bool res = compareData(thrust::raw_pointer_cast(&h_visibilitiesRef[0]),
+                           thrust::raw_pointer_cast(&h_visibilities[0]),
+                           ray.length,
+                           0.0f,
+                           0.0f);
+    printf("Average time: %f ms\n\n", sdkGetTimerValue(&timer) / numIterations);
+    sdkResetTimer(&timer);
+
+    // Cleanup memory
+    // JP: `cudaFreeArray`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaFreeArray(heightFieldArray));
+    return res;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//! Compute view angles for each point along the ray
+//! @param ray         ray
+//! @param angles      view angles
+////////////////////////////////////////////////////////////////////////////////
+__global__ void computeAngles_kernel(const Ray ray, float *angles, cudaTextureObject_t HeightFieldTex)
+{
+    // JP: `blockDim`, `blockIdx`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    uint i = blockDim.x * blockIdx.x + threadIdx.x;
+
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/lineOfSight/lineOfSight.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 
@@ -89,6 +284,7 @@ English anchor: read `lineOfSight` as a focused example of the CUDA concepts use
 | `cudaMallocArray` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
 | `cudaDeviceSynchronize` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaFreeArray` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaTextureObject_t` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `thrust::host_vector` | CUDA library call です。handle/descriptor/workspace と data layout を確認します。 |
 | `cudaCreateChannelDesc` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
@@ -97,7 +293,6 @@ English anchor: read `lineOfSight` as a focused example of the CUDA concepts use
 | `blockDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `blockIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `threadIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
-| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `Device` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 
 > **日本語**

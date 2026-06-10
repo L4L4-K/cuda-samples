@@ -88,7 +88,7 @@ English anchor: read `MonteCarloMultiGPU` as a focused example of the CUDA conce
 - `MonteCarloMultiGPU.cpp`: focus on `cudaSetDevice`, `cudaDeviceProp`, `cudaGetDeviceProperties`, `cudaCores`, `cudaDeviceSynchronize`.
 - `MonteCarlo_common.h`: focus on `Device`, `curandState`, `cudaStream_t`, `curand_kernel`, `CUDA`.
 - `MonteCarlo_gold.cpp`: focus on `curandGenerator_t`, `curand`, `curand_kernel`, `CUDA`, `curandCreateGeneratorHost`.
-- `MonteCarlo_kernel.cu`: focus on `curandState`, `threadIdx`, `blockIdx`, `cudaMalloc`, `cudaFree`.
+- `MonteCarlo_kernel.cu`: focus on `curandState`, `CUDA`, `threadIdx`, `blockIdx`, `cudaMalloc`.
 - `MonteCarlo_reduction.cuh`: focus on `blockDim`, `launch`.
 - `multithreading.cpp`: focus on `CUTThread`, `CUT_THREADROUTINE`.
 - `multithreading.h`: focus on `CUTThread`, `CUT_THREADROUTINE`, `CUT_THREADPROC`, `CUT_THREADEND`.
@@ -99,6 +99,592 @@ English anchor: read `MonteCarloMultiGPU` as a focused example of the CUDA conce
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/5_Domain_Specific/MonteCarloMultiGPU/CMakeLists.txt:1-46
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(MonteCarloMultiGPU LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for MonteCarloMultiGPU
+add_executable(MonteCarloMultiGPU MonteCarlo_gold.cpp MonteCarlo_kernel.cu multithreading.cpp MonteCarloMultiGPU.cpp)
+
+target_compile_options(MonteCarloMultiGPU PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(MonteCarloMultiGPU PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(MonteCarloMultiGPU PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_include_directories(MonteCarloMultiGPU PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+target_link_libraries(MonteCarloMultiGPU PRIVATE
+    # JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    CUDA::curand
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/MonteCarloMultiGPU/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `MonteCarloMultiGPU.cpp`
+
+Source: cpp/5_Domain_Specific/MonteCarloMultiGPU/MonteCarloMultiGPU.cpp:35-53
+```cpp
+#include <cuda_runtime.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// includes, project
+#include <helper_cuda.h>      // helper functions (cuda error checking and initialization)
+#include <helper_functions.h> // Helper functions (utilities, parsing, timing)
+#include <multithreading.h>
+
+#include "MonteCarlo_common.h"
+
+int   *pArgc = NULL;
+char **pArgv = NULL;
+
+#ifdef WIN32
+#define strcasecmp _strcmpi
+#endif
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/MonteCarloMultiGPU/MonteCarloMultiGPU.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/MonteCarloMultiGPU/MonteCarloMultiGPU.cpp:103-158
+```cpp
+StopWatchInterface **hTimer = NULL;
+
+static CUT_THREADPROC solverThread(TOptionPlan *plan)
+{
+    // Init GPU
+    checkCudaErrors(cudaSetDevice(plan->device));
+
+    cudaDeviceProp deviceProp;
+    checkCudaErrors(cudaGetDeviceProperties(&deviceProp, plan->device));
+
+    // Start the timer
+    sdkStartTimer(&hTimer[plan->device]);
+
+    // Allocate intermediate memory for MC integrator and initialize
+    // RNG states
+    initMonteCarloGPU(plan);
+
+    // Main computation
+    MonteCarloGPU(plan);
+
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    checkCudaErrors(cudaDeviceSynchronize());
+
+    // Stop the timer
+    sdkStopTimer(&hTimer[plan->device]);
+
+    // Shut down this GPU
+    closeMonteCarloGPU(plan);
+
+    // JP: `cudaStreamSynchronize`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+    cudaStreamSynchronize(0);
+
+    printf("solverThread() finished - GPU Device %d: %s\n", plan->device, deviceProp.name);
+
+    CUT_THREADEND;
+}
+
+static void multiSolver(TOptionPlan *plan, int nPlans)
+{
+    // allocate and initialize an array of stream handles
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    cudaStream_t *streams = (cudaStream_t *)malloc(nPlans * sizeof(cudaStream_t));
+    cudaEvent_t  *events  = (cudaEvent_t *)malloc(nPlans * sizeof(cudaEvent_t));
+
+    for (int i = 0; i < nPlans; i++) {
+        checkCudaErrors(cudaSetDevice(plan[i].device));
+        checkCudaErrors(cudaStreamCreate(&(streams[i])));
+        checkCudaErrors(cudaEventCreate(&(events[i])));
+    }
+
+    // Init Each GPU
+    // In CUDA 4.0 we can call cudaSetDevice multiple times to target each device
+    // Set the device desired, then perform initializations on that device
+
+    for (int i = 0; i < nPlans; i++) {
+        // set the target device to perform initialization on
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/MonteCarloMultiGPU/MonteCarloMultiGPU.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `MonteCarlo_common.h`
+
+Source: cpp/5_Domain_Specific/MonteCarloMultiGPU/MonteCarlo_common.h:29-47
+```cpp
+#ifndef MONTECARLO_COMMON_H
+#define MONTECARLO_COMMON_H
+#include "curand_kernel.h"
+#include "realtype.h"
+
+////////////////////////////////////////////////////////////////////////////////
+// Global types
+////////////////////////////////////////////////////////////////////////////////
+typedef struct
+{
+    float S;
+    float X;
+    float T;
+    float R;
+    float V;
+} TOptionData;
+
+typedef struct
+// #ifdef __CUDACC__
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/MonteCarloMultiGPU/MonteCarlo_common.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/MonteCarloMultiGPU/MonteCarlo_common.h:82-101
+```cpp
+
+    // Intermediate device-side buffers
+    void *d_Buffer;
+
+    // random number generator states
+    // JP: `curandState`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    curandState *rngStates;
+
+    // Pseudorandom samples count
+    int pathN;
+
+    // Time stamp
+    float time;
+
+    int gridSize;
+} TOptionPlan;
+
+extern "C" void initMonteCarloGPU(TOptionPlan *plan);
+// JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+extern "C" void MonteCarloGPU(TOptionPlan *plan, cudaStream_t stream = 0);
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/MonteCarloMultiGPU/MonteCarlo_common.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `MonteCarlo_gold.cpp`
+
+Source: cpp/5_Domain_Specific/MonteCarloMultiGPU/MonteCarlo_gold.cpp:29-47
+```cpp
+#include <curand.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+// #include "curand_kernel.h"
+#include "helper_cuda.h"
+
+////////////////////////////////////////////////////////////////////////////////
+// Common types
+////////////////////////////////////////////////////////////////////////////////
+#include "MonteCarlo_common.h"
+
+////////////////////////////////////////////////////////////////////////////////
+// Black-Scholes formula for Monte Carlo results validation
+////////////////////////////////////////////////////////////////////////////////
+#define A1       0.31938153
+#define A2       -0.356563782
+#define A3       1.781477937
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/MonteCarloMultiGPU/MonteCarlo_gold.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/MonteCarloMultiGPU/MonteCarlo_gold.cpp:100-119
+```cpp
+    const double V        = optionData.V;
+    const double MuByT    = (R - 0.5 * V * V) * T;
+    const double VBySqrtT = V * sqrt(T);
+
+    float            *samples;
+    // JP: `curandGenerator_t`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    curandGenerator_t gen;
+
+    checkCudaErrors(curandCreateGeneratorHost(&gen, CURAND_RNG_PSEUDO_DEFAULT));
+    unsigned long long seed = 1234ULL;
+    checkCudaErrors(curandSetPseudoRandomGeneratorSeed(gen, seed));
+
+    if (h_Samples != NULL) {
+        samples = h_Samples;
+    }
+    else {
+        samples = (float *)malloc(pathN * sizeof(float));
+        checkCudaErrors(curandGenerateNormal(gen, samples, pathN, 0.0, 1.0));
+    }
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/MonteCarloMultiGPU/MonteCarlo_gold.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/MonteCarloMultiGPU/MonteCarlo_gold.cpp:128-144
+```cpp
+        sum2 += callValue * callValue;
+    }
+
+    if (h_Samples == NULL)
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        free(samples);
+
+    checkCudaErrors(curandDestroyGenerator(gen));
+
+    // Derive average from the total sum and discount by riskfree rate
+    callValue.Expected = (float)(exp(-R * T) * sum / (double)pathN);
+    // Standard deviation
+    double stdDev = sqrt(((double)pathN * sum2 - sum * sum) / ((double)pathN * (double)(pathN - 1)));
+    // Confidence width; in 95% of all cases theoretical value lies within these
+    // borders
+    callValue.Confidence = (float)(exp(-R * T) * 1.96 * stdDev / sqrt((double)pathN));
+}
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/MonteCarloMultiGPU/MonteCarlo_gold.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `MonteCarlo_kernel.cu`
+
+Source: cpp/5_Domain_Specific/MonteCarloMultiGPU/MonteCarlo_kernel.cu:32-50
+```cuda
+#include <cooperative_groups.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+namespace cg = cooperative_groups;
+#include <curand_kernel.h>
+#include <helper_cuda.h>
+
+#include "MonteCarlo_common.h"
+
+////////////////////////////////////////////////////////////////////////////////
+// Helper reduction template
+// Please see the "reduction" CUDA Sample for more information
+////////////////////////////////////////////////////////////////////////////////
+#include "MonteCarlo_reduction.cuh"
+
+////////////////////////////////////////////////////////////////////////////////
+// Internal GPU-side data structures
+////////////////////////////////////////////////////////////////////////////////
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/MonteCarloMultiGPU/MonteCarlo_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/MonteCarloMultiGPU/MonteCarlo_kernel.cu:79-111
+```cuda
+////////////////////////////////////////////////////////////////////////////////
+// This kernel computes the integral over all paths using a single thread block
+// per option. It is fastest when the number of thread blocks times the work per
+// block is high enough to keep the GPU busy.
+////////////////////////////////////////////////////////////////////////////////
+// JP: `curandState`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+static __global__ void MonteCarloOneBlockPerOption(curandState *__restrict rngStates,
+                                                   const __TOptionData *__restrict d_OptionData,
+                                                   __TOptionValue *__restrict d_CallValue,
+                                                   int pathN,
+                                                   int optionN)
+{
+    // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    cg::thread_block          cta    = cg::this_thread_block();
+    cg::thread_block_tile<32> tile32 = cg::tiled_partition<32>(cta);
+
+    const int       SUM_N = THREAD_N;
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    __shared__ real s_SumCall[SUM_N];
+    __shared__ real s_Sum2Call[SUM_N];
+
+    // determine global thread id
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+
+    // Copy random number state to local memory for efficiency
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+    curandState localState = rngStates[tid];
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+    for (int optionIndex = blockIdx.x; optionIndex < optionN; optionIndex += gridDim.x) {
+        const real S        = d_OptionData[optionIndex].S;
+        const real X        = d_OptionData[optionIndex].X;
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/MonteCarloMultiGPU/MonteCarlo_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/MonteCarloMultiGPU/MonteCarlo_kernel.cu:164-183
+```cuda
+    checkCudaErrors(cudaMallocHost(&plan->h_OptionData, sizeof(__TOptionData) * (plan->optionCount)));
+    // Allocate internal device memory
+    checkCudaErrors(cudaMallocHost(&plan->h_CallValue, sizeof(__TOptionValue) * (plan->optionCount)));
+    // Allocate states for pseudo random number generators
+    checkCudaErrors(cudaMalloc((void **)&plan->rngStates, plan->gridSize * THREAD_N * sizeof(curandState)));
+    // JP: `cudaMemset`, `curandState`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemset(plan->rngStates, 0, plan->gridSize * THREAD_N * sizeof(curandState)));
+
+    // place each device pathN random numbers apart on the random number sequence
+    rngSetupStates<<<plan->gridSize, THREAD_N>>>(plan->rngStates, plan->device);
+    getLastCudaError("rngSetupStates kernel failed.\n");
+}
+
+// Compute statistics and deallocate internal device memory
+extern "C" void closeMonteCarloGPU(TOptionPlan *plan)
+{
+    for (int i = 0; i < plan->optionCount; i++) {
+        const double RT    = plan->optionData[i].R * plan->optionData[i].T;
+        const double sum   = plan->h_CallValue[i].Expected;
+        const double sum2  = plan->h_CallValue[i].Confidence;
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/MonteCarloMultiGPU/MonteCarlo_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/MonteCarloMultiGPU/MonteCarlo_kernel.cu:189-208
+```cuda
+        // Confidence width; in 95% of all cases theoretical value lies within these
+        // borders
+        plan->callValue[i].Confidence = (float)(exp(-RT) * 1.96 * stdDev / sqrt(pathN));
+    }
+
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaFree(plan->rngStates));
+    checkCudaErrors(cudaFreeHost(plan->h_CallValue));
+    checkCudaErrors(cudaFreeHost(plan->h_OptionData));
+    checkCudaErrors(cudaFree(plan->d_CallValue));
+    checkCudaErrors(cudaFree(plan->d_OptionData));
+}
+
+// Main computations
+// JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+extern "C" void MonteCarloGPU(TOptionPlan *plan, cudaStream_t stream)
+{
+    __TOptionValue *h_CallValue = plan->h_CallValue;
+
+    if (plan->optionCount <= 0 || plan->optionCount > MAX_OPTIONS) {
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/MonteCarloMultiGPU/MonteCarlo_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `MonteCarlo_reduction.cuh`
+
+Source: cpp/5_Domain_Specific/MonteCarloMultiGPU/MonteCarlo_reduction.cuh:29-83
+```cuda
+#ifndef MONTECARLO_REDUCTION_CUH
+#define MONTECARLO_REDUCTION_CUH
+
+#include <cooperative_groups.h>
+
+namespace cg = cooperative_groups;
+
+////////////////////////////////////////////////////////////////////////////////
+// This function calculates total sum for each of the two input arrays.
+// SUM_N must be power of two
+// Unrolling provides a bit of a performance improvement for small
+// to medium path counts.
+////////////////////////////////////////////////////////////////////////////////
+
+template <class T, int SUM_N, int blockSize>
+__device__ void
+sumReduce(T *sum, T *sum2, cg::thread_block &cta, cg::thread_block_tile<32> &tile32, __TOptionValue *d_CallValue)
+{
+    const int VEC = 32;
+    const int tid = cta.thread_rank();
+
+    T beta  = sum[tid];
+    T beta2 = sum2[tid];
+    T temp, temp2;
+
+    for (int i = VEC / 2; i > 0; i >>= 1) {
+        if (tile32.thread_rank() < i) {
+            temp  = sum[tid + i];
+            temp2 = sum2[tid + i];
+            beta += temp;
+            beta2 += temp2;
+            sum[tid]  = beta;
+            sum2[tid] = beta2;
+        }
+        // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+        cg::sync(tile32);
+    }
+    cg::sync(cta);
+
+    if (tid == 0) {
+        beta  = 0;
+        beta2 = 0;
+        // JP: `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+        for (int i = 0; i < blockDim.x; i += VEC) {
+            beta += sum[i];
+            beta2 += sum2[i];
+        }
+        __TOptionValue t = {beta, beta2};
+        *d_CallValue     = t;
+    }
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
+    cg::sync(cta);
+}
+
+#endif
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/MonteCarloMultiGPU/MonteCarlo_reduction.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `multithreading.cpp`
+
+Source: cpp/5_Domain_Specific/MonteCarloMultiGPU/multithreading.cpp:29-75
+```cpp
+#include <multithreading.h>
+
+#if defined(WIN32) || defined(_WIN32) || defined(WIN64) || defined(_WIN64)
+// Create thread
+CUTThread cutStartThread(CUT_THREADROUTINE func, void *data)
+{
+    return CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)func, data, 0, NULL);
+}
+
+// Wait for thread to finish
+void cutEndThread(CUTThread thread)
+{
+    WaitForSingleObject(thread, INFINITE);
+    CloseHandle(thread);
+}
+
+// Wait for multiple threads
+void cutWaitForThreads(const CUTThread *threads, int num)
+{
+    WaitForMultipleObjects(num, threads, true, INFINITE);
+
+    for (int i = 0; i < num; i++) {
+        CloseHandle(threads[i]);
+    }
+}
+
+#else
+// Create thread
+CUTThread cutStartThread(CUT_THREADROUTINE func, void *data)
+{
+    pthread_t thread;
+    pthread_create(&thread, NULL, func, data);
+    return thread;
+}
+
+// Wait for thread to finish
+void cutEndThread(CUTThread thread) { pthread_join(thread, NULL); }
+
+// Wait for multiple threads
+void cutWaitForThreads(const CUTThread *threads, int num)
+{
+    for (int i = 0; i < num; i++) {
+        cutEndThread(threads[i]);
+    }
+}
+
+#endif
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/MonteCarloMultiGPU/multithreading.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `multithreading.h`
+
+Source: cpp/5_Domain_Specific/MonteCarloMultiGPU/multithreading.h:29-73
+```cpp
+#ifndef MULTITHREADING_H
+#define MULTITHREADING_H
+
+// Simple portable thread library.
+
+#if defined(WIN32) || defined(_WIN32) || defined(WIN64) || defined(_WIN64)
+// Windows threads.
+#include <windows.h>
+
+typedef HANDLE CUTThread;
+typedef unsigned(WINAPI *CUT_THREADROUTINE)(void *);
+
+#define CUT_THREADPROC unsigned WINAPI
+#define CUT_THREADEND  return 0
+
+#else
+// POSIX threads.
+#include <pthread.h>
+
+typedef pthread_t CUTThread;
+typedef void *(*CUT_THREADROUTINE)(void *);
+
+#define CUT_THREADPROC void
+#define CUT_THREADEND
+#endif
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+    // Create thread.
+    CUTThread cutStartThread(CUT_THREADROUTINE, void *data);
+
+    // Wait for thread to finish.
+    void cutEndThread(CUTThread thread);
+
+    // Wait for multiple threads.
+    void cutWaitForThreads(const CUTThread *threads, int num);
+
+#ifdef __cplusplus
+} // extern "C"
+#endif
+
+#endif // MULTITHREADING_H
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/MonteCarloMultiGPU/multithreading.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `realtype.h`
+
+Source: cpp/5_Domain_Specific/MonteCarloMultiGPU/realtype.h:29-40
+```cpp
+#ifndef REALTYPE_H
+#define REALTYPE_H
+
+// #define DOUBLE_PRECISION
+
+#ifndef DOUBLE_PRECISION
+typedef float real;
+#else
+typedef double real;
+#endif
+
+#endif
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/MonteCarloMultiGPU/realtype.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

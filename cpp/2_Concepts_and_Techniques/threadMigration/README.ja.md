@@ -73,7 +73,7 @@ English anchor: read `threadMigration` as a focused example of the CUDA concepts
 
 ## Concrete Reading Path
 
-- `threadMigration.cpp`: focus on `CUDA`, `CUDA_SUCCESS`, `CUDAContext`, `CUdeviceptr`, `launch`.
+- `threadMigration.cpp`: focus on `CUDA`, `CUDA_SUCCESS`, `CUDAContext`, `launch`, `CUdeviceptr`.
 - `threadMigration_kernel.cu`: focus on `threadIdx`, `launch`.
 
 > **日本語**
@@ -82,13 +82,168 @@ English anchor: read `threadMigration` as a focused example of the CUDA concepts
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/2_Concepts_and_Techniques/threadMigration/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(threadMigration LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/threadMigration/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `threadMigration.cpp`
+
+Source: cpp/2_Concepts_and_Techniques/threadMigration/threadMigration.cpp:43-61
+```cpp
+#define MAXTHREADS 256
+#define NUM_INTS   32
+
+#if defined(WIN32) || defined(_WIN32) || defined(WIN64) || defined(_WIN64)
+// Windows threads use different data structures
+#include <windows.h>
+DWORD            rgdwThreadIds[MAXTHREADS];
+HANDLE           rghThreads[MAXTHREADS];
+CRITICAL_SECTION g_cs;
+
+#define ENTERCRITICALSECTION EnterCriticalSection(&g_cs);
+#define LEAVECRITICALSECTION LeaveCriticalSection(&g_cs);
+#define STRICMP              stricmp
+#else
+
+// Includes POSIX thread headers for Linux thread support
+#include <pthread.h>
+#include <stdint.h>
+pthread_t       rghThreads[MAXTHREADS];
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/threadMigration/threadMigration.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/threadMigration/threadMigration.cpp:103-122
+```cpp
+// declaration, forward
+bool runTest(int argc, char **argv);
+
+#define CLEANUP_ON_ERROR(dptr, hcuModule, hcuContext, status) \
+    if (dptr)                                                 \
+        cuMemFree(dptr);                                      \
+    if (hcuModule)                                            \
+        cuModuleUnload(hcuModule);                            \
+    if (hcuContext)                                           \
+        cuCtxDestroy(hcuContext);                             \
+    return status;
+
+#define THREAD_QUIT    \
+    printf("Error\n"); \
+    return 0;
+
+// This sample uses the Driver API interface.  The CUDA context needs
+// to be setup and the CUDA module (CUBIN) is built by NVCC
+// JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
+static CUresult InitCUDAContext(CUDAContext *pContext, CUdevice hcuDevice, int deviceID, char **argv)
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/threadMigration/threadMigration.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/threadMigration/threadMigration.cpp:208-232
+```cpp
+    // There are two ways to launch CUDA kernels via the Driver API.
+    // In this CUDA Sample, we illustrate both ways to pass parameters
+    // and specify parameters.  By default we use the simpler method.
+
+    if (1) {
+        // This is the new CUDA 4.0 API for Kernel Parameter passing and Kernel
+        // Launching (simpler method)
+        void *args[5] = {&pParams->dptr};
+
+        // new CUDA 4.0 Driver API Kernel launch call
+        // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+        status = cuLaunchKernel(pParams->hcuFunction, 1, 1, 1, 32, 1, 1, 0, NULL, args, NULL);
+
+        if (CUDA_SUCCESS != status) {
+            fprintf(stderr, "cuLaunch failed %d\n", status);
+            THREAD_QUIT;
+        }
+    }
+    else {
+        // This is the new CUDA 4.0 API for Kernel Parameter passing and Kernel
+        // Launching (advanced method)
+        int  offset = 0;
+        char argBuffer[256];
+
+        // pass in launch parameters (not actually de-referencing CUdeviceptr).
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/threadMigration/threadMigration.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/threadMigration/threadMigration.cpp:306-325
+```cpp
+
+        return true;
+    }
+}
+
+int main(int argc, char **argv)
+{
+    printf("Starting threadMigration\n");
+
+    bool bTestResult = runTest(argc, argv);
+
+    exit(bTestResult ? EXIT_SUCCESS : EXIT_FAILURE);
+}
+
+bool runTest(int argc, char **argv)
+{
+    printf("[ threadMigration ] API test...\n");
+#if defined(WIN32) || defined(_WIN32) || defined(WIN64) || defined(_WIN64)
+    InitializeCriticalSection(&g_cs);
+#else
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/threadMigration/threadMigration.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `threadMigration_kernel.cu`
+
+Source: cpp/2_Concepts_and_Techniques/threadMigration/threadMigration_kernel.cu:30-30
+```cuda
+extern "C" __global__ void kernelFunction(int *input) { input[threadIdx.x] = 32 - threadIdx.x; }
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/threadMigration/threadMigration_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
 | - | - |
 | `CUDA_SUCCESS` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
-| `CUDAContext` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
+| `CUDAContext` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cuDeviceGetAttribute` | Driver API の handle 境界です。context/module/function と error code を追います。 |
 | `CUdeviceptr` | Driver API の handle 境界です。context/module/function と error code を追います。 |
 | `cuCtxPopCurrent` | Driver API の handle 境界です。context/module/function と error code を追います。 |

@@ -75,13 +75,197 @@ English anchor: read `cannyEdgeDetectorNPP` as a focused example of the CUDA con
 
 ## Concrete Reading Path
 
-- `cannyEdgeDetectorNPP.cpp`: focus on `nppStreamCtx`, `cudaError`, `npp`, `CUDA`, `cudaSuccess`.
+- `cannyEdgeDetectorNPP.cpp`: focus on `nppStreamCtx`, `CUDA`, `cudaError`, `npp`, `cudaSuccess`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/cannyEdgeDetectorNPP/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(cannyEdgeDetectorNPP LANGUAGES CXX)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cannyEdgeDetectorNPP/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/cannyEdgeDetectorNPP/CMakeLists.txt:42-61
+```cmake
+        ${CUDAToolkit_INCLUDE_DIRS}
+        ${FreeImage_INCLUDE_DIRS}
+    )
+
+    target_link_libraries(cannyEdgeDetectorNPP PRIVATE
+        # JP: `nppc`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+        CUDA::nppc
+        CUDA::nppisu
+        CUDA::nppif
+        CUDA::cudart
+        ${FreeImage_LIBRARIES}
+    )
+
+    # Copy data files to output directory
+    add_custom_command(TARGET cannyEdgeDetectorNPP POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_CURRENT_SOURCE_DIR}/teapot512.pgm
+        ${CMAKE_CURRENT_BINARY_DIR}
+    )
+    if(WIN32)
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cannyEdgeDetectorNPP/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `cannyEdgeDetectorNPP.cpp`
+
+Source: cpp/4_CUDA_Libraries/cannyEdgeDetectorNPP/cannyEdgeDetectorNPP.cpp:29-47
+```cpp
+#if defined(WIN32) || defined(_WIN32) || defined(WIN64) || defined(_WIN64)
+#define WINDOWS_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#pragma warning(disable : 4819)
+#endif
+
+#include <Exceptions.h>
+#include <ImageIO.h>
+#include <ImagesCPU.h>
+#include <ImagesNPP.h>
+#include <cuda_runtime.h>
+#include <fstream>
+#include <helper_cuda.h>
+#include <helper_string.h>
+#include <iostream>
+#include <npp.h>
+#include <string.h>
+
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cannyEdgeDetectorNPP/cannyEdgeDetectorNPP.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/cannyEdgeDetectorNPP/cannyEdgeDetectorNPP.cpp:57-93
+```cpp
+
+    int dev = findCudaDevice(argc, argv);
+
+    cudaDeviceProp deviceProp;
+    cudaGetDeviceProperties(&deviceProp, dev);
+    std::cerr << "cudaSetDevice GPU" << dev << " = " << deviceProp.name << std::endl;
+
+    checkCudaErrors(cudaSetDevice(dev));
+
+    return dev;
+}
+
+int main(int argc, char *argv[])
+{
+    printf("%s Starting...\n\n", argv[0]);
+
+    try {
+        std::string sFilename;
+        char       *filePath;
+
+        cudaDeviceInit(argc, (const char **)argv);
+
+        // JP: `nppStreamCtx`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+        NppStreamContext nppStreamCtx;
+        nppStreamCtx.hStream =
+            0; // The NULL stream by default, set this to whatever your stream ID is if not the NULL stream.
+
+        cudaError_t cudaError = cudaGetDevice(&nppStreamCtx.nCudaDeviceId);
+        if (cudaError != cudaSuccess) {
+            printf("CUDA error: no devices supporting CUDA.\n");
+            return NPP_NOT_SUFFICIENT_COMPUTE_CAPABILITY;
+        }
+
+        const NppLibraryVersion *libVer = nppGetLibVersion();
+
+        printf("NPP Library Version %d.%d.%d\n", libVer->major, libVer->minor, libVer->build);
+
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cannyEdgeDetectorNPP/cannyEdgeDetectorNPP.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/cannyEdgeDetectorNPP/cannyEdgeDetectorNPP.cpp:192-211
+```cpp
+
+        int    nBufferSize       = 0;
+        Npp8u *pScratchBufferNPP = 0;
+
+        // get necessary scratch buffer size and allocate that much device memory
+        NPP_CHECK_NPP(nppiFilterCannyBorderGetBufferSize(oSizeROI, &nBufferSize));
+
+        // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+        cudaMalloc((void **)&pScratchBufferNPP, nBufferSize);
+
+        // now run the canny edge detection filter
+        // Using nppiNormL2 will produce larger magnitude values allowing for finer
+        // control of threshold values while nppiNormL1 will be slightly faster.
+        // Also, selecting the sobel gradient filter allows up to a 5x5 kernel size
+        // which can produce more precise results but is a bit slower. Commonly
+        // nppiNormL2 and sobel gradient filter size of 3x3 are used. Canny
+        // recommends that the high threshold value should be about 3 times the low
+        // threshold value. The threshold range will depend on the range of
+        // magnitude values that the sobel gradient filter generates for a
+        // particular image.
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cannyEdgeDetectorNPP/cannyEdgeDetectorNPP.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/cannyEdgeDetectorNPP/cannyEdgeDetectorNPP.cpp:232-251
+```cpp
+                                                           pScratchBufferNPP,
+                                                           nppStreamCtx));
+        }
+
+        // free scratch buffer memory
+        // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        cudaFree(pScratchBufferNPP);
+
+        // declare a host image for the result
+        npp::ImageCPU_8u_C1 oHostDst(oDeviceDst.size());
+        // and copy the device result data into it
+        oDeviceDst.copyTo(oHostDst.data(), oHostDst.pitch());
+
+        saveImage(sResultFilename, oHostDst);
+        std::cout << "Saved image: " << sResultFilename << std::endl;
+
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+        nppiFree(oDeviceSrc.data());
+        nppiFree(oDeviceDst.data());
+
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cannyEdgeDetectorNPP/cannyEdgeDetectorNPP.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

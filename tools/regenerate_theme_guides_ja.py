@@ -6,6 +6,8 @@ from __future__ import annotations
 # JP: Theme guide generator. CUDA API names below are documentation data; the script itself only writes Markdown files.
 from pathlib import Path
 
+from regenerate_sample_readmes_ja import rel, render_snippet, select_snippets, walkthrough_files
+
 
 ROOT = Path(__file__).resolve().parents[1]
 THEME_DIR = ROOT / "docs_ja" / "themes"
@@ -112,6 +114,7 @@ REQUIRED = [
     "## Mental Model",
     "## API Map",
     "## Sample References",
+    "## Representative Code",
     "## Reading Steps",
     "## Common Mistakes",
     "## Performance Notes",
@@ -119,6 +122,48 @@ REQUIRED = [
     "## Cross-Theme Links",
     "## Review Checklist",
 ]
+
+
+def sample_dir_from_reference(path: str) -> Path | None:
+    normalized = path.replace("\\", "/")
+    if not normalized.endswith("/README.ja.md"):
+        return None
+    while normalized.startswith("../"):
+        normalized = normalized[3:]
+    candidate = ROOT / normalized.removesuffix("/README.ja.md")
+    return candidate if candidate.exists() else None
+
+
+def representative_code(data: dict[str, object]) -> list[str]:
+    # JP: theme guide には概念を代表する実コードを最低 3 件埋め込み、sample README と同じ検証契約を使います。
+    result: list[str] = []
+    used_paths: set[Path] = set()
+    for _label, path, _reason in data["samples"]:  # type: ignore[index]
+        sample_dir = sample_dir_from_reference(str(path))
+        if not sample_dir:
+            continue
+        for source in walkthrough_files(sample_dir):
+            if source in used_paths:
+                continue
+            snippets = select_snippets(source)
+            if not snippets:
+                continue
+            used_paths.add(source)
+            result.append(f"### `{rel(source)}`")
+            result.append("")
+            start, end = snippets[0]
+            result.extend(render_snippet(source, start, end))
+            result.append(
+                f"> JP: `{rel(source)}` はこのテーマを読むための代表例です。API 名だけでなく、所有権、同期位置、検証位置を抜粋内で対応付けます。"
+            )
+            result.append("")
+            break
+        if len(used_paths) >= 3:
+            break
+    if len(used_paths) < 3:
+        result.append("有効な代表コードが 3 件未満です。関連サンプルが少ないテーマか、抜粋対象ファイルがありません。")
+        result.append("")
+    return result
 
 
 def render(filename: str, data: dict[str, object]) -> str:
@@ -169,6 +214,8 @@ def render(filename: str, data: dict[str, object]) -> str:
     ])
     for label, path, reason in data["samples"]:  # type: ignore[index]
         lines.append(f"- [{label}]({path}): {reason}")
+    lines.extend(["", "## Representative Code", ""])
+    lines.extend(representative_code(data))
     lines.extend(["", "## Reading Steps", ""])
     for index, step in enumerate(data["reading"], start=1):  # type: ignore[index]
         lines.append(f"{index}. {step}")

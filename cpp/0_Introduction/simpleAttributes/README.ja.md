@@ -80,6 +80,206 @@ English anchor: read `simpleAttributes` as a focused example of the CUDA concept
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/simpleAttributes/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleAttributes LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simpleAttributes
+add_executable(simpleAttributes simpleAttributes.cu)
+
+target_compile_options(simpleAttributes PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleAttributes PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simpleAttributes PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleAttributes/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleAttributes.cu`
+
+Source: cpp/0_Introduction/simpleAttributes/simpleAttributes.cu:30-48
+```cuda
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// includes CUDA
+#include <cuda_runtime.h>
+
+// includes, project
+#include <helper_cuda.h>
+#include <helper_functions.h> // helper functions for SDK examples
+
+////////////////////////////////////////////////////////////////////////////////
+// declaration, forward
+void runTest(int argc, char **argv);
+
+cudaAccessPolicyWindow initAccessPolicyWindow(void)
+{
+    cudaAccessPolicyWindow accessPolicyWindow = {0};
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleAttributes/simpleAttributes.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleAttributes/simpleAttributes.cu:62-91
+```cuda
+//! @param bigDataSize  input bigData size
+//! @param hitcount how many data access are done within block
+////////////////////////////////////////////////////////////////////////////////
+static __global__ void kernCacheSegmentTest(int *data, int dataSize, int *trash, int bigDataSize, int hitCount)
+{
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    __shared__ unsigned int hit;
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int                     row    = blockIdx.y * blockDim.y + threadIdx.y;
+    int                     col    = blockIdx.x * blockDim.x + threadIdx.x;
+    int                     tID    = row * blockDim.y + col;
+    uint32_t                psRand = tID;
+
+    atomicExch(&hit, 0);
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
+    __syncthreads();
+    while (hit < hitCount) {
+        psRand ^= psRand << 13;
+        psRand ^= psRand >> 17;
+        psRand ^= psRand << 5;
+
+        int idx = tID - psRand;
+        if (idx < 0) {
+            idx = -idx;
+        }
+
+        if ((tID % 2) == 0) {
+            data[psRand % dataSize] = data[psRand % dataSize] + data[idx % dataSize];
+        }
+        else {
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleAttributes/simpleAttributes.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleAttributes/simpleAttributes.cu:96-115
+```cuda
+    }
+}
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv) { runTest(argc, argv); }
+
+////////////////////////////////////////////////////////////////////////////////
+//! Run a simple test for CUDA
+////////////////////////////////////////////////////////////////////////////////
+void runTest(int argc, char **argv)
+{
+    bool                   bTestResult = true;
+    cudaAccessPolicyWindow accessPolicyWindow;
+    cudaDeviceProp         deviceProp;
+    // JP: `cudaStreamAttrValue`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+    cudaStreamAttrValue    streamAttrValue;
+    cudaStream_t           stream;
+    cudaStreamAttrID       streamAttrID;
+    dim3                   threads(32, 32);
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleAttributes/simpleAttributes.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleAttributes/simpleAttributes.cu:139-193
+```cuda
+               devID);
+        exit(EXIT_WAIVED);
+    }
+
+    // Create stream to assiocate with window
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    checkCudaErrors(cudaStreamCreate(&stream));
+
+    // Set the amount of l2 cache that will be persisting to maximum the device
+    // can support
+    checkCudaErrors(cudaDeviceSetLimit(cudaLimitPersistingL2CacheSize, deviceProp.persistingL2CacheMaxSize));
+
+    // Stream attribute to set
+    streamAttrID = cudaStreamAttributeAccessPolicyWindow;
+
+    // Default window
+    streamAttrValue.accessPolicyWindow = initAccessPolicyWindow();
+    accessPolicyWindow                 = initAccessPolicyWindow();
+
+    // Allocate size of both buffers
+    bigDataSize = (deviceProp.l2CacheSize * 4) / sizeof(int);
+    dataSize    = (deviceProp.l2CacheSize / 4) / sizeof(int);
+
+    // Allocate data
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
+    checkCudaErrors(cudaMallocHost(&dataHostPointer, dataSize * sizeof(int)));
+    checkCudaErrors(cudaMallocHost(&bigDataHostPointer, bigDataSize * sizeof(int)));
+
+    for (int i = 0; i < bigDataSize; ++i) {
+        if (i < dataSize) {
+            dataHostPointer[i] = i;
+        }
+
+        bigDataHostPointer[bigDataSize - i - 1] = i;
+    }
+
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc((void **)&dataDevicePointer, dataSize * sizeof(int)));
+    checkCudaErrors(cudaMalloc((void **)&bigDataDevicePointer, bigDataSize * sizeof(int)));
+    checkCudaErrors(
+        // JP: `cudaMemcpyAsync`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+        cudaMemcpyAsync(dataDevicePointer, dataHostPointer, dataSize * sizeof(int), cudaMemcpyHostToDevice, stream));
+    checkCudaErrors(cudaMemcpyAsync(
+        bigDataDevicePointer, bigDataHostPointer, bigDataSize * sizeof(int), cudaMemcpyHostToDevice, stream));
+
+    // Make a window for the buffer of interest
+    accessPolicyWindow.base_ptr        = (void *)dataDevicePointer;
+    accessPolicyWindow.num_bytes       = dataSize * sizeof(int);
+    accessPolicyWindow.hitRatio        = 1.f;
+    accessPolicyWindow.hitProp         = cudaAccessPropertyPersisting;
+    accessPolicyWindow.missProp        = cudaAccessPropertyNormal;
+    streamAttrValue.accessPolicyWindow = accessPolicyWindow;
+
+    // Assign window to stream
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleAttributes/simpleAttributes.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

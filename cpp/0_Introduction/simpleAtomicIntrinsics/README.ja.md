@@ -83,6 +83,274 @@ English anchor: read `simpleAtomicIntrinsics` as a focused example of the CUDA c
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/simpleAtomicIntrinsics/CMakeLists.txt:1-38
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleAtomicIntrinsics LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES  75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simpleAtomicIntrinsics
+add_executable(simpleAtomicIntrinsics simpleAtomicIntrinsics.cu simpleAtomicIntrinsics_cpu.cpp)
+
+target_compile_options(simpleAtomicIntrinsics PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleAtomicIntrinsics PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simpleAtomicIntrinsics PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleAtomicIntrinsics/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleAtomicIntrinsics.cu`
+
+Source: cpp/0_Introduction/simpleAtomicIntrinsics/simpleAtomicIntrinsics.cu:34-52
+```cuda
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#ifdef _WIN32
+#define WINDOWS_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
+// Includes CUDA
+#include <cuda_runtime.h>
+
+// Utilities and timing functions
+#include <helper_functions.h> // includes cuda.h and cuda_runtime_api.h
+
+// CUDA helper functions
+#include <helper_cuda.h> // helper functions for CUDA error check
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleAtomicIntrinsics/simpleAtomicIntrinsics.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleAtomicIntrinsics/simpleAtomicIntrinsics.cu:67-86
+```cuda
+extern "C" bool computeGold(int *gpuData, const int len);
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    printf("%s starting...\n", sampleName);
+
+    runTest(argc, argv);
+
+    printf("%s completed, returned %s\n", sampleName, testResult ? "OK" : "ERROR!");
+    exit(testResult ? EXIT_SUCCESS : EXIT_FAILURE);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//! Run a simple test for CUDA
+////////////////////////////////////////////////////////////////////////////////
+void runTest(int argc, char **argv)
+{
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleAtomicIntrinsics/simpleAtomicIntrinsics.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleAtomicIntrinsics/simpleAtomicIntrinsics.cu:98-143
+```cuda
+    unsigned int numData    = 11;
+    unsigned int memSize    = sizeof(int) * numData;
+
+    // allocate mem for the result on host side
+    int *hOData;
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
+    checkCudaErrors(cudaMallocHost(&hOData, memSize));
+
+    // initialize the memory
+    for (unsigned int i = 0; i < numData; i++)
+        hOData[i] = 0;
+
+    // To make the AND and XOR tests generate something other than 0...
+    hOData[8] = hOData[10] = 0xff;
+
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    checkCudaErrors(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+    // allocate device memory for result
+    int *dOData;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc((void **)&dOData, memSize));
+    // copy host memory to device to initialize to zero
+    // JP: `cudaMemcpyAsync`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpyAsync(dOData, hOData, memSize, cudaMemcpyHostToDevice, stream));
+
+    // execute the kernel
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    testKernel<<<numBlocks, numThreads, 0, stream>>>(dOData);
+
+    // Copy result from device to host
+    checkCudaErrors(cudaMemcpyAsync(hOData, dOData, memSize, cudaMemcpyDeviceToHost, stream));
+    // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    checkCudaErrors(cudaStreamSynchronize(stream));
+
+    sdkStopTimer(&timer);
+    printf("Processing time: %f (ms)\n", sdkGetTimerValue(&timer));
+    sdkDeleteTimer(&timer);
+
+    // Compute reference solution
+    testResult = computeGold(hOData, numThreads * numBlocks);
+
+    // Cleanup memory
+    // JP: `cudaFreeHost`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaFreeHost(hOData));
+    checkCudaErrors(cudaFree(dOData));
+}
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleAtomicIntrinsics/simpleAtomicIntrinsics.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleAtomicIntrinsics_cpu.cpp`
+
+Source: cpp/0_Introduction/simpleAtomicIntrinsics/simpleAtomicIntrinsics_cpu.cpp:29-69
+```cpp
+#include <math.h>
+#include <stdio.h>
+
+#define min(a, b) (a) < (b) ? (a) : (b)
+#define max(a, b) (a) > (b) ? (a) : (b)
+
+////////////////////////////////////////////////////////////////////////////////
+// export C interface
+extern "C" int computeGold(int *gpuData, const int len);
+
+////////////////////////////////////////////////////////////////////////////////
+//! Compute reference data set
+//! Each element is multiplied with the number of threads / array length
+//! @param reference  reference data, computed but preallocated
+//! @param idata      input data as provided to device
+//! @param len        number of elements in reference / idata
+////////////////////////////////////////////////////////////////////////////////
+int computeGold(int *gpuData, const int len)
+{
+    int val = 0;
+
+    for (int i = 0; i < len; ++i) {
+        val += 10;
+    }
+
+    if (val != gpuData[0]) {
+        printf("atomicAdd failed\n");
+        return false;
+    }
+
+    val = 0;
+
+    for (int i = 0; i < len; ++i) {
+        val -= 10;
+    }
+
+    if (val != gpuData[1]) {
+        printf("atomicSub failed\n");
+        return false;
+    }
+
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleAtomicIntrinsics/simpleAtomicIntrinsics_cpu.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleAtomicIntrinsics_kernel.cuh`
+
+Source: cpp/0_Introduction/simpleAtomicIntrinsics/simpleAtomicIntrinsics_kernel.cuh:31-85
+```cuda
+#ifndef _SIMPLEATOMICS_KERNEL_H_
+#define _SIMPLEATOMICS_KERNEL_H_
+
+////////////////////////////////////////////////////////////////////////////////
+//! Simple test kernel for atomic instructions
+//! @param g_idata  input data in global memory
+//! @param g_odata  output data in global memory
+////////////////////////////////////////////////////////////////////////////////
+__global__ void testKernel(int *g_odata)
+{
+    // access thread id
+    // JP: `blockDim`, `blockIdx`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    const unsigned int tid = blockDim.x * blockIdx.x + threadIdx.x;
+
+    // Test various atomic instructions
+
+    // Arithmetic atomic instructions
+
+    // Atomic addition
+    atomicAdd(&g_odata[0], 10);
+
+    // Atomic subtraction (final should be 0)
+    atomicSub(&g_odata[1], 10);
+
+    // Atomic exchange
+    atomicExch(&g_odata[2], tid);
+
+    // Atomic maximum
+    atomicMax(&g_odata[3], tid);
+
+    // Atomic minimum
+    atomicMin(&g_odata[4], tid);
+
+    // Atomic increment (modulo 17+1)
+    atomicInc((unsigned int *)&g_odata[5], 17);
+
+    // Atomic decrement
+    atomicDec((unsigned int *)&g_odata[6], 137);
+
+    // Atomic compare-and-swap
+    atomicCAS(&g_odata[7], tid - 1, tid);
+
+    // Bitwise atomic instructions
+
+    // Atomic AND
+    atomicAnd(&g_odata[8], 2 * tid + 7);
+
+    // Atomic OR
+    atomicOr(&g_odata[9], 1 << tid);
+
+    // Atomic XOR
+    atomicXor(&g_odata[10], tid);
+}
+
+#endif // #ifndef _SIMPLEATOMICS_KERNEL_H_
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleAtomicIntrinsics/simpleAtomicIntrinsics_kernel.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

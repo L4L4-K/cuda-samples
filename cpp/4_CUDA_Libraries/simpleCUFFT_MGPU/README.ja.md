@@ -73,13 +73,195 @@ English anchor: read `simpleCUFFT_MGPU` as a focused example of the CUDA concept
 
 ## Concrete Reading Path
 
-- `simpleCUFFT_MGPU.cu`: focus on `cudaLibXtDesc`, `cufftComplex`, `cufftXtMemcpy`, `cufftXtMalloc`, `cufftXtExecDescriptorC2C`.
+- `simpleCUFFT_MGPU.cu`: focus on `cudaLibXtDesc`, `cufftComplex`, `CUDA`, `cufftXtMemcpy`, `cufftXtMalloc`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/simpleCUFFT_MGPU/CMakeLists.txt:1-47
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleCUFFT_MGPU LANGUAGES CUDA)
+
+# Disable response file for libraries on QNX as qcc does not support lib paths with double quotes
+if(CMAKE_SYSTEM_NAME STREQUAL "QNX")
+    set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_LIBRARIES OFF)
+endif()
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simpleCUFFT_MGPU
+add_executable(simpleCUFFT_MGPU simpleCUFFT_MGPU.cu)
+
+target_compile_options(simpleCUFFT_MGPU PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleCUFFT_MGPU PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simpleCUFFT_MGPU PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_link_libraries(simpleCUFFT_MGPU PRIVATE
+    # JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    CUDA::cufft
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUFFT_MGPU/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleCUFFT_MGPU.cu`
+
+Source: cpp/4_CUDA_Libraries/simpleCUFFT_MGPU/simpleCUFFT_MGPU.cu:32-67
+```cuda
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// CUDA runtime
+#include <cuda_runtime.h>
+
+// CUFFT Header file
+#include <cufftXt.h>
+
+// helper functions and utilities to work with CUDA
+#include <helper_cuda.h>
+#include <helper_functions.h>
+
+// Complex data type
+typedef float2 Complex;
+
+static __device__ __host__ inline Complex ComplexAdd(Complex, Complex);
+static __device__ __host__ inline Complex ComplexScale(Complex, float);
+static __device__ __host__ inline Complex ComplexMul(Complex, Complex);
+// JP: `cufftComplex`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+static __global__ void                    ComplexPointwiseMulAndScale(cufftComplex *, cufftComplex *, int, float);
+
+// Kernel for GPU
+void multiplyCoefficient(cudaLibXtDesc *, cudaLibXtDesc *, int, float, int);
+
+// Filtering functions
+void Convolve(const Complex *, int, const Complex *, int, Complex *);
+
+// Padding functions
+int PadData(const Complex *, Complex **, int, const Complex *, Complex **, int);
+
+////////////////////////////////////////////////////////////////////////////////
+// Data configuration
+// The filter size is assumed to be a number smaller than the signal size
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUFFT_MGPU/simpleCUFFT_MGPU.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/simpleCUFFT_MGPU/simpleCUFFT_MGPU.cu:71-90
+```cuda
+const int GPU_COUNT          = 2;
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    printf("\n[simpleCUFFT_MGPU] is starting...\n\n");
+
+    int GPU_N;
+    checkCudaErrors(cudaGetDeviceCount(&GPU_N));
+
+    if (GPU_N < GPU_COUNT) {
+        printf("No. of GPU on node %d\n", GPU_N);
+        printf("Two GPUs are required to run simpleCUFFT_MGPU sample code\n");
+        exit(EXIT_WAIVED);
+    }
+
+    int *major_minor         = (int *)malloc(sizeof(int) * GPU_N * 2);
+    int  found2IdenticalGPUs = 0;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUFFT_MGPU/simpleCUFFT_MGPU.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/simpleCUFFT_MGPU/simpleCUFFT_MGPU.cu:117-136
+```cuda
+            break;
+        }
+    }
+
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    free(major_minor);
+    if (!found2IdenticalGPUs) {
+        printf("No Two GPUs with same architecture found\nWaiving simpleCUFFT_2d_MGPU "
+               "sample\n");
+        exit(EXIT_WAIVED);
+    }
+
+    // Allocate host memory for the signal
+    Complex *h_signal = (Complex *)malloc(sizeof(Complex) * SIGNAL_SIZE);
+
+    // Initialize the memory for the signal
+    for (int i = 0; i < SIGNAL_SIZE; ++i) {
+        h_signal[i].x = rand() / (float)RAND_MAX;
+        h_signal[i].y = 0;
+    }
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUFFT_MGPU/simpleCUFFT_MGPU.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/simpleCUFFT_MGPU/simpleCUFFT_MGPU.cu:217-236
+```cuda
+           (long)(d_out_signal->descriptor->size[0] / sizeof(cufftComplex)),
+           (long)(d_out_signal->descriptor->size[1] / sizeof(cufftComplex)));
+
+    // Multiply the coefficients together and normalize the result
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    printf("Launching ComplexPointwiseMulAndScale<<< >>>\n");
+    multiplyCoefficient(d_out_signal, d_out_filter_kernel, new_size, 1.0f / new_size, nGPUs);
+
+    // cufftXtExecDescriptorC2C() - Execute inverse  FFT on data on multiple GPUs
+    printf("Transforming signal back cufftExecC2C\n");
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+    checkCudaErrors(cufftXtExecDescriptorC2C(plan_input, d_out_signal, d_out_signal, CUFFT_INVERSE));
+
+    // Create host pointer pointing to padded signal
+    Complex *h_convolved_signal = h_padded_signal;
+
+    // Allocate host memory for the convolution result
+    Complex *h_convolved_signal_ref = (Complex *)malloc(sizeof(Complex) * SIGNAL_SIZE);
+
+    // cufftXtMemcpy() - Copy data from multiple GPUs to host
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUFFT_MGPU/simpleCUFFT_MGPU.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 
@@ -96,9 +278,9 @@ English anchor: read `simpleCUFFT_MGPU` as a focused example of the CUDA concept
 | `cufftXtFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
 | `cudaSetDevice` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaDeviceSynchronize` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaGetDeviceCount` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `Device` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
-| `cufftXtSetGPUs` | Driver API の handle 境界です。context/module/function と error code を追います。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。

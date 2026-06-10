@@ -79,7 +79,7 @@ English anchor: read `volumeRender` as a focused example of the CUDA concepts us
 
 ## Concrete Reading Path
 
-- `volumeRender.cpp`: focus on `CUDA`, `cudaDeviceSynchronize`, `cudaExtent`, `cudaMemset`, `cudaGraphicsResource`.
+- `volumeRender.cpp`: focus on `CUDA`, `launch`, `cudaDeviceSynchronize`, `cudaExtent`, `cudaMemset`.
 - `volumeRender_kernel.cu`: focus on `cudaResourceDesc`, `cudaTextureDesc`, `cudaTextureObject_t`, `cudaDestroyTextureObject`, `cudaAddressModeClamp`.
 
 > **日本語**
@@ -88,10 +88,260 @@ English anchor: read `volumeRender` as a focused example of the CUDA concepts us
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/5_Domain_Specific/volumeRender/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(volumeRender LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/volumeRender/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `volumeRender.cpp`
+
+Source: cpp/5_Domain_Specific/volumeRender/volumeRender.cpp:30-48
+```cpp
+  Volume rendering sample
+
+  This sample loads a 3D volume from disk and displays it using
+  ray marching and 3D textures.
+
+  Note - this is intended to be an example of using 3D textures
+  in CUDA, not an optimized volume renderer.
+
+  Changes
+  sgg 22/3/2010
+  - updated to use texture for display instead of glDrawPixels.
+  - changed to render from front-to-back rather than back-to-front.
+*/
+
+// OpenGL Graphics includes
+#include <helper_gl.h>
+#if defined(__APPLE__) || defined(MACOSX)
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#include <GLUT/glut.h>
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/volumeRender/volumeRender.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/volumeRender/volumeRender.cpp:166-185
+```cpp
+
+    // map PBO to get CUDA device pointer
+    uint *d_output;
+    // map PBO to get CUDA device pointer
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+    checkCudaErrors(cudaGraphicsMapResources(1, &cuda_pbo_resource, 0));
+    size_t num_bytes;
+    checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&d_output, &num_bytes, cuda_pbo_resource));
+    // printf("CUDA mapped PBO: May access %ld bytes\n", num_bytes);
+
+    // clear image
+    // JP: `cudaMemset`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemset(d_output, 0, width * height * 4));
+
+    // call CUDA kernel, writing results to PBO
+    render_kernel(gridSize, blockSize, d_output, width, height, density, brightness, transferOffset, transferScale);
+
+    getLastCudaError("kernel failed");
+
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/volumeRender/volumeRender.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/volumeRender/volumeRender.cpp:377-396
+```cpp
+{
+    width  = w;
+    height = h;
+    initPixelBuffer();
+
+    // calculate new grid size
+    gridSize = dim3(iDivUp(width, blockSize.x), iDivUp(height, blockSize.y));
+
+    glViewport(0, 0, w, h);
+
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(0.0, 1.0, 0.0, 1.0, 0.0, 1.0);
+}
+
+void cleanup()
+{
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/volumeRender/volumeRender.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/volumeRender/volumeRender.cpp:508-527
+```cpp
+    // Start timer 0 and process n loops on the GPU
+    int nIter = 10;
+
+    for (int i = -1; i < nIter; i++) {
+        if (i == 0) {
+            // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+            cudaDeviceSynchronize();
+            sdkStartTimer(&timer);
+        }
+
+        render_kernel(gridSize, blockSize, d_output, width, height, density, brightness, transferOffset, transferScale);
+    }
+
+    cudaDeviceSynchronize();
+    sdkStopTimer(&timer);
+    // Get elapsed time and throughput, then log to sample and master logs
+    double dAvgTime = sdkGetTimerValue(&timer) / (nIter * 1000.0);
+    printf("volumeRender, Throughput = %.4f MTexels/s, Time = %.5f s, Size = %u "
+           "Texels, NumDevsUsed = %u, Workgroup = %u\n",
+           (1.0e-6 * width * height) / dAvgTime,
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/volumeRender/volumeRender.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `volumeRender_kernel.cu`
+
+Source: cpp/5_Domain_Specific/volumeRender/volumeRender_kernel.cu:31-49
+```cuda
+#ifndef _VOLUMERENDER_KERNEL_CU_
+#define _VOLUMERENDER_KERNEL_CU_
+
+#include <helper_cuda.h>
+#include <helper_math.h>
+
+typedef unsigned int  uint;
+typedef unsigned char uchar;
+
+cudaArray *d_volumeArray = 0;
+cudaArray *d_transferFuncArray;
+
+typedef unsigned char VolumeType;
+// typedef unsigned short VolumeType;
+
+cudaTextureObject_t texObject;   // For 3D texture
+cudaTextureObject_t transferTex; // For 1D transfer function texture
+
+typedef struct
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/volumeRender/volumeRender_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/volumeRender/volumeRender_kernel.cu:127-146
+```cuda
+    const float  tstep            = 0.01f;
+    const float  opacityThreshold = 0.95f;
+    const float3 boxMin           = make_float3(-1.0f, -1.0f, -1.0f);
+    const float3 boxMax           = make_float3(1.0f, 1.0f, 1.0f);
+
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    uint x = blockIdx.x * blockDim.x + threadIdx.x;
+    uint y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if ((x >= imageW) || (y >= imageH))
+        return;
+
+    float u = (x / (float)imageW) * 2.0f - 1.0f;
+    float v = (y / (float)imageH) * 2.0f - 1.0f;
+
+    // calculate eye ray in world space
+    Ray eyeRay;
+    eyeRay.o = make_float3(mul(c_invViewMatrix, make_float4(0.0f, 0.0f, 0.0f, 1.0f)));
+    eyeRay.d = normalize(make_float3(u, v, -2.0f));
+    eyeRay.d = mul(c_invViewMatrix, eyeRay.d);
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/volumeRender/volumeRender_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/volumeRender/volumeRender_kernel.cu:200-219
+```cuda
+}
+
+extern "C" void setTextureFilterMode(bool bLinearFilter)
+{
+    if (texObject) {
+        // JP: `cudaDestroyTextureObject`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        checkCudaErrors(cudaDestroyTextureObject(texObject));
+    }
+    cudaResourceDesc texRes;
+    memset(&texRes, 0, sizeof(cudaResourceDesc));
+
+    texRes.resType         = cudaResourceTypeArray;
+    texRes.res.array.array = d_volumeArray;
+
+    cudaTextureDesc texDescr;
+    memset(&texDescr, 0, sizeof(cudaTextureDesc));
+
+    texDescr.normalizedCoords = true;
+    texDescr.filterMode       = bLinearFilter ? cudaFilterModeLinear : cudaFilterModePoint;
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/volumeRender/volumeRender_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/volumeRender/volumeRender_kernel.cu:228-250
+```cuda
+
+extern "C" void initCuda(void *h_volume, cudaExtent volumeSize)
+{
+    // create 3D array
+    cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc<VolumeType>();
+    checkCudaErrors(cudaMalloc3DArray(&d_volumeArray, &channelDesc, volumeSize));
+
+    // copy data to 3D array
+    cudaMemcpy3DParms copyParams = {0};
+    copyParams.srcPtr =
+        make_cudaPitchedPtr(h_volume, volumeSize.width * sizeof(VolumeType), volumeSize.width, volumeSize.height);
+    copyParams.dstArray = d_volumeArray;
+    copyParams.extent   = volumeSize;
+    // JP: `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    copyParams.kind     = cudaMemcpyHostToDevice;
+    checkCudaErrors(cudaMemcpy3D(&copyParams));
+
+    cudaResourceDesc texRes;
+    memset(&texRes, 0, sizeof(cudaResourceDesc));
+
+    texRes.resType         = cudaResourceTypeArray;
+    texRes.res.array.array = d_volumeArray;
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/volumeRender/volumeRender_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
 | - | - |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaExtent` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaDeviceSynchronize` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaDestroyTextureObject` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
@@ -105,7 +355,6 @@ English anchor: read `volumeRender` as a focused example of the CUDA concepts us
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
 | `cudaTextureObject_t` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaAddressModeClamp` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
-| `cudaMallocArray` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。
@@ -169,7 +418,7 @@ The sample prints timing, bandwidth, latency, throughput, or comparison data; ex
 
 ## Exercises
 
-- `cudaExtent` の直前と直後で、どの memory/resource が有効になったかをメモする。
+- `launch` の直前と直後で、どの memory/resource が有効になったかをメモする。
 - source file を上から読み、setup、GPU work、sync、validation、cleanup の行番号を抜き出す。
 - problem size や input size を変更した場合に、境界チェックや allocation size が破綻しないか説明する。
 - stream timeline を描き、copy、kernel、event、host wait の位置を分ける。

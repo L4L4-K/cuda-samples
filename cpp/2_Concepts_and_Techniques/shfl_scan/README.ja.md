@@ -75,7 +75,7 @@ English anchor: read `shfl_scan` as a focused example of the CUDA concepts used 
 ## Concrete Reading Path
 
 - `shfl_integral_image.cuh`: focus on `threadIdx`, `__syncthreads`, `__shared__`, `blockIdx`, `blockDim`.
-- `shfl_scan.cu`: focus on `blockDim`, `threadIdx`, `cudaEventRecord`, `blockIdx`, `cudaMallocHost`.
+- `shfl_scan.cu`: focus on `blockDim`, `threadIdx`, `cudaEventRecord`, `launch`, `blockIdx`.
 - `util.h`: focus on `CUDA`, `cudaSuccess`, `cudaGetErrorString`, `cudaError_t`, `launch`.
 
 > **日本語**
@@ -84,15 +84,297 @@ English anchor: read `shfl_scan` as a focused example of the CUDA concepts used 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/2_Concepts_and_Techniques/shfl_scan/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(shfl_scan LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for shfl_scan
+add_executable(shfl_scan shfl_scan.cu)
+
+target_compile_options(shfl_scan PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(shfl_scan PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(shfl_scan PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/shfl_scan/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `shfl_integral_image.cuh`
+
+Source: cpp/2_Concepts_and_Techniques/shfl_scan/shfl_integral_image.cuh:29-65
+```cuda
+#include <cooperative_groups.h>
+
+namespace cg = cooperative_groups;
+
+// Utility function to extract unsigned chars from an
+// unsigned integer
+__device__ uchar4 uint_to_uchar4(const unsigned int in)
+{
+    return make_uchar4(
+        (in & 0x000000ff) >> 0, (in & 0x0000ff00) >> 8, (in & 0x00ff0000) >> 16, (in & 0xff000000) >> 24);
+}
+
+// Utility for dealing with vector data at different levels.
+struct packed_result
+{
+    uint4 x, y, z, w;
+};
+
+__device__ packed_result get_prefix_sum(const uint4 &data, const cg::thread_block &cta)
+{
+    const auto tile = cg::tiled_partition<32>(cta);
+
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    __shared__ unsigned int sums[128];
+    const unsigned int      lane_id = tile.thread_rank();
+    const unsigned int      warp_id = tile.meta_group_rank();
+
+    unsigned int result[16] = {};
+    {
+        const uchar4 a = uint_to_uchar4(data.x);
+        const uchar4 b = uint_to_uchar4(data.y);
+        const uchar4 c = uint_to_uchar4(data.z);
+        const uchar4 d = uint_to_uchar4(data.w);
+
+        result[0] = a.x;
+        result[1] = a.x + a.y;
+        result[2] = a.x + a.y + a.z;
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/shfl_scan/shfl_integral_image.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/shfl_scan/shfl_integral_image.cuh:127-146
+```cuda
+    if (tile.thread_rank() == (tile.size() - 1)) {
+        sums[warp_id] = result[15];
+    }
+
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
+    __syncthreads();
+
+    if (warp_id == 0) {
+        unsigned int warp_sum = sums[lane_id];
+
+#pragma unroll
+        for (unsigned int i = 1; i <= 16; i *= 2) {
+            const unsigned int n = tile.shfl_up(warp_sum, i);
+
+            if (lane_id >= i)
+                warp_sum += n;
+        }
+
+        sums[lane_id] = warp_sum;
+    }
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/shfl_scan/shfl_integral_image.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `shfl_scan.cu`
+
+Source: cpp/2_Concepts_and_Techniques/shfl_scan/shfl_scan.cu:37-68
+```cuda
+#include <cuda_runtime.h>
+#include <helper_cuda.h>
+#include <helper_functions.h>
+#include <stdio.h>
+
+#include "shfl_integral_image.cuh"
+
+// Scan using shfl - takes log2(n) steps
+// This function demonstrates basic use of the shuffle intrinsic, __shfl_up,
+// to perform a scan operation across a block.
+// First, it performs a scan (prefix sum in this case) inside a warp
+// Then to continue the scan operation across the block,
+// each warp's sum is placed into shared memory.  A single warp
+// then performs a shuffle scan on that shared memory.  The results
+// are then uniformly added to each warp's threads.
+// This pyramid type approach is continued by placing each block's
+// final sum in global memory and prefix summing that via another kernel call,
+// then uniformly adding across the input data via the uniform_add<<<>>> kernel.
+
+__global__ void shfl_scan_test(int *data, int width, int *partial_sums = NULL)
+{
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    extern __shared__ int sums[];
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int                   id      = ((blockIdx.x * blockDim.x) + threadIdx.x);
+    int                   lane_id = id % warpSize;
+    // determine a warp_id within a block
+    int warp_id = threadIdx.x / warpSize;
+
+    // Below is the basic structure of using a shfl instruction
+    // for a scan.
+    // Record "value" as a variable - we accumulate it along the way
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/shfl_scan/shfl_scan.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/shfl_scan/shfl_scan.cu:92-111
+```cuda
+    if (threadIdx.x % warpSize == warpSize - 1) {
+        sums[warp_id] = value;
+    }
+
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
+    __syncthreads();
+
+    //
+    // scan sum the warp sums
+    // the same shfl scan operation, but performed on warp sums
+    //
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+    if (warp_id == 0 && lane_id < (blockDim.x / warpSize)) {
+        int warp_sum = sums[lane_id];
+
+        int mask = (1 << (blockDim.x / warpSize)) - 1;
+        for (int i = 1; i <= (blockDim.x / warpSize); i *= 2) {
+            int n = __shfl_up_sync(mask, warp_sum, i, (blockDim.x / warpSize));
+
+            if (lane_id >= i)
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/shfl_scan/shfl_scan.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/shfl_scan/shfl_scan.cu:244-263
+```cuda
+        printf("> __shfl() intrinsic requires device SM 3.0+\n");
+        printf("> Waiving test.\n");
+        exit(EXIT_WAIVED);
+    }
+
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
+    checkCudaErrors(cudaMallocHost(reinterpret_cast<void **>(&h_data), sizeof(int) * n_elements));
+    checkCudaErrors(cudaMallocHost(reinterpret_cast<void **>(&h_result), sizeof(int) * n_elements));
+
+    // initialize data:
+    printf("Computing Simple Sum test\n");
+    printf("---------------------------------------------------\n");
+
+    printf("Initialize test data [1, 1, 1...]\n");
+
+    for (int i = 0; i < n_elements; i++) {
+        h_data[i] = 1;
+    }
+
+    int blockSize     = 256;
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/shfl_scan/shfl_scan.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/shfl_scan/shfl_scan.cu:282-301
+```cuda
+    float inc = 0;
+
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&d_data), sz));
+    checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&d_partial_sums), partial_sz));
+    // JP: `cudaMemset`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemset(d_partial_sums, 0, partial_sz));
+
+    checkCudaErrors(cudaMallocHost(reinterpret_cast<void **>(&h_partial_sums), partial_sz));
+    checkCudaErrors(cudaMemcpy(d_data, h_data, sz, cudaMemcpyHostToDevice));
+
+    checkCudaErrors(cudaEventRecord(start, 0));
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    shfl_scan_test<<<gridSize, blockSize, shmem_sz>>>(d_data, 32, d_partial_sums);
+    shfl_scan_test<<<p_gridSize, p_blockSize, shmem_sz>>>(d_partial_sums, 32);
+    uniform_add<<<gridSize - 1, blockSize>>>(d_data + blockSize, d_partial_sums, n_elements);
+    checkCudaErrors(cudaEventRecord(stop, 0));
+    // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
+    checkCudaErrors(cudaEventSynchronize(stop));
+    checkCudaErrors(cudaEventElapsedTime(&inc, start, stop));
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/shfl_scan/shfl_scan.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `util.h`
+
+Source: cpp/2_Concepts_and_Techniques/shfl_scan/util.h:29-62
+```cpp
+#ifndef SAMPLES_SHFL_SCAN_UTIL_H_
+#define SAMPLES_SHFL_SCAN_UTIL_H_
+
+// Macro to catch CUDA errors in kernel launches
+#define CHECK_LAUNCH_ERROR()                                                                                        \
+    do {                                                                                                            \
+        /* Check synchronous errors, i.e. pre-launch */                                                             \
+        cudaError_t err = cudaGetLastError();                                                                       \
+        if (cudaSuccess != err) {                                                                                   \
+            fprintf(                                                                                                \
+                stderr, "Cuda error in file '%s' in line %i : %s.\n", __FILE__, __LINE__, cudaGetErrorString(err)); \
+            exit(EXIT_FAILURE);                                                                                     \
+        }                                                                                                           \
+        /* Check asynchronous errors, i.e. kernel failed (ULF) */                                                   \
+        err = cudaDeviceSynchronize();                                                                              \
+        if (cudaSuccess != err) {                                                                                   \
+            fprintf(                                                                                                \
+                stderr, "Cuda error in file '%s' in line %i : %s!\n", __FILE__, __LINE__, cudaGetErrorString(err)); \
+            exit(EXIT_FAILURE);                                                                                     \
+        }                                                                                                           \
+    } while (0)
+
+// Macro to catch CUDA errors in CUDA runtime calls
+#define CUDA_CHECK(call)                                                                                            \
+    do {                                                                                                            \
+        cudaError_t err = call;                                                                                     \
+        if (cudaSuccess != err) {                                                                                   \
+            fprintf(                                                                                                \
+                stderr, "Cuda error in file '%s' in line %i : %s.\n", __FILE__, __LINE__, cudaGetErrorString(err)); \
+            exit(EXIT_FAILURE);                                                                                     \
+        }                                                                                                           \
+    } while (0)
+
+#endif // SAMPLES_SHFL_SCAN_UTIL_H_
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/shfl_scan/util.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
 | - | - |
 | `threadIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
-| `__syncthreads` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |
 | `blockDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
+| `__syncthreads` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |
 | `blockIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `cudaEventRecord` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaMallocHost` | pinned host memory を作り、async copy や DMA の前提を作る API です。 |
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
 | `cudaMemcpy` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
@@ -101,7 +383,6 @@ English anchor: read `shfl_scan` as a focused example of the CUDA concepts used 
 | `cudaEventCreate` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
 | `cudaMemset` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
-| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。

@@ -73,13 +73,182 @@ English anchor: read `simpleCUBLASXT` as a focused example of the CUDA concepts 
 
 ## Concrete Reading Path
 
-- `simpleCUBLASXT.cpp`: focus on `CUBLAS_STATUS_SUCCESS`, `CUBLASXT`, `cudaFree`, `cudaSuccess`, `CUDA`.
+- `simpleCUBLASXT.cpp`: focus on `CUDA`, `CUBLAS_STATUS_SUCCESS`, `CUBLASXT`, `cudaFree`, `cudaSuccess`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/simpleCUBLASXT/CMakeLists.txt:1-47
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleCUBLASXT LANGUAGES CXX)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simpleCUBLASXT
+add_executable(simpleCUBLASXT simpleCUBLASXT.cpp)
+
+target_compile_options(simpleCUBLASXT PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleCUBLASXT PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simpleCUBLASXT PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_include_directories(simpleCUBLASXT PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+target_link_libraries(simpleCUBLASXT PRIVATE
+    CUDA::cudart
+    # JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    CUDA::cublas
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUBLASXT/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleCUBLASXT.cpp`
+
+Source: cpp/4_CUDA_Libraries/simpleCUBLASXT/simpleCUBLASXT.cpp:36-54
+```cpp
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* Includes, cuda */
+#include <cublasXt.h>
+#include <cuda_runtime.h>
+#include <helper_cuda.h>
+
+/* Matrix size */
+// #define N  (275)
+#define N (1024)
+// Restricting the max used GPUs as input matrix is not so large
+#define MAX_NUM_OF_GPUS 2
+
+/* Host implementation of a simple version of sgemm */
+static void simple_sgemm(int n, float alpha, const float *A, const float *B, float beta, float *C)
+{
+    int i;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUBLASXT/simpleCUBLASXT.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/simpleCUBLASXT/simpleCUBLASXT.cpp:79-98
+```cpp
+    {
+        uint64_t compute_perf;
+        int      device_id;
+    } gpu_perf;
+
+    gpu_perf *gpu_stats = (gpu_perf *)malloc(sizeof(gpu_perf) * device_count);
+
+    cudaDeviceProp deviceProp;
+    int            devices_prohibited = 0;
+    int            computeMode;
+    int            clockRate;
+
+    while (current_device < device_count) {
+        cudaGetDeviceProperties(&deviceProp, current_device);
+        checkCudaErrors(cudaDeviceGetAttribute(&computeMode, cudaDevAttrComputeMode, current_device));
+        checkCudaErrors(cudaDeviceGetAttribute(&clockRate, cudaDevAttrClockRate, current_device));
+        // If this GPU is not running on Compute Mode prohibited,
+        // then we can add it to the list
+        int sm_per_multiproc;
+        if (computeMode != cudaComputeModeProhibited) {
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUBLASXT/simpleCUBLASXT.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/simpleCUBLASXT/simpleCUBLASXT.cpp:135-158
+```cpp
+        for (int i = 0; i < num_of_devices; i++) {
+            device_ids[i] = gpu_stats[i].device_id;
+        }
+    }
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    free(gpu_stats);
+}
+
+/* Main */
+int main(int argc, char **argv)
+{
+    // JP: `cublasStatus_t`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    cublasStatus_t   status;
+    float           *h_A;
+    float           *h_B;
+    float           *h_C;
+    float           *h_C_ref;
+    float           *d_A   = 0;
+    float           *d_B   = 0;
+    float           *d_C   = 0;
+    float            alpha = 1.0f;
+    float            beta  = 0.0f;
+    int              n2    = N * N;
+    int              i;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUBLASXT/simpleCUBLASXT.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/simpleCUBLASXT/simpleCUBLASXT.cpp:182-201
+```cpp
+
+    /* Initialize CUBLAS */
+    printf("simpleCUBLASXT test running..\n");
+
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+    status = cublasXtCreate(&handle);
+
+    if (status != CUBLAS_STATUS_SUCCESS) {
+        fprintf(stderr, "!!!! CUBLASXT initialization error\n");
+        return EXIT_FAILURE;
+    }
+
+    /* Select devices for use in CUBLASXT math functions */
+    status = cublasXtDeviceSelect(handle, num_of_devices, devices);
+
+    if (status != CUBLAS_STATUS_SUCCESS) {
+        fprintf(stderr, "!!!! CUBLASXT device selection error\n");
+        return EXIT_FAILURE;
+    }
+
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUBLASXT/simpleCUBLASXT.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

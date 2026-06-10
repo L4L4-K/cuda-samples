@@ -82,6 +82,196 @@ English anchor: read `matrixMulCUBLAS` as a focused example of the CUDA concepts
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/matrixMulCUBLAS/CMakeLists.txt:1-47
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(matrixMulCUBLAS LANGUAGES CXX)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for matrixMulCUBLAS
+add_executable(matrixMulCUBLAS matrixMulCUBLAS.cpp)
+
+target_compile_options(matrixMulCUBLAS PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(matrixMulCUBLAS PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(matrixMulCUBLAS PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_include_directories(matrixMulCUBLAS PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+target_link_libraries(matrixMulCUBLAS PRIVATE
+    CUDA::cudart
+    # JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    CUDA::cublas
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/matrixMulCUBLAS/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `matrixMulCUBLAS.cpp`
+
+Source: cpp/4_CUDA_Libraries/matrixMulCUBLAS/matrixMulCUBLAS.cpp:63-86
+```cpp
+* in Proc. 2008 ACM/IEEE Conf. on Supercomputing (SC '08),
+* Piscataway, NJ: IEEE Press, 2008, pp. Art. 31:1-11.
+*/
+
+// Utilities and system includes
+#include <assert.h>
+#include <helper_string.h> // helper for shared functions common to CUDA Samples
+
+// CUDA runtime
+#include <cublas_v2.h>
+#include <cuda_runtime.h>
+
+// CUDA and CUBLAS functions
+#include <helper_cuda.h>
+#include <helper_functions.h>
+
+#ifndef min
+#define min(a, b) ((a < b) ? a : b)
+#endif
+#ifndef max
+#define max(a, b) ((a > b) ? a : b)
+#endif
+
+// Optional Command-line multiplier for matrix sizes
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/matrixMulCUBLAS/matrixMulCUBLAS.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/matrixMulCUBLAS/matrixMulCUBLAS.cpp:219-238
+```cpp
+    srand(2006);
+
+    // allocate host memory for matrices A and B
+    unsigned int size_A     = matrix_size.uiWA * matrix_size.uiHA;
+    unsigned int mem_size_A = sizeof(float) * size_A;
+    float       *h_A        = (float *)malloc(mem_size_A);
+    unsigned int size_B     = matrix_size.uiWB * matrix_size.uiHB;
+    unsigned int mem_size_B = sizeof(float) * size_B;
+    float       *h_B        = (float *)malloc(mem_size_B);
+
+    // set seed for rand()
+    srand(2006);
+
+    // initialize host memory
+    randomInit(h_A, size_A);
+    randomInit(h_B, size_B);
+
+    // allocate device memory
+    float       *d_A, *d_B, *d_C;
+    unsigned int size_C     = matrix_size.uiWC * matrix_size.uiHC;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/matrixMulCUBLAS/matrixMulCUBLAS.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/matrixMulCUBLAS/matrixMulCUBLAS.cpp:243-262
+```cpp
+    float *h_CUBLAS = (float *)malloc(mem_size_C);
+
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc((void **)&d_A, mem_size_A));
+    checkCudaErrors(cudaMalloc((void **)&d_B, mem_size_B));
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpy(d_A, h_A, mem_size_A, cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(d_B, h_B, mem_size_B, cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMalloc((void **)&d_C, mem_size_C));
+
+    // setup execution parameters
+    dim3 threads(block_size, block_size);
+    dim3 grid(matrix_size.uiWC / threads.x, matrix_size.uiHC / threads.y);
+
+    // create and start timer
+    // JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    printf("Computing result using CUBLAS...");
+
+    // execute the kernel
+    int nIter = 30;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/matrixMulCUBLAS/matrixMulCUBLAS.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/matrixMulCUBLAS/matrixMulCUBLAS.cpp:267-306
+```cpp
+        const float    beta  = 0.0f;
+        cublasHandle_t handle;
+        // JP: `cudaEvent_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+        cudaEvent_t    start, stop;
+
+        checkCudaErrors(cublasCreate(&handle));
+
+        // Perform warmup operation with cublas
+        // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+        checkCudaErrors(cublasSgemm(handle,
+                                    CUBLAS_OP_N,
+                                    CUBLAS_OP_N,
+                                    matrix_size.uiWB,
+                                    matrix_size.uiHA,
+                                    matrix_size.uiWA,
+                                    &alpha,
+                                    d_B,
+                                    matrix_size.uiWB,
+                                    d_A,
+                                    matrix_size.uiWA,
+                                    &beta,
+                                    d_C,
+                                    matrix_size.uiWB));
+
+        // Allocate CUDA events that we'll use for timing
+        // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+        checkCudaErrors(cudaEventCreate(&start));
+        checkCudaErrors(cudaEventCreate(&stop));
+
+        // Record the start event
+        checkCudaErrors(cudaEventRecord(start, NULL));
+
+        for (int j = 0; j < nIter; j++) {
+            // note cublas is column primary!
+            // need to transpose the order
+            // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+            checkCudaErrors(cublasSgemm(handle,
+                                        CUBLAS_OP_N,
+                                        CUBLAS_OP_N,
+                                        matrix_size.uiWB,
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/matrixMulCUBLAS/matrixMulCUBLAS.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

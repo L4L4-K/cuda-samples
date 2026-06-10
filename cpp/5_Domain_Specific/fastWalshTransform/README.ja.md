@@ -85,6 +85,300 @@ English anchor: read `fastWalshTransform` as a focused example of the CUDA conce
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/5_Domain_Specific/fastWalshTransform/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(fastWalshTransform LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for fastWalshTransform
+add_executable(fastWalshTransform fastWalshTransform.cu fastWalshTransform_gold.cpp)
+
+target_compile_options(fastWalshTransform PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(fastWalshTransform PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(fastWalshTransform PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/fastWalshTransform/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `fastWalshTransform.cu`
+
+Source: cpp/5_Domain_Specific/fastWalshTransform/fastWalshTransform.cu:42-60
+```cuda
+#include <helper_cuda.h>
+#include <helper_functions.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+////////////////////////////////////////////////////////////////////////////////
+// Reference CPU FWT
+////////////////////////////////////////////////////////////////////////////////
+extern "C" void fwtCPU(float *h_Output, float *h_Input, int log2N);
+extern "C" void slowWTcpu(float *h_Output, float *h_Input, int log2N);
+extern "C" void dyadicConvolutionCPU(float *h_Result, float *h_Data, float *h_Kernel, int log2dataN, int log2kernelN);
+
+////////////////////////////////////////////////////////////////////////////////
+// GPU FWT
+////////////////////////////////////////////////////////////////////////////////
+#include "fastWalshTransform_kernel.cuh"
+
+////////////////////////////////////////////////////////////////////////////////
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/fastWalshTransform/fastWalshTransform.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/fastWalshTransform/fastWalshTransform.cu:72-139
+```cuda
+const double NOPS = 3.0 * (double)dataN * (double)log2Data / 2.0;
+
+////////////////////////////////////////////////////////////////////////////////
+// Main program
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char *argv[])
+{
+    float *h_Data, *h_Kernel, *h_ResultCPU, *h_ResultGPU;
+
+    float *d_Data, *d_Kernel;
+
+    double delta, ref, sum_delta2, sum_ref2, L2norm, gpuTime;
+
+    StopWatchInterface *hTimer = NULL;
+    int                 i;
+
+    printf("%s Starting...\n\n", argv[0]);
+
+    // use command-line specified CUDA device, otherwise use device with highest
+    // Gflops/s
+    findCudaDevice(argc, (const char **)argv);
+
+    sdkCreateTimer(&hTimer);
+
+    printf("Initializing data...\n");
+    printf("...allocating CPU memory\n");
+    h_Kernel    = (float *)malloc(KERNEL_SIZE);
+    h_Data      = (float *)malloc(DATA_SIZE);
+    h_ResultCPU = (float *)malloc(DATA_SIZE);
+    h_ResultGPU = (float *)malloc(DATA_SIZE);
+    printf("...allocating GPU memory\n");
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc((void **)&d_Kernel, DATA_SIZE));
+    checkCudaErrors(cudaMalloc((void **)&d_Data, DATA_SIZE));
+
+    printf("...generating data\n");
+    printf("Data length: %i; kernel length: %i\n", dataN, kernelN);
+    srand(2007);
+
+    for (i = 0; i < kernelN; i++) {
+        h_Kernel[i] = (float)rand() / (float)RAND_MAX;
+    }
+
+    for (i = 0; i < dataN; i++) {
+        h_Data[i] = (float)rand() / (float)RAND_MAX;
+    }
+
+    // JP: `cudaMemset`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemset(d_Kernel, 0, DATA_SIZE));
+    checkCudaErrors(cudaMemcpy(d_Kernel, h_Kernel, KERNEL_SIZE, cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(d_Data, h_Data, DATA_SIZE, cudaMemcpyHostToDevice));
+
+    printf("Running GPU dyadic convolution using Fast Walsh Transform...\n");
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    checkCudaErrors(cudaDeviceSynchronize());
+    sdkResetTimer(&hTimer);
+    sdkStartTimer(&hTimer);
+    fwtBatchGPU(d_Data, 1, log2Data);
+    fwtBatchGPU(d_Kernel, 1, log2Data);
+    modulateGPU(d_Data, d_Kernel, dataN);
+    fwtBatchGPU(d_Data, 1, log2Data);
+    checkCudaErrors(cudaDeviceSynchronize());
+    sdkStopTimer(&hTimer);
+    gpuTime = sdkGetTimerValue(&hTimer);
+    printf("GPU time: %f ms; GOP/s: %f\n", gpuTime, NOPS / (gpuTime * 0.001 * 1E+9));
+
+    printf("Reading back GPU results...\n");
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/fastWalshTransform/fastWalshTransform.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/fastWalshTransform/fastWalshTransform.cu:155-170
+```cuda
+
+    L2norm = sqrt(sum_delta2 / sum_ref2);
+
+    printf("Shutting down...\n");
+    sdkDeleteTimer(&hTimer);
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaFree(d_Data));
+    checkCudaErrors(cudaFree(d_Kernel));
+    free(h_ResultGPU);
+    free(h_ResultCPU);
+    free(h_Data);
+    free(h_Kernel);
+
+    printf("L2 norm: %E\n", L2norm);
+    printf(L2norm < 1e-6 ? "Test passed\n" : "Test failed!\n");
+}
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/fastWalshTransform/fastWalshTransform.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `fastWalshTransform_gold.cpp`
+
+Source: cpp/5_Domain_Specific/fastWalshTransform/fastWalshTransform_gold.cpp:32-100
+```cpp
+extern "C" void fwtCPU(float *h_Output, float *h_Input, int log2N)
+{
+    const int N = 1 << log2N;
+
+    for (int pos = 0; pos < N; pos++)
+        h_Output[pos] = h_Input[pos];
+
+    // Cycle through stages with different butterfly strides
+    for (int stride = N / 2; stride >= 1; stride >>= 1) {
+        // Cycle through subvectors of (2 * stride) elements
+        for (int base = 0; base < N; base += 2 * stride)
+
+            // Butterfly index within subvector of (2 * stride) size
+            for (int j = 0; j < stride; j++) {
+                int i0 = base + j + 0;
+                int i1 = base + j + stride;
+
+                float T1     = h_Output[i0];
+                float T2     = h_Output[i1];
+                h_Output[i0] = T1 + T2;
+                h_Output[i1] = T1 - T2;
+            }
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Straightforward Walsh Transform: used to test both CPU and GPU FWT
+// Slow. Uses doubles because of straightforward accumulation
+///////////////////////////////////////////////////////////////////////////////
+extern "C" void slowWTcpu(float *h_Output, float *h_Input, int log2N)
+{
+    const int N = 1 << log2N;
+
+    for (int i = 0; i < N; i++) {
+        double sum = 0;
+
+        for (int j = 0; j < N; j++) {
+            // Walsh-Hadamard quotient
+            double q = 1.0;
+
+            for (int t = i & j; t != 0; t >>= 1)
+                if (t & 1)
+                    q = -q;
+
+            sum += q * h_Input[j];
+        }
+
+        h_Output[i] = (float)sum;
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Reference CPU dyadic convolution.
+// Extremely slow because of non-linear memory access patterns (cache thrashing)
+////////////////////////////////////////////////////////////////////////////////
+extern "C" void dyadicConvolutionCPU(float *h_Result, float *h_Data, float *h_Kernel, int log2dataN, int log2kernelN)
+{
+    const int dataN   = 1 << log2dataN;
+    const int kernelN = 1 << log2kernelN;
+
+    for (int i = 0; i < dataN; i++) {
+        double sum = 0;
+
+        for (int j = 0; j < kernelN; j++)
+            sum += h_Data[i ^ j] * h_Kernel[j];
+
+        h_Result[i] = (float)sum;
+    }
+}
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/fastWalshTransform/fastWalshTransform_gold.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `fastWalshTransform_kernel.cuh`
+
+Source: cpp/5_Domain_Specific/fastWalshTransform/fastWalshTransform_kernel.cuh:29-64
+```cuda
+#ifndef FWT_KERNEL_CUH
+#define FWT_KERNEL_CUH
+#ifndef fwt_kernel_cuh
+#define fwt_kernel_cuh
+
+#include <cooperative_groups.h>
+
+namespace cg = cooperative_groups;
+
+///////////////////////////////////////////////////////////////////////////////
+// Elementary(for vectors less than elementary size) in-shared memory
+// combined radix-2 + radix-4 Fast Walsh Transform
+///////////////////////////////////////////////////////////////////////////////
+#define ELEMENTARY_LOG2SIZE 11
+
+__global__ void fwtBatch1Kernel(float *d_Output, float *d_Input, int log2N)
+{
+    // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    cg::thread_block cta  = cg::this_thread_block();
+    const int        N    = 1 << log2N;
+    const int        base = blockIdx.x << log2N;
+
+    //(2 ** 11) * 4 bytes == 8KB -- maximum s_data[] size for G80
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    extern __shared__ float s_data[];
+    float                  *d_Src = d_Input + base;
+    float                  *d_Dst = d_Output + base;
+
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+    for (int pos = threadIdx.x; pos < N; pos += blockDim.x) {
+        s_data[pos] = d_Src[pos];
+    }
+
+    // Main radix-4 stages
+    const int pos = threadIdx.x;
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/fastWalshTransform/fastWalshTransform_kernel.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
@@ -97,8 +391,8 @@ English anchor: read `fastWalshTransform` as a focused example of the CUDA conce
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
 | `blockIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `cudaMemset` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
-| `cudaMemcpyHostToDevice` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
+| `cudaMemcpyHostToDevice` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `__shared__` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |
 | `gridDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `cudaMemcpyDeviceToHost` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |

@@ -84,6 +84,172 @@ English anchor: read `simpleAssert_nvrtc` as a focused example of the CUDA conce
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/simpleAssert_nvrtc/CMakeLists.txt:1-47
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleAssert_nvrtc LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add sample target executable
+add_executable(simpleAssert_nvrtc simpleAssert.cpp)
+
+target_compile_options(simpleAssert_nvrtc PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleAssert_nvrtc PRIVATE cxx_std_17 cuda_std_17)
+
+target_link_libraries(simpleAssert_nvrtc PRIVATE
+    # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
+    CUDA::nvrtc
+    CUDA::cuda_driver
+)
+
+# Copy clock_kernel.cu to the output directory
+add_custom_command(TARGET simpleAssert_nvrtc POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_CURRENT_SOURCE_DIR}/simpleAssert_kernel.cu ${CMAKE_CURRENT_BINARY_DIR}
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleAssert_nvrtc/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleAssert.cpp`
+
+Source: cpp/0_Introduction/simpleAssert_nvrtc/simpleAssert.cpp:29-47
+```cpp
+#ifdef _WIN32
+#define WINDOWS_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
+#include <sys/utsname.h>
+#endif
+
+// Includes, system
+#include <cassert>
+#include <stdio.h>
+
+// Includes CUDA
+#include <cuda_runtime.h>
+
+#include "nvrtc_helper.h"
+
+// Utilities and timing functions
+#include <helper_functions.h> // includes cuda.h and cuda_runtime_api.h
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleAssert_nvrtc/simpleAssert.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleAssert_nvrtc/simpleAssert.cpp:58-77
+```cpp
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+
+int main(int argc, char **argv)
+{
+    printf("%s starting...\n", sampleName);
+
+    runTest(argc, argv);
+
+    exit(testResult ? EXIT_SUCCESS : EXIT_FAILURE);
+}
+
+void runTest(int argc, char **argv)
+{
+    int Nblocks  = 2;
+    int Nthreads = 32;
+
+    // Kernel configuration, where a one-dimensional
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleAssert_nvrtc/simpleAssert.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleAssert_nvrtc/simpleAssert.cpp:94-125
+```cpp
+    checkCudaErrors(cuModuleGetFunction(&kernel_addr, module, "testKernel"));
+
+    int   count  = 60;
+    void *args[] = {(void *)&count};
+
+    // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    checkCudaErrors(cuLaunchKernel(kernel_addr,
+                                   dimGrid.x,
+                                   dimGrid.y,
+                                   dimGrid.z, /* grid dim */
+                                   dimBlock.x,
+                                   dimBlock.y,
+                                   dimBlock.z, /* block dim */
+                                   0,
+                                   0,        /* shared mem, stream */
+                                   &args[0], /* arguments */
+                                   0));
+
+    // Synchronize (flushes assert output).
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+    printf("\n-- Begin assert output\n\n");
+    CUresult res = cuCtxSynchronize();
+
+    printf("\n-- End assert output\n\n");
+
+    // Check for errors and failed asserts in asynchronous kernel launch.
+    if (res == CUDA_ERROR_ASSERT) {
+        printf("Device assert failed as expected\n");
+    }
+
+    testResult = res == CUDA_ERROR_ASSERT;
+}
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleAssert_nvrtc/simpleAssert.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleAssert_kernel.cu`
+
+Source: cpp/0_Introduction/simpleAssert_nvrtc/simpleAssert_kernel.cu:36-42
+```cuda
+extern "C" __global__ void testKernel(int N)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int gtid = blockIdx.x * blockDim.x + threadIdx.x;
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+    assert(gtid < N);
+}
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleAssert_nvrtc/simpleAssert_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

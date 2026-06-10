@@ -71,13 +71,139 @@ English anchor: read `streamOrderedAllocation` as a focused example of the CUDA 
 
 ## Concrete Reading Path
 
-- `streamOrderedAllocation.cu`: focus on `cudaFreeAsync`, `cudaMallocAsync`, `cudaMemcpyAsync`, `cudaMemcpyHostToDevice`, `CUDA`.
+- `streamOrderedAllocation.cu`: focus on `cudaFreeAsync`, `cudaMallocAsync`, `cudaMemcpyAsync`, `CUDA`, `cudaMemcpyHostToDevice`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/2_Concepts_and_Techniques/streamOrderedAllocation/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(streamOrderedAllocation LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for streamOrderedAllocation
+add_executable(streamOrderedAllocation streamOrderedAllocation.cu)
+
+target_compile_options(streamOrderedAllocation PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(streamOrderedAllocation PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(streamOrderedAllocation PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/streamOrderedAllocation/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `streamOrderedAllocation.cu`
+
+Source: cpp/2_Concepts_and_Techniques/streamOrderedAllocation/streamOrderedAllocation.cu:37-104
+```cuda
+ * in between allocations, then setting the release threshold on the pool will
+ * make sure the synchronize will not free memory back to the OS.
+ */
+
+// System includes
+#include <assert.h>
+#include <climits>
+#include <stdio.h>
+
+// CUDA runtime
+#include <cuda_runtime.h>
+
+// helper functions and utilities to work with CUDA
+#include <helper_cuda.h>
+#include <helper_functions.h>
+
+#define MAX_ITER 20
+
+/* Add two vectors on the GPU */
+__global__ void vectorAddGPU(const float *a, const float *b, float *c, int N)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (idx < N) {
+        c[idx] = a[idx] + b[idx];
+    }
+}
+
+int basicStreamOrderedAllocation(const int dev, const int nelem, const float *a, const float *b, float *c)
+{
+    float *d_a, *d_b, *d_c; // Device buffers
+    float  errorNorm, refNorm, ref, diff;
+    size_t bytes = nelem * sizeof(float);
+
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+    cudaStream_t stream;
+    printf("Starting basicStreamOrderedAllocation()\n");
+    checkCudaErrors(cudaSetDevice(dev));
+    checkCudaErrors(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+
+    checkCudaErrors(cudaMallocAsync(&d_a, bytes, stream));
+    checkCudaErrors(cudaMallocAsync(&d_b, bytes, stream));
+    checkCudaErrors(cudaMallocAsync(&d_c, bytes, stream));
+    // JP: `cudaMemcpyAsync`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpyAsync(d_a, a, bytes, cudaMemcpyHostToDevice, stream));
+    checkCudaErrors(cudaMemcpyAsync(d_b, b, bytes, cudaMemcpyHostToDevice, stream));
+
+    dim3 block(256);
+    dim3 grid((unsigned int)ceil(nelem / (float)block.x));
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    vectorAddGPU<<<grid, block, 0, stream>>>(d_a, d_b, d_c, nelem);
+
+    // JP: `cudaFreeAsync`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaFreeAsync(d_a, stream));
+    checkCudaErrors(cudaFreeAsync(d_b, stream));
+    checkCudaErrors(cudaMemcpyAsync(c, d_c, bytes, cudaMemcpyDeviceToHost, stream));
+    checkCudaErrors(cudaFreeAsync(d_c, stream));
+    // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    checkCudaErrors(cudaStreamSynchronize(stream));
+
+    /* Compare the results */
+    printf("> Checking the results from vectorAddGPU() ...\n");
+    errorNorm = 0.f;
+    refNorm   = 0.f;
+
+    for (int n = 0; n < nelem; n++) {
+        ref  = a[n] + b[n];
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/streamOrderedAllocation/streamOrderedAllocation.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 
@@ -93,10 +219,10 @@ English anchor: read `streamOrderedAllocation` as a focused example of the CUDA 
 | `cudaStreamDestroy` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
 | `cudaEventCreate` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
 | `cudaEventRecord` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaMemPool` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaStream_t` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
 | `cudaDeviceGetDefaultMemPool` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
-| `cudaMemPoolSetAttribute` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。

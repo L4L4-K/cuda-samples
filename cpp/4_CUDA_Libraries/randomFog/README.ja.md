@@ -78,7 +78,7 @@ English anchor: read `randomFog` as a focused example of the CUDA concepts used 
 ## Concrete Reading Path
 
 - `randomFog.cpp`: focus on `CUDA`, `curand`, `cuBe`, `CURAND`.
-- `rng.cpp`: focus on `curandResult`, `cudaResult`, `CURAND_STATUS_SUCCESS`, `curandStatus_t`, `curandCreateGenerator`.
+- `rng.cpp`: focus on `curandResult`, `cudaResult`, `CURAND_STATUS_SUCCESS`, `CUDA`, `curandStatus_t`.
 - `rng.h`: focus on `curandGenerator_t`, `curand`, `CUDA`.
 
 > **日本語**
@@ -86,6 +86,306 @@ English anchor: read `randomFog` as a focused example of the CUDA concepts used 
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/randomFog/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(randomFog LANGUAGES CXX)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/randomFog/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/randomFog/CMakeLists.txt:65-84
+```cmake
+        )
+
+        target_link_libraries(randomFog
+            ${OPENGL_LIBRARIES}
+            ${GLUT_LIBRARIES}
+            # JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+            CUDA::curand
+            CUDA::cudart
+        )
+        # Need to add X11 and other libraries for Debian13 or later explicitly
+        if(DEBIAN)
+            target_link_libraries(randomFog
+                X11
+                Xi
+                Xxf86vm
+                Xext
+            )
+        endif()
+
+        # Copy data files to the output directory
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/randomFog/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `randomFog.cpp`
+
+Source: cpp/4_CUDA_Libraries/randomFog/randomFog.cpp:30-48
+```cpp
+#include <helper_gl.h>
+#if defined(__APPLE__) || defined(MACOSX)
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#include <GLUT/glut.h>
+#else
+#include <GL/freeglut.h>
+#endif
+
+// CUDA Library Headers
+#include <cuda_gl_interop.h>
+#include <curand.h>
+
+// CUDA utilities and system includes
+#include <helper_cuda.h>
+#include <rendercheck_gl.h>
+
+// System includes
+#include <iomanip>
+#include <math.h>
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/randomFog/randomFog.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/randomFog/randomFog.cpp:282-301
+```cpp
+    // Check if shape is visible
+    if (x == 0 || y == 0) {
+        return;
+    }
+
+    // Set a new projection matrix
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+
+    // Adjust fit
+    if (y > x) {
+        xScale = 1.0f;
+        yScale = (float)y / x;
+    }
+    else {
+        xScale = (float)x / y;
+        yScale = 1.0f;
+    }
+
+    // Angle of view:40 degrees
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/randomFog/randomFog.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/randomFog/randomFog.cpp:638-657
+```cpp
+    ss << "\t" << setw(10) << "q/[ESC]"
+       << "Quit the application.\n\n";
+    puts(ss.str().c_str());
+}
+
+int main(int argc, char **argv)
+{
+    using std::runtime_error;
+
+    try {
+        bool bQA = false;
+
+        // Open the log file
+        printf("Random Fog\n");
+        printf("==========\n\n");
+
+        // Check QA mode
+        if (checkCmdLineFlag(argc, (const char **)argv, "qatest")) {
+            bQA = true;
+
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/randomFog/randomFog.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `rng.cpp`
+
+Source: cpp/4_CUDA_Libraries/randomFog/rng.cpp:32-50
+```cpp
+#include "rng.h"
+
+#include <curand.h>
+#include <sstream>
+#include <stdexcept>
+
+// Shared Library Test Functions
+#include <helper_cuda.h>
+#include <helper_timer.h>
+
+const unsigned int RNG::s_maxQrngDimensions = 20000;
+
+RNG::RNG(unsigned long prngSeed, unsigned int qrngDimensions, unsigned int nSamples)
+    : m_prngSeed(prngSeed)
+    , m_qrngDimensions(qrngDimensions)
+    , m_nSamplesBatchTarget(nSamples)
+    , m_nSamplesRemaining(0)
+{
+    using std::invalid_argument;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/randomFog/rng.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/randomFog/rng.cpp:65-84
+```cpp
+
+    if (m_nSamplesBatchTarget < s_maxQrngDimensions) {
+        throw invalid_argument("RNG batch size must be greater than RNG::s_maxQrngDimensions");
+    }
+
+    // JP: `curandStatus_t`, `curandResult`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    curandStatus_t curandResult;
+    cudaError_t    cudaResult;
+
+    // Allocate sample array in host mem
+    m_h_samples = (float *)malloc(m_nSamplesBatchTarget * sizeof(float));
+
+    if (m_h_samples == NULL) {
+        throw runtime_error("Could not allocate host memory for RNG::m_h_samples");
+    }
+
+    // Allocate sample array in device mem
+    // JP: `cudaResult`, `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    cudaResult = cudaMalloc((void **)&m_d_samples, m_nSamplesBatchTarget * sizeof(float));
+
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/randomFog/rng.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/randomFog/rng.cpp:129-148
+```cpp
+    curandDestroyGenerator(m_prng);
+    curandDestroyGenerator(m_qrng);
+    curandDestroyGenerator(m_sqrng);
+
+    if (m_d_samples) {
+        // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        cudaFree(m_d_samples);
+    }
+
+    if (m_h_samples) {
+        free(m_h_samples);
+    }
+}
+
+void RNG::generateBatch(void)
+{
+    using std::runtime_error;
+    using std::string;
+
+    cudaError_t    cudaResult;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/randomFog/rng.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/randomFog/rng.cpp:157-176
+```cpp
+        msg += curandResult;
+        throw runtime_error(msg);
+    }
+
+    // Copy random numbers to host
+    // JP: `cudaResult`, `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    cudaResult = cudaMemcpy(m_h_samples, m_d_samples, m_nSamplesBatchActual * sizeof(float), cudaMemcpyDeviceToHost);
+
+    if (cudaResult != cudaSuccess) {
+        string msg("Could not copy random numbers to host: ");
+        msg += cudaGetErrorString(cudaResult);
+        throw runtime_error(msg);
+    }
+}
+
+float RNG::getNextU01(void)
+{
+    if (m_nSamplesRemaining == 0) {
+        generateBatch();
+        m_nSamplesRemaining = m_nSamplesBatchActual;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/randomFog/rng.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `rng.h`
+
+Source: cpp/4_CUDA_Libraries/randomFog/rng.h:29-74
+```cpp
+#include <curand.h>
+#include <string>
+
+// RNGs
+class RNG
+{
+public:
+    enum RngType { Pseudo, Quasi, ScrambledQuasi };
+    RNG(unsigned long prngSeed, unsigned int qrngDimensions, unsigned int nSamples);
+    virtual ~RNG();
+
+    float getNextU01(void);
+    void  getInfoString(std::string &msg);
+    void  selectRng(RngType type);
+    void  resetSeed(void);
+    void  resetDimensions(void);
+    void  incrementDimensions(void);
+
+private:
+    // Generators
+    // JP: `curandGenerator_t`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    curandGenerator_t *m_pCurrent;
+    curandGenerator_t  m_prng;
+    curandGenerator_t  m_qrng;
+    curandGenerator_t  m_sqrng;
+
+    // Parameters
+    unsigned long m_prngSeed;
+    unsigned int  m_qrngDimensions;
+
+    // Batches
+    const unsigned int m_nSamplesBatchTarget;
+    unsigned int       m_nSamplesBatchActual;
+    unsigned int       m_nSamplesRemaining;
+    void               generateBatch(void);
+
+    // Helpers
+    void updateDimensions(void);
+    void setBatchSize(void);
+
+    // Buffers
+    float *m_h_samples;
+    float *m_d_samples;
+
+    static const unsigned int s_maxQrngDimensions;
+};
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/randomFog/rng.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

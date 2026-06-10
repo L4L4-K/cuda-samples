@@ -72,7 +72,7 @@ English anchor: read `simpleVoteIntrinsics` as a focused example of the CUDA con
 
 ## Concrete Reading Path
 
-- `simpleVoteIntrinsics.cu`: focus on `cudaDeviceSynchronize`, `cudaMemcpy`, `CUDA`, `cudaMalloc`, `cudaFree`.
+- `simpleVoteIntrinsics.cu`: focus on `cudaDeviceSynchronize`, `cudaMemcpy`, `launch`, `CUDA`, `cudaMalloc`.
 - `simpleVote_kernel.cuh`: focus on `threadIdx`, `CUDA`, `launch`.
 
 > **日本語**
@@ -80,6 +80,251 @@ English anchor: read `simpleVoteIntrinsics` as a focused example of the CUDA con
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/simpleVoteIntrinsics/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleVoteIntrinsics LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simpleVoteIntrinsics
+add_executable(simpleVoteIntrinsics simpleVoteIntrinsics.cu)
+
+target_compile_options(simpleVoteIntrinsics PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleVoteIntrinsics PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simpleVoteIntrinsics PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleVoteIntrinsics/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleVoteIntrinsics.cu`
+
+Source: cpp/0_Introduction/simpleVoteIntrinsics/simpleVoteIntrinsics.cu:25-48
+```cuda
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+// JP: この file では memory ownership と host/device transfer、kernel launch と thread indexing、stream/event による非同期実行と同期 を確認します。英語の識別子/API/出力文字列は保持します。
+
+// System includes
+#include <assert.h>
+#include <stdio.h>
+
+// CUDA runtime
+#include <cuda_runtime.h>
+
+// helper functions and utilities to work with CUDA
+#include <helper_cuda.h>
+#include <helper_functions.h>
+
+#ifndef MAX
+#define MAX(a, b) (a > b ? a : b)
+#endif
+
+static const char *sSDKsample = "[simpleVoteIntrinsics]\0";
+
+////////////////////////////////////////////////////////////////////////////////
+// Global types and parameters
+////////////////////////////////////////////////////////////////////////////////
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleVoteIntrinsics/simpleVoteIntrinsics.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleVoteIntrinsics/simpleVoteIntrinsics.cu:191-210
+```cuda
+
+    printf((error_count == 0) ? "\tOK\n" : "\tERROR\n");
+    return error_count;
+}
+
+int main(int argc, char **argv)
+{
+    unsigned int *h_input, *h_result;
+    unsigned int *d_input, *d_result;
+
+    bool *dinfo = NULL, *hinfo = NULL;
+    int   error_count[3] = {0, 0, 0};
+
+    cudaDeviceProp deviceProp;
+    int            devID, warp_size = 32;
+
+    printf("%s\n", sSDKsample);
+
+    // This will pick the best possible CUDA capable device
+    devID = findCudaDevice(argc, (const char **)argv);
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleVoteIntrinsics/simpleVoteIntrinsics.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleVoteIntrinsics/simpleVoteIntrinsics.cu:215-255
+```cuda
+    printf("> GPU device has %d Multi-Processors, SM %d.%d compute capabilities\n\n",
+           deviceProp.multiProcessorCount,
+           deviceProp.major,
+           deviceProp.minor);
+
+    h_input  = (unsigned int *)malloc(VOTE_DATA_GROUP * warp_size * sizeof(unsigned int));
+    h_result = (unsigned int *)malloc(VOTE_DATA_GROUP * warp_size * sizeof(unsigned int));
+    checkCudaErrors(
+        // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+        cudaMalloc(reinterpret_cast<void **>(&d_input), VOTE_DATA_GROUP * warp_size * sizeof(unsigned int)));
+    checkCudaErrors(
+        cudaMalloc(reinterpret_cast<void **>(&d_result), VOTE_DATA_GROUP * warp_size * sizeof(unsigned int)));
+    genVoteTestPattern(h_input, VOTE_DATA_GROUP * warp_size);
+    checkCudaErrors(
+        // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+        cudaMemcpy(d_input, h_input, VOTE_DATA_GROUP * warp_size * sizeof(unsigned int), cudaMemcpyHostToDevice));
+
+    // Start of Vote Any Test Kernel #1
+    printf("[VOTE Kernel Test 1/3]\n");
+    printf("\tRunning <<Vote.Any>> kernel1 ...\n");
+    {
+        // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+        checkCudaErrors(cudaDeviceSynchronize());
+        dim3 gridBlock(1, 1);
+        dim3 threadBlock(VOTE_DATA_GROUP * warp_size, 1);
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+        VoteAnyKernel1<<<gridBlock, threadBlock>>>(d_input, d_result, VOTE_DATA_GROUP * warp_size);
+        getLastCudaError("VoteAnyKernel() execution failed\n");
+        checkCudaErrors(cudaDeviceSynchronize());
+    }
+    checkCudaErrors(
+        // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
+        cudaMemcpy(h_result, d_result, VOTE_DATA_GROUP * warp_size * sizeof(unsigned int), cudaMemcpyDeviceToHost));
+    error_count[0] += checkResultsVoteAnyKernel1(h_result, VOTE_DATA_GROUP * warp_size, warp_size);
+
+    // Start of Vote All Test Kernel #2
+    printf("\n[VOTE Kernel Test 2/3]\n");
+    printf("\tRunning <<Vote.All>> kernel2 ...\n");
+    {
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
+        checkCudaErrors(cudaDeviceSynchronize());
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleVoteIntrinsics/simpleVoteIntrinsics.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleVoteIntrinsics/simpleVoteIntrinsics.cu:288-306
+```cuda
+    cudaMemcpy(hinfo, dinfo, warp_size * 3 * 3 * sizeof(bool), cudaMemcpyDeviceToHost);
+
+    error_count[2] = checkResultsVoteAnyKernel3(hinfo, warp_size * 3);
+
+    // Now free these resources for Test #1,2
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaFree(d_input));
+    checkCudaErrors(cudaFree(d_result));
+    free(h_input);
+    free(h_result);
+
+    // Free resources from Test #3
+    free(hinfo);
+    cudaFree(dinfo);
+
+    printf("\tShutting down...\n");
+
+    return (error_count[0] == 0 && error_count[1] == 0 && error_count[2] == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleVoteIntrinsics/simpleVoteIntrinsics.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleVote_kernel.cuh`
+
+Source: cpp/0_Introduction/simpleVoteIntrinsics/simpleVote_kernel.cuh:29-85
+```cuda
+#ifndef SIMPLEVOTE_KERNEL_CU
+#define SIMPLEVOTE_KERNEL_CU
+
+////////////////////////////////////////////////////////////////////////////////
+// Vote Any/All intrinsic kernel function tests are supported only by CUDA
+// capable devices that are CUDA hardware that has SM1.2 or later
+// Vote Functions (refer to section 4.4.5 in the CUDA Programming Guide)
+////////////////////////////////////////////////////////////////////////////////
+
+// Kernel #1 tests the across-the-warp vote(any) intrinsic.
+// If ANY one of the threads (within the warp) of the predicated condition
+// returns a non-zero value, then all threads within this warp will return a
+// non-zero value
+__global__ void VoteAnyKernel1(unsigned int *input, unsigned int *result, int size)
+{
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int tx = threadIdx.x;
+
+    int mask   = 0xffffffff;
+    result[tx] = __any_sync(mask, input[tx]);
+}
+
+// Kernel #2 tests the across-the-warp vote(all) intrinsic.
+// If ALL of the threads (within the warp) of the predicated condition returns
+// a non-zero value, then all threads within this warp will return a non-zero
+// value
+__global__ void VoteAllKernel2(unsigned int *input, unsigned int *result, int size)
+{
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+    int tx = threadIdx.x;
+
+    int mask   = 0xffffffff;
+    result[tx] = __all_sync(mask, input[tx]);
+}
+
+// Kernel #3 is a directed test for the across-the-warp vote(all) intrinsic.
+// This kernel will test for conditions across warps, and within half warps
+__global__ void VoteAnyKernel3(bool *info, int warp_size)
+{
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+    int          tx   = threadIdx.x;
+    unsigned int mask = 0xffffffff;
+    bool        *offs = info + (tx * 3);
+
+    // The following should hold true for the second and third warp
+    *offs = __any_sync(mask, (tx >= (warp_size * 3) / 2));
+    // The following should hold true for the "upper half" of the second warp,
+    // and all of the third warp
+    *(offs + 1) = (tx >= (warp_size * 3) / 2 ? true : false);
+
+    // The following should hold true for the third warp only
+    if (__all_sync(mask, (tx >= (warp_size * 3) / 2))) {
+        *(offs + 2) = true;
+    }
+}
+
+#endif
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleVoteIntrinsics/simpleVote_kernel.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 
@@ -89,8 +334,8 @@ English anchor: read `simpleVoteIntrinsics` as a focused example of the CUDA con
 | `cudaMemcpy` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
-| `threadIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
+| `threadIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `cudaGetDeviceProperties` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaMemcpyHostToDevice` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaMemcpyDeviceToHost` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |

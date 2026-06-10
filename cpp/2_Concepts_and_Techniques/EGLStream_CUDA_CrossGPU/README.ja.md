@@ -100,6 +100,676 @@ English anchor: read `EGLStream_CUDA_CrossGPU` as a focused example of the CUDA 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/CMakeLists.txt:1-57
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(EGLStream_CUDA_CrossGPU LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+find_package(EGL)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Source file
+    if(${EGL_FOUND})
+            # Add target for EGLStream_CUDA_CrossGPU
+            add_executable(EGLStream_CUDA_CrossGPU cuda_consumer.cpp cuda_producer.cpp eglstrm_common.cpp kernel.cu main.cpp)
+
+            target_compile_options(EGLStream_CUDA_CrossGPU PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+            target_compile_features(EGLStream_CUDA_CrossGPU PRIVATE cxx_std_17 cuda_std_17)
+
+            set_target_properties(EGLStream_CUDA_CrossGPU PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+            target_include_directories(EGLStream_CUDA_CrossGPU PUBLIC
+                ${EGL_INCLUDE_DIR}
+                ${CUDAToolkit_INCLUDE_DIRS}
+            )
+
+            target_link_libraries(EGLStream_CUDA_CrossGPU
+                ${EGL_LIBRARY}
+                CUDA::cuda_driver
+            )
+    else()
+        message(STATUS "EGL not found - will not build sample 'EGLStream_CUDA_CrossGPU'")
+    endif()
+else()
+    message(STATUS "Will not build sample EGLStream_CUDA_CrossGPU - requires Linux OS")
+endif()
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `cuda_consumer.cpp`
+
+Source: cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/cuda_consumer.cpp:33-51
+```cpp
+#include "cuda_consumer.h"
+
+#include <cuda_runtime.h>
+#include <math.h>
+#include <unistd.h>
+
+#include "eglstrm_common.h"
+
+#if defined(EXTENSION_LIST)
+EXTENSION_LIST(EXTLST_EXTERN)
+#endif
+CUgraphicsResource cudaResource;
+
+static int    count_acq           = 0;
+static double acquire_time[25000] = {0}, total_time_acq = 0;
+
+static int    count_rel       = 0;
+static double rel_time[25000] = {0}, total_time_rel = 0;
+
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/cuda_consumer.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/cuda_consumer.cpp:195-214
+```cpp
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
+    CUdevice          device;
+    CUresult          status          = CUDA_SUCCESS;
+    CUctxCreateParams ctxCreateParams = {};
+
+    if (CUDA_SUCCESS != (status = cuInit(0))) {
+        printf("Failed to initialize CUDA\n");
+        return status;
+    }
+
+    if (CUDA_SUCCESS != (status = cuDeviceGet(&device, cudaConsumer->cudaDevId))) {
+        printf("failed to get CUDA device\n");
+        return status;
+    }
+
+    if (CUDA_SUCCESS != (status = cuCtxCreate(&cudaConsumer->context, &ctxCreateParams, 0, device))) {
+        printf("failed to create CUDA context\n");
+        return status;
+    }
+
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/cuda_consumer.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/cuda_consumer.cpp:241-270
+```cpp
+    int      bufferSize;
+
+    cudaConsumer->charCnt = args->charCnt;
+    bufferSize            = args->charCnt;
+
+    cudaConsumer->pCudaCopyMem = (unsigned char *)malloc(bufferSize);
+    if (cudaConsumer->pCudaCopyMem == NULL) {
+        printf("Cuda Consumer: malloc failed\n");
+        goto done;
+    }
+
+    status = cuStreamCreate(&cudaConsumer->consCudaStream, 0);
+    if (status != CUDA_SUCCESS) {
+        printf("Cuda Consumer: cuStreamCreate failed, status:%d\n", status);
+        goto done;
+    }
+
+    atexit(acquireApiStat);
+done:
+    return status;
+}
+
+CUresult cuda_consumer_Deinit(test_cuda_consumer_s *cudaConsumer)
+{
+    if (cudaConsumer->pCudaCopyMem) {
+        // JP: `cudaConsumer`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        free(cudaConsumer->pCudaCopyMem);
+    }
+    return cuEGLStreamConsumerDisconnect(&cudaConsumer->cudaConn);
+}
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/cuda_consumer.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `cuda_consumer.h`
+
+Source: cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/cuda_consumer.h:33-75
+```cpp
+#ifndef _CUDA_CONSUMER_H_
+#define _CUDA_CONSUMER_H_
+
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "cudaEGL.h"
+#include "eglstrm_common.h"
+
+typedef struct _test_cuda_consumer_s
+{
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
+    CUcontext             context;
+    CUeglStreamConnection cudaConn;
+    int                   cudaDevId;
+    EGLDisplay            eglDisplay;
+    EGLStreamKHR          eglStream;
+    unsigned int          charCnt;
+    char                 *cudaBuf;
+    bool                  profileAPI;
+    unsigned char        *pCudaCopyMem;
+    // JP: streams_events: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+    CUstream              consCudaStream;
+} test_cuda_consumer_s;
+
+CUresult    cuda_consumer_init(test_cuda_consumer_s *cudaConsumer, TestArgs *args);
+CUresult    cuda_consumer_Deinit(test_cuda_consumer_s *cudaConsumer);
+CUresult    cudaConsumerAcquireFrame(test_cuda_consumer_s *data, int frameNumber);
+CUresult    cudaConsumerReleaseFrame(test_cuda_consumer_s *data, int frameNumber);
+CUresult    cudaDeviceCreateConsumer(test_cuda_consumer_s *cudaConsumer);
+cudaError_t cudaConsumer_filter(CUstream cStream,
+                                char    *pSrc,
+                                int      width,
+                                int      height,
+                                char     expectedVal,
+                                char     newVal,
+                                int      frameNumber);
+cudaError_t cudaGetValueMismatch(void);
+
+#endif
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/cuda_consumer.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `cuda_producer.cpp`
+
+Source: cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/cuda_producer.cpp:33-51
+```cpp
+#include "cuda_producer.h"
+
+#include <cuda_runtime.h>
+
+#include "cudaEGL.h"
+#include "eglstrm_common.h"
+#if defined(EXTENSION_LIST)
+EXTENSION_LIST(EXTLST_EXTERN)
+#endif
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "cuda_runtime.h"
+#include "math.h"
+
+int         cudaPresentReturnData = INIT_DATA;
+int         fakePresent           = 0;
+CUeglFrame  fakeFrame;
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/cuda_producer.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/cuda_producer.cpp:187-206
+```cpp
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
+    CUdevice          device;
+    CUresult          status          = CUDA_SUCCESS;
+    CUctxCreateParams ctxCreateParams = {};
+
+    if (CUDA_SUCCESS != (status = cuInit(0))) {
+        printf("Failed to initialize CUDA\n");
+        return status;
+    }
+
+    if (CUDA_SUCCESS != (status = cuDeviceGet(&device, cudaProducer->cudaDevId))) {
+        printf("failed to get CUDA device\n");
+        return status;
+    }
+
+    if (CUDA_SUCCESS != (status = cuCtxCreate(&cudaProducer->context, &ctxCreateParams, 0, device))) {
+        printf("failed to create CUDA context\n");
+        return status;
+    }
+
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/cuda_producer.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/cuda_producer.cpp:234-253
+```cpp
+    int      bufferSize;
+
+    cudaProducer->charCnt = args->charCnt;
+    bufferSize            = cudaProducer->charCnt;
+
+    cudaProducer->tempBuff = (char *)malloc(bufferSize);
+    if (!cudaProducer->tempBuff) {
+        printf("Cuda Producer: Failed to allocate image buffer\n");
+        status = CUDA_ERROR_UNKNOWN;
+        goto done;
+    }
+    memset((void *)cudaProducer->tempBuff, INIT_DATA, cudaProducer->charCnt);
+
+    // Fill this init data
+    // JP: `cuMemAlloc`, `cudaProducer`, `cudaPtr`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    status = cuMemAlloc(&cudaProducer->cudaPtr, bufferSize);
+    if (status != CUDA_SUCCESS) {
+        printf("Cuda Producer: cuda Malloc failed, status:%d\n", status);
+        goto done;
+    }
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/cuda_producer.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/cuda_producer.cpp:293-304
+```cpp
+
+CUresult cudaProducerDeinit(test_cuda_producer_s *cudaProducer)
+{
+    if (cudaProducer->tempBuff) {
+        // JP: `cudaProducer`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        free(cudaProducer->tempBuff);
+    }
+    if (cudaProducer->cudaPtr) {
+        cuMemFree(cudaProducer->cudaPtr);
+    }
+    return cuEGLStreamProducerDisconnect(&cudaProducer->cudaConn);
+}
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/cuda_producer.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `cuda_producer.h`
+
+Source: cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/cuda_producer.h:33-74
+```cpp
+#ifndef _CUDA_PRODUCER_H_
+#define _CUDA_PRODUCER_H_
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <cuda.h>
+#include <cuda_runtime.h>
+
+#include "cudaEGL.h"
+#include "eglstrm_common.h"
+
+typedef struct _test_cuda_producer_s
+{
+    //  Stream params
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
+    CUcontext             context;
+    CUeglStreamConnection cudaConn;
+    int                   cudaDevId;
+    EGLStreamKHR          eglStream;
+    EGLDisplay            eglDisplay;
+    unsigned int          charCnt;
+    bool                  profileAPI;
+    char                 *tempBuff;
+    CUdeviceptr           cudaPtr;
+    CUdeviceptr           cudaPtr1;
+    // JP: streams_events: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+    CUstream              prodCudaStream;
+} test_cuda_producer_s;
+
+CUresult    cudaProducerInit(test_cuda_producer_s *cudaProducer, TestArgs *args);
+CUresult    cudaProducerPresentFrame(test_cuda_producer_s *parserArg, CUeglFrame cudaEgl, int t);
+CUresult    cudaProducerReturnFrame(test_cuda_producer_s *parserArg, CUeglFrame cudaEgl, int t);
+CUresult    cudaProducerDeinit(test_cuda_producer_s *cudaProducer);
+CUresult    cudaDeviceCreateProducer(test_cuda_producer_s *cudaProducer);
+cudaError_t cudaProducer_filter(CUstream cStream,
+                                char    *pSrc,
+                                int      width,
+                                int      height,
+                                char     expectedVal,
+                                char     newVal,
+                                int      frameNumber);
+void        cudaProducerPrepareFrame(CUeglFrame *cudaEgl, CUdeviceptr cudaPtr, int bufferSize);
+#endif
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/cuda_producer.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `eglstrm_common.cpp`
+
+Source: cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/eglstrm_common.cpp:33-51
+```cpp
+#include "eglstrm_common.h"
+
+EGLStreamKHR g_producerEglStream  = EGL_NO_STREAM_KHR;
+EGLStreamKHR g_consumerEglStream  = EGL_NO_STREAM_KHR;
+EGLDisplay   g_producerEglDisplay = EGL_NO_DISPLAY;
+EGLDisplay   g_consumerEglDisplay = EGL_NO_DISPLAY;
+int          cudaDevIndexProd     = -1;
+int          cudaDevIndexCons     = -1;
+
+#if defined(EXTENSION_LIST)
+EXTENSION_LIST(EXTLST_DECL)
+typedef void (*extlst_fnptr_t)(void);
+static struct
+{
+    extlst_fnptr_t *fnptr;
+    char const     *name;
+    bool            is_dgpu; // This function is need only for dgpu case
+} extensionList[] = {EXTENSION_LIST(EXTLST_ENTRY)};
+
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/eglstrm_common.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/eglstrm_common.cpp:154-173
+```cpp
+    }
+
+    if (!isConsumer) { // Producer
+
+        if (fileDesc == EGL_NO_FILE_DESCRIPTOR_KHR) {
+            // JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+            printf("Cuda Producer received bad file descriptor\n");
+            eglStatus = EGL_FALSE;
+            goto Done;
+        }
+
+        int egl_device_id    = 0;
+        int egl_cuda_devices = 0;
+        for (egl_device_id = 0; egl_device_id < numDevices; egl_device_id++) {
+            EGLAttrib cuda_device = -1;
+            eglStatus             = eglQueryDeviceAttribEXT(devices[egl_device_id], EGL_CUDA_DEVICE_NV, &cuda_device);
+            if (eglStatus == EGL_TRUE) {
+                egl_cuda_devices++;
+                if (isCrossDevice && (egl_cuda_devices > 1)) {
+                    // We select second EGL-CUDA Capable device for producer.
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/eglstrm_common.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `eglstrm_common.h`
+
+Source: cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/eglstrm_common.h:33-51
+```cpp
+#ifndef _EGLSTRM_COMMON_H_
+#define _EGLSTRM_COMMON_H_
+
+#include <signal.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <sys/un.h>
+#include <time.h>
+#include <unistd.h>
+
+#include "cuda.h"
+#include "cudaEGL.h"
+#define TIME_DIFF(end, start) (getMicrosecond(end) - getMicrosecond(start))
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/eglstrm_common.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `helper.h`
+
+Source: cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/helper.h:29-47
+```cpp
+#include "eglstrm_common.h"
+#if defined(EXTENSION_LIST)
+EXTENSION_LIST(EXTLST_EXTERN)
+#endif
+#include <cuda.h>
+
+int  parseCmdLine(int argc, char *argv[], TestArgs *args);
+void printUsage(void);
+int  NUMTRIALS   = 10;
+int  profileAPIs = 0;
+
+bool verbose       = 0;
+bool isCrossDevice = 0;
+
+// Parse the command line options. Returns FAILURE on a parse error, SUCCESS
+// otherwise.
+int parseCmdLine(int argc, char *argv[], TestArgs *args)
+{
+    int i;
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/helper.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/helper.h:101-125
+```cpp
+    }
+
+    if (isCrossDevice) {
+        int deviceCount = 0;
+
+        // JP: `cuInit`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
+        CUresult error_id = cuInit(0);
+        if (error_id != CUDA_SUCCESS) {
+            printf("cuInit(0) returned %d\n", error_id);
+            // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+            printf("Result = FAIL\n");
+            exit(EXIT_FAILURE);
+        }
+
+        error_id = cuDeviceGetCount(&deviceCount);
+        if (error_id != CUDA_SUCCESS) {
+            printf("cuDeviceGetCount returned %d\n", (int)error_id);
+            printf("Result = FAIL\n");
+            exit(EXIT_FAILURE);
+        }
+
+        int      iGPUexists = 0;
+        // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
+        CUdevice dev;
+        for (dev = 0; dev < deviceCount; ++dev) {
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/helper.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `kernel.cu`
+
+Source: cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/kernel.cu:33-61
+```cuda
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "eglstrm_common.h"
+
+extern bool isCrossDevice;
+
+__device__ static unsigned int numErrors = 0, errorFound = 0;
+__device__ void                checkProducerDataGPU(char *data, int size, char expectedVal, int frameNumber)
+{
+    // JP: `blockDim`, `blockIdx`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    if ((data[blockDim.x * blockIdx.x + threadIdx.x] != expectedVal) && (!errorFound)) {
+        printf("Producer FOUND:%d expected: %d at %d for trial %d %d\n",
+               data[blockDim.x * blockIdx.x + threadIdx.x],
+               expectedVal,
+               (blockDim.x * blockIdx.x + threadIdx.x),
+               frameNumber,
+               numErrors);
+        numErrors++;
+        errorFound = 1;
+        return;
+    }
+}
+
+__device__ void checkConsumerDataGPU(char *data, int size, char expectedVal, int frameNumber)
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/kernel.cu:107-159
+```cuda
+    }
+    writeDataToBuffer<<<(width * height) / 1024, 1024, 1, pStream>>>(pSrc, newVal);
+    return cudaSuccess;
+};
+
+// JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+cudaError_t cudaConsumer_filter(cudaStream_t cStream,
+                                char        *pSrc,
+                                int          width,
+                                int          height,
+                                char         expectedVal,
+                                char         newVal,
+                                int          frameNumber)
+{
+    // JP: この連続する anchor 群では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
+    testKernelConsumer<<<(width * height) / 1024, 1024, 1, cStream>>>(
+        pSrc, width * height, expectedVal, newVal, frameNumber);
+    writeDataToBuffer<<<(width * height) / 1024, 1024, 1, cStream>>>(pSrc, newVal);
+    return cudaSuccess;
+};
+
+cudaError_t cudaGetValueMismatch()
+{
+    int         numErr_h;
+    int        *numErr_d = NULL;
+    cudaError_t err      = cudaSuccess;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    err                  = cudaMalloc(&numErr_d, sizeof(int));
+    if (err != cudaSuccess) {
+        printf("Cuda Main: cudaMalloc failed with %s\n", cudaGetErrorString(err));
+        return err;
+    }
+    getNumErrors<<<1, 1>>>(numErr_d);
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    err = cudaDeviceSynchronize();
+    if (err != cudaSuccess) {
+        printf("Cuda Main: cudaDeviceSynchronize failed with %s\n", cudaGetErrorString(err));
+    }
+    // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    err = cudaMemcpy(&numErr_h, numErr_d, sizeof(int), cudaMemcpyDeviceToHost);
+    if (err != cudaSuccess) {
+        printf("Cuda Main: cudaMemcpy failed with %s\n", cudaGetErrorString(err));
+        // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        cudaFree(numErr_d);
+        return err;
+    }
+    err = cudaFree(numErr_d);
+    if (err != cudaSuccess) {
+        printf("Cuda Main: cudaFree failed with %s\n", cudaGetErrorString(err));
+        return err;
+    }
+    if (numErr_h > 0) {
+        return cudaErrorUnknown;
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `main.cpp`
+
+Source: cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/main.cpp:29-47
+```cpp
+#include "cudaEGL.h"
+#include "cuda_consumer.h"
+#include "cuda_producer.h"
+#include "eglstrm_common.h"
+#include "helper.h"
+#if defined(EXTENSION_LIST)
+EXTENSION_LIST(EXTLST_EXTERN)
+#endif
+
+bool        signal_stop = 0;
+extern bool verbose;
+
+static void sig_handler(int sig)
+{
+    signal_stop = 1;
+    printf("Signal: %d\n", sig);
+}
+
+void DoneCons(int consumerStatus, int send_fd)
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/main.cpp:79-98
+```cpp
+        exit(EXIT_FAILURE);
+    }
+}
+
+int WIDTH = 8192, HEIGHT = 8192;
+int main(int argc, char **argv)
+{
+    TestArgs                   args           = {0, false};
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
+    CUresult                   curesult       = CUDA_SUCCESS;
+    unsigned int               j              = 0;
+    cudaError_t                err            = cudaSuccess;
+    EGLNativeFileDescriptorKHR fileDescriptor = EGL_NO_FILE_DESCRIPTOR_KHR;
+    struct timespec            start, end;
+    CUeglFrame                 cudaEgl1, cudaEgl2;
+    int                        consumerStatus = 0;
+    int                        send_fd        = -1;
+
+    if (parseCmdLine(argc, argv, &args) < 0) {
+        printUsage();
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/main.cpp:154-173
+```cpp
+        cudaConsumer.eglDisplay = g_consumerEglDisplay;
+
+        // Send the EGL stream FD to producer
+        fileDescriptor = eglGetStreamFileDescriptorKHR(cudaConsumer.eglDisplay, cudaConsumer.eglStream);
+        if (EGL_NO_FILE_DESCRIPTOR_KHR == fileDescriptor) {
+            // JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+            printf("%s: Cuda Consumer could not get EGL file descriptor.\n", __func__);
+            eglDestroyStreamKHR(cudaConsumer.eglDisplay, cudaConsumer.eglStream);
+            consumerStatus = -1;
+            DoneCons(consumerStatus, send_fd);
+        }
+
+        if (verbose)
+            printf("%s: Cuda Consumer EGL stream FD obtained : %d.\n", __func__, fileDescriptor);
+
+        int res = -1;
+        res     = EGLStreamSendfd(send_fd, fileDescriptor);
+        if (-1 == res) {
+            printf("%s: Cuda Consumer could not send EGL file descriptor.\n", __func__);
+            consumerStatus = -1;
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/EGLStream_CUDA_CrossGPU/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

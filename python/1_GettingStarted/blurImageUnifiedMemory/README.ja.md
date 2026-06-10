@@ -81,6 +81,116 @@ English anchor: read `blurImageUnifiedMemory` as a focused example of the CUDA c
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `blurImageUnifiedMemory.py`
+
+Source: python/1_GettingStarted/blurImageUnifiedMemory/blurImageUnifiedMemory.py:2-20
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `python/1_GettingStarted/blurImageUnifiedMemory/blurImageUnifiedMemory.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/1_GettingStarted/blurImageUnifiedMemory/blurImageUnifiedMemory.py:34-53
+```python
+
+import sys
+
+try:
+    import numpy as np
+    # JP: `ManagedMemoryResource`/`Device`/`Program`/`launch` は Python から CUDA resource を作る境界です。Unified Memory の所有、compile、launch の流れをここから追います。
+    from cuda.core import (
+        Device,
+        LaunchConfig,
+        ManagedMemoryResource,
+        ManagedMemoryResourceOptions,
+        Program,
+        ProgramOptions,
+        launch,
+    )
+    from PIL import Image
+except ImportError as e:
+    print(f"Error: Required package not found: {e}")
+    print("Please install from requirements.txt:")
+    print("  pip install -r requirements.txt")
+```
+
+> JP: この抜粋は `python/1_GettingStarted/blurImageUnifiedMemory/blurImageUnifiedMemory.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/1_GettingStarted/blurImageUnifiedMemory/blurImageUnifiedMemory.py:64-83
+```python
+     *
+     * Each thread computes one output pixel by averaging
+     * the 3x3 neighborhood of input pixels (stencil pattern).
+     */
+
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x >= W || y >= H) return;
+
+    float sum = 0.0f;
+    int count = 0;
+
+    // 3x3 stencil: iterate over neighborhood
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            int nx = x + dx;
+            int ny = y + dy;
+
+            // Boundary check (clamp to edge)
+```
+
+> JP: この抜粋は `python/1_GettingStarted/blurImageUnifiedMemory/blurImageUnifiedMemory.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/1_GettingStarted/blurImageUnifiedMemory/blurImageUnifiedMemory.py:214-233
+```python
+    print("Image Blur with Unified Memory (cuda.core)")
+    print("=" * 60)
+
+    # Initialize CUDA device
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
+    device = Device(0)
+    device.set_current()
+
+    print(f"\nDevice: {device.name}")
+    print(f"Compute Capability: sm_{device.arch}")
+
+    # Create stream for async operations
+    stream = device.create_stream()
+    try:
+        # Compile kernel using cuda.core.Program
+        print("\nCompiling CUDA kernel with cuda.core.Program...")
+        arch = f"sm_{device.arch}"
+        options = ProgramOptions(arch=arch)
+        # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
+        program = Program(BOX_BLUR_KERNEL_CODE, code_type="c++", options=options)
+```
+
+> JP: この抜粋は `python/1_GettingStarted/blurImageUnifiedMemory/blurImageUnifiedMemory.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

@@ -79,7 +79,7 @@ English anchor: read `cudaNvSci` as a focused example of the CUDA concepts used 
 
 - `cudaNvSci.cpp`: focus on `cudaSetDevice`, `cudaNvSci`, `cudaNvSciSignal`, `cudaNvSciWait`, `cuDeviceGetUuid_v2`.
 - `cudaNvSci.h`: focus on `CUDANVSCI_H`, `cudaStream_t`, `cudaNvSci`, `atomic`, `cudaTextureObject_t`.
-- `imageKernels.cu`: focus on `blockDim`, `blockIdx`, `threadIdx`, `cudaStream_t`, `launch`.
+- `imageKernels.cu`: focus on `blockDim`, `blockIdx`, `threadIdx`, `launch`, `cudaStream_t`.
 - `main.cpp`: focus on `cudaNvSci`, `cudaDeviceGetAttribute`, `cudaNvSciApp`, `cudaGetDeviceCount`, `cudaDevAttrComputeCapabilityMajor`.
 
 > **日本語**
@@ -87,6 +87,361 @@ English anchor: read `cudaNvSci` as a focused example of the CUDA concepts used 
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/cudaNvSci/CMakeLists.txt:1-70
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(cudaNvSci LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 90 110)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+find_package(NVSCI)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    if(NVSCI_FOUND)
+        message(STATUS "FOUND NVSCI libs: ${NVSCIBUF_LIB} ${NVSCISYNC_LIB}")
+        message(STATUS "Using NVSCI headers path: ${NVSCIBUF_INCLUDE_DIR} ${NVSCIBUF_INCLUDE_DIR}")
+        # Source file
+        # Add target for cudaNvSci
+        add_executable(cudaNvSci imageKernels.cu cudaNvSci.cpp main.cpp)
+
+        target_compile_options(cudaNvSci PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+        target_compile_features(cudaNvSci PRIVATE cxx_std_17 cuda_std_17)
+
+        set_target_properties(cudaNvSci PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+        target_include_directories(cudaNvSci PUBLIC
+            ${CUDAToolkit_INCLUDE_DIRS}
+            ${NVSCI_INCLUDE_DIRS}
+        )
+
+        target_link_libraries(cudaNvSci
+            CUDA::cuda_driver
+            ${NVSCI_LIBRARIES}
+        )
+        # Copy teapot1024.ppm to the output directory
+        add_custom_command(TARGET cudaNvSci POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_CURRENT_SOURCE_DIR}/teapot1024.ppm ${CMAKE_CURRENT_BINARY_DIR}/teapot1024.ppm
+        )
+
+        # Specify additional clean files
+        set_target_properties(cudaNvSci PROPERTIES
+            ADDITIONAL_CLEAN_FILES "teapot1024_out.ppm"
+        )
+    else()
+        message(STATUS "NvSCI not found - will not build sample 'cudaNvSci'")
+    endif()
+else()
+    message(STATUS "Will not build sample cudaNvSci - requires Linux OS")
+endif()
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cudaNvSci/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `cudaNvSci.cpp`
+
+Source: cpp/4_CUDA_Libraries/cudaNvSci/cudaNvSci.cpp:29-47
+```cpp
+#include "cudaNvSci.h"
+
+#include <condition_variable>
+#include <cuda.h>
+#include <iostream>
+#include <thread>
+
+std::mutex              m_mutex;
+std::condition_variable m_condVar;
+bool                    workSubmitted = false;
+
+class cudaNvSciSignal
+{
+private:
+    NvSciSyncModule m_syncModule;
+    NvSciBufModule  m_bufModule;
+
+    NvSciSyncAttrList m_syncAttrList;
+    NvSciSyncFence   *m_fence;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cudaNvSci/cudaNvSci.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/cudaNvSci/cudaNvSci.cpp:95-115
+```cpp
+        checkCudaErrors(cudaDeviceGetNvSciSyncAttributes(m_syncAttrList, m_cudaDeviceId, cudaNvSciSyncAttrSignal));
+    }
+
+    ~cudaNvSciSignal()
+    {
+        checkCudaErrors(cudaSetDevice(m_cudaDeviceId));
+        // JP: `cudaFreeMipmappedArray`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        checkCudaErrors(cudaFreeMipmappedArray(d_mipmapArray));
+        // JP: `cudaFree`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+        checkCudaErrors(cudaFree(d_outputBuf));
+        checkCudaErrors(cudaDestroyExternalSemaphore(signalSem));
+        checkCudaErrors(cudaDestroyExternalMemory(extMemRawBuf));
+        checkCudaErrors(cudaDestroyExternalMemory(extMemImageBuf));
+        // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+        checkCudaErrors(cudaDestroyTextureObject(texObject));
+        checkCudaErrors(cudaStreamDestroy(streamToRun));
+    }
+
+    void initCuda()
+    {
+        checkCudaErrors(cudaSetDevice(m_cudaDeviceId));
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cudaNvSci/cudaNvSci.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/cudaNvSci/cudaNvSci.cpp:321-340
+```cpp
+    void copyDataToImageArray(unsigned char *imageData)
+    {
+        uint32_t mipLevelId = 0;
+        checkCudaErrors(cudaGetMipmappedArrayLevel(&d_mipLevelArray, d_mipmapArray, mipLevelId));
+
+        checkCudaErrors(cudaMemcpy2DToArrayAsync(d_mipLevelArray,
+                                                 0,
+                                                 0,
+                                                 imageData,
+                                                 m_imageWidth * sizeof(unsigned int),
+                                                 m_imageWidth * sizeof(unsigned int),
+                                                 m_imageHeight,
+                                                 // JP: `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+                                                 cudaMemcpyHostToDevice,
+                                                 streamToRun));
+    }
+
+    void createTexture()
+    {
+        cudaResourceDesc texRes;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cudaNvSci/cudaNvSci.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `cudaNvSci.h`
+
+Source: cpp/4_CUDA_Libraries/cudaNvSci/cudaNvSci.h:29-47
+```cpp
+#ifndef CUDANVSCI_H
+#define CUDANVSCI_H
+
+#include <cuda_runtime.h>
+#include <helper_cuda.h>
+#include <nvscibuf.h>
+#include <nvscisync.h>
+#include <vector>
+
+#define checkNvSciErrors(call)                                   \
+    do {                                                         \
+        NvSciError _status = call;                               \
+        if (NvSciError_Success != _status) {                     \
+            printf("NVSCI call in file '%s' in line %i returned" \
+                   " %d, expected %d\n",                         \
+                   __FILE__,                                     \
+                   __LINE__,                                     \
+                   _status,                                      \
+                   NvSciError_Success);                          \
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cudaNvSci/cudaNvSci.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/cudaNvSci/cudaNvSci.h:53-72
+```cpp
+extern void rotateKernel(cudaTextureObject_t &texObj,
+                         const float          angle,
+                         unsigned int        *d_outputData,
+                         const int            imageWidth,
+                         const int            imageHeight,
+                         // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+                         cudaStream_t         stream);
+extern void launchGrayScaleKernel(unsigned int *d_rgbaImage,
+                                  std::string   image_filename,
+                                  size_t        imageWidth,
+                                  size_t        imageHeight,
+                                  cudaStream_t  stream);
+
+class cudaNvSci
+{
+private:
+    int            m_isMultiGPU;
+    int            m_cudaNvSciSignalDeviceId;
+    int            m_cudaNvSciWaitDeviceId;
+    unsigned char *image_data;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cudaNvSci/cudaNvSci.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `imageKernels.cu`
+
+Source: cpp/4_CUDA_Libraries/cudaNvSci/imageKernels.cu:29-66
+```cuda
+#include <cuda.h>
+#include <helper_cuda.h>
+#include <helper_image.h>
+
+// convert floating point rgba color to 32-bit integer
+__device__ unsigned int rgbaFloatToInt(float4 rgba)
+{
+    rgba.x = __saturatef(rgba.x); // clamp to [0.0, 1.0]
+    rgba.y = __saturatef(rgba.y);
+    rgba.z = __saturatef(rgba.z);
+    rgba.w = __saturatef(rgba.w);
+    return ((unsigned int)(rgba.w * 255.0f) << 24) | ((unsigned int)(rgba.z * 255.0f) << 16)
+         | ((unsigned int)(rgba.y * 255.0f) << 8) | ((unsigned int)(rgba.x * 255.0f));
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//! Rotate an image using texture lookups
+//! @param outputData  output data in global memory
+////////////////////////////////////////////////////////////////////////////////
+static __global__ void
+transformKernel(unsigned int *outputData, int width, int height, float theta, cudaTextureObject_t tex)
+{
+    // calculate normalized texture coordinates
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    float u  = (float)x - (float)width / 2;
+    float v  = (float)y - (float)height / 2;
+    float tu = u * cosf(theta) - v * sinf(theta);
+    float tv = v * cosf(theta) + u * sinf(theta);
+
+    tu /= (float)width;
+    tv /= (float)height;
+
+    // read from texture and write to global memory
+    float4       pix          = tex2D<float4>(tex, tu + 0.5f, tv + 0.5f);
+    unsigned int pixelInt     = rgbaFloatToInt(pix);
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cudaNvSci/imageKernels.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/cudaNvSci/imageKernels.cu:94-127
+```cuda
+
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    rgbToGrayscaleKernel<<<numOfBlocks, numThreadsPerBlock, 0, stream>>>(d_rgbaImage, imageWidth, imageHeight);
+
+    unsigned int *outputData;
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
+    checkCudaErrors(cudaMallocHost((void **)&outputData, sizeof(unsigned int) * imageWidth * imageHeight));
+    // JP: `cudaMemcpyAsync`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpyAsync(
+        outputData, d_rgbaImage, sizeof(unsigned int) * imageWidth * imageHeight, cudaMemcpyDeviceToHost, stream));
+    // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    checkCudaErrors(cudaStreamSynchronize(stream));
+
+    char outputFilename[1024];
+    strcpy(outputFilename, image_filename.c_str());
+    strcpy(outputFilename + image_filename.length() - 4, "_out.ppm");
+    sdkSavePPM4ub(outputFilename, (unsigned char *)outputData, imageWidth, imageHeight);
+    printf("Wrote '%s'\n", outputFilename);
+
+    // JP: `cudaFreeHost`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaFreeHost(outputData));
+}
+
+void rotateKernel(cudaTextureObject_t &texObj,
+                  const float          angle,
+                  unsigned int        *d_outputData,
+                  const int            imageWidth,
+                  const int            imageHeight,
+                  // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+                  cudaStream_t         stream)
+{
+    dim3 dimBlock(8, 8, 1);
+    dim3 dimGrid(imageWidth / dimBlock.x, imageHeight / dimBlock.y, 1);
+
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cudaNvSci/imageKernels.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `main.cpp`
+
+Source: cpp/4_CUDA_Libraries/cudaNvSci/main.cpp:29-47
+```cpp
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <helper_cuda.h>
+#include <helper_image.h>
+#include <vector>
+
+#include "cudaNvSci.h"
+
+void loadImageData(const std::string &filename,
+                   const char       **argv,
+                   unsigned char    **image_data,
+                   uint32_t          &imageWidth,
+                   uint32_t          &imageHeight)
+{
+    // load image (needed so we can get the width and height before we create
+    // the window
+    char *image_path = sdkFindFilePath(filename.c_str(), argv[0]);
+
+    if (image_path == 0) {
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cudaNvSci/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/cudaNvSci/main.cpp:57-76
+```cpp
+    }
+
+    printf("Loaded '%s', %d x %d pixels\n", image_path, imageWidth, imageHeight);
+}
+
+int main(int argc, const char **argv)
+{
+    int              numOfGPUs = 0;
+    std::vector<int> deviceIds;
+    checkCudaErrors(cudaGetDeviceCount(&numOfGPUs));
+
+    printf("%d GPUs found\n", numOfGPUs);
+    if (!numOfGPUs) {
+        exit(EXIT_WAIVED);
+    }
+    else {
+        for (int devID = 0; devID < numOfGPUs; devID++) {
+            int major = 0, minor = 0;
+            checkCudaErrors(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, devID));
+            checkCudaErrors(cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, devID));
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cudaNvSci/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

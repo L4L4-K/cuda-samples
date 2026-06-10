@@ -81,6 +81,113 @@ English anchor: read `topologyQuery` as a focused example of the CUDA concepts u
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/1_Utilities/topologyQuery/CMakeLists.txt:1-41
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(topologyQuery LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
+    message(STATUS "Will not build sample topologyQuery - not supported on aarch64")
+else()
+    # Source file
+    # Add target for topologyQuery
+    add_executable(topologyQuery topologyQuery.cu)
+
+    target_compile_options(topologyQuery PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+    target_compile_features(topologyQuery PRIVATE cxx_std_17 cuda_std_17)
+
+    set_target_properties(topologyQuery PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+endif()
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/1_Utilities/topologyQuery/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `topologyQuery.cu`
+
+Source: cpp/1_Utilities/topologyQuery/topologyQuery.cu:35-79
+```cuda
+#include <cuda_runtime.h>
+
+// includes, project
+#include <helper_cuda.h>
+#include <helper_functions.h> // helper for shared that are common to CUDA Samples
+
+int main(int argc, char **argv)
+{
+    int deviceCount = 0;
+    checkCudaErrors(cudaGetDeviceCount(&deviceCount));
+
+    // Enumerates Device <-> Device links
+    for (int device1 = 0; device1 < deviceCount; device1++) {
+        for (int device2 = 0; device2 < deviceCount; device2++) {
+            if (device1 == device2)
+                continue;
+
+            int perfRank        = 0;
+            int atomicSupported = 0;
+            int accessSupported = 0;
+
+            checkCudaErrors(
+                cudaDeviceGetP2PAttribute(&accessSupported, cudaDevP2PAttrAccessSupported, device1, device2));
+            checkCudaErrors(cudaDeviceGetP2PAttribute(&perfRank, cudaDevP2PAttrPerformanceRank, device1, device2));
+            checkCudaErrors(
+                cudaDeviceGetP2PAttribute(&atomicSupported, cudaDevP2PAttrNativeAtomicSupported, device1, device2));
+
+            if (accessSupported) {
+                std::cout << "GPU" << device1 << " <-> GPU" << device2 << ":" << std::endl;
+                std::cout << "  * Atomic Supported: " << (atomicSupported ? "yes" : "no") << std::endl;
+                std::cout << "  * Perf Rank: " << perfRank << std::endl;
+            }
+        }
+    }
+
+    // Enumerates Device <-> Host links
+    for (int device = 0; device < deviceCount; device++) {
+        int atomicSupported = 0;
+        checkCudaErrors(cudaDeviceGetAttribute(&atomicSupported, cudaDevAttrHostNativeAtomicSupported, device));
+        std::cout << "GPU" << device << " <-> CPU:" << std::endl;
+        std::cout << "  * Atomic Supported: " << (atomicSupported ? "yes" : "no") << std::endl;
+    }
+
+    return 0;
+}
+```
+
+> JP: この抜粋は `cpp/1_Utilities/topologyQuery/topologyQuery.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

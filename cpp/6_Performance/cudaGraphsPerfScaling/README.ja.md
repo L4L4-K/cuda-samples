@@ -73,7 +73,7 @@ English anchor: read `cudaGraphsPerfScaling` as a focused example of the CUDA co
 
 ## Concrete Reading Path
 
-- `cudaGraphPerfScaling.cu`: focus on `cudaEventRecord`, `cudaStreamSynchronize`, `launch`, `cudaEvent_t`, `cudaGraph_t`.
+- `cudaGraphPerfScaling.cu`: focus on `launch`, `CUDA`, `cudaEventRecord`, `cudaStreamSynchronize`, `cudaEvent_t`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
@@ -81,14 +81,196 @@ English anchor: read `cudaGraphsPerfScaling` as a focused example of the CUDA co
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/6_Performance/cudaGraphsPerfScaling/CMakeLists.txt:1-39
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+# JP: `cudaGraphsPerfScaling`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
+project(cudaGraphsPerfScaling LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for cudaGraphsPerfScaling
+add_executable(cudaGraphsPerfScaling cudaGraphPerfScaling.cu)
+
+# JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+target_compile_options(cudaGraphsPerfScaling PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(cudaGraphsPerfScaling PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(cudaGraphsPerfScaling PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/6_Performance/cudaGraphsPerfScaling/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `cudaGraphPerfScaling.cu`
+
+Source: cpp/6_Performance/cudaGraphsPerfScaling/cudaGraphPerfScaling.cu:33-51
+```cuda
+#define USE_NVTX
+
+#include <chrono>
+#include <cstdio>
+#include <cuda_runtime.h>
+#include <vector>
+
+typedef volatile int LatchType;
+
+std::chrono::time_point<std::chrono::high_resolution_clock> getCpuTime()
+{
+    return std::chrono::high_resolution_clock::now();
+}
+
+template <typename T> float getMicroSecondDuration(T start, T end)
+{
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count() * .001f;
+}
+
+```
+
+> JP: この抜粋は `cpp/6_Performance/cudaGraphsPerfScaling/cudaGraphPerfScaling.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/6_Performance/cudaGraphsPerfScaling/cudaGraphPerfScaling.cu:71-90
+```cuda
+#define RANGE_POP()      nvtxRangePop();
+#else
+#define RANGE(name)
+#endif
+
+// JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+std::vector<cudaStream_t> stream;
+cudaEvent_t               event[1];
+cudaEvent_t               timingEvent[2];
+
+struct hostData
+{
+    long long timeElapsed;
+    bool      timeoutDetected;
+    long long timeElapsed2;
+    bool      timeoutDetected2;
+    LatchType latch;
+    LatchType latch2;
+};
+
+```
+
+> JP: この抜粋は `cpp/6_Performance/cudaGraphsPerfScaling/cudaGraphPerfScaling.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/6_Performance/cudaGraphsPerfScaling/cudaGraphPerfScaling.cu:137-156
+```cuda
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    cudaStreamBeginCapture(stream[0], cudaStreamCaptureModeGlobal);
+    int streamIdx = 0;
+    if (singleEntry) {
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+        empty<<<1, 1, 0, stream[streamIdx]>>>();
+    }
+
+    cudaEventRecord(event[0], stream[0]);
+    for (int i = 1; i < width; i++) {
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+        cudaStreamWaitEvent(stream[i], event[0]);
+    }
+
+    for (int i = 0; i < width; i++) {
+        streamIdx = i;
+        for (int j = 0; j < length; j++) {
+            // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
+            empty<<<1, 1, 0, stream[streamIdx]>>>();
+        }
+```
+
+> JP: この抜粋は `cpp/6_Performance/cudaGraphsPerfScaling/cudaGraphPerfScaling.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/6_Performance/cudaGraphsPerfScaling/cudaGraphPerfScaling.cu:184-203
+```cuda
+    {
+        RANGE("launch including upload");
+        auto start = getCpuTime();
+        cudaGraphLaunch(graphExec, stream[0]);
+        auto apiReturn = getCpuTime();
+        // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+        cudaStreamSynchronize(stream[0]);
+        auto streamSync = getCpuTime();
+        metricName.push_back("first_launch_api");
+        metricValue.push_back(getMicroSecondDuration(start, apiReturn));
+        metricName.push_back("first_launch_total");
+        metricValue.push_back(getMicroSecondDuration(start, streamSync));
+    }
+    {
+        RANGE("repeat lauch in empty stream");
+        auto start = getCpuTime();
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+        cudaGraphLaunch(graphExec, stream[0]);
+        auto apiReturn = getCpuTime();
+        // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
+```
+
+> JP: この抜粋は `cpp/6_Performance/cudaGraphsPerfScaling/cudaGraphPerfScaling.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `dataCollection.bash`
+
+Source: cpp/6_Performance/cudaGraphsPerfScaling/dataCollection.bash:1-17
+```bash
+GPU=$1
+DRIVER_VERSION=$2
+BINARY=./cudaGraphsPerfScaling
+datadir=PERF_DATA
+
+suffix=$DRIVER_VERSION
+prefix=$GPU
+mkdir -p $datadir
+
+trials=600
+
+width=1
+nvidia-smi > $datadir/${prefix}_info_${suffix}.txt
+$BINARY 5 $trials 1 $width 0 1 256 > $datadir/${prefix}_${width}_small_${suffix}.csv
+$BINARY 5 $trials 1 $width 0 32 2048 > $datadir/${prefix}_${width}_large_${suffix}.csv
+width=4
+$BINARY 5 $trials 1 $width 0 1 256 > $datadir/${prefix}_${width}_small_${suffix}.csv
+```
+
+> JP: この抜粋は `cpp/6_Performance/cudaGraphsPerfScaling/dataCollection.bash` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
 | - | - |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaEventRecord` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
 | `cudaGraphLaunch` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 | `cudaStreamSynchronize` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
-| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaEvent_t` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
 | `cudaGraph_t` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 | `cudaStreamBeginCapture` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
@@ -172,7 +354,7 @@ The sample prints timing, bandwidth, latency, throughput, or comparison data; ex
 
 ## Exercises
 
-- `cudaEventRecord` の直前と直後で、どの memory/resource が有効になったかをメモする。
+- `launch` の直前と直後で、どの memory/resource が有効になったかをメモする。
 - source file を上から読み、setup、GPU work、sync、validation、cleanup の行番号を抜き出す。
 - problem size や input size を変更した場合に、境界チェックや allocation size が破綻しないか説明する。
 - stream timeline を描き、copy、kernel、event、host wait の位置を分ける。

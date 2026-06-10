@@ -84,6 +84,174 @@ English anchor: read `conjugateGradientMultiDeviceCG` as a focused example of th
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/conjugateGradientMultiDeviceCG/CMakeLists.txt:1-50
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(conjugateGradientMultiDeviceCG LANGUAGES CUDA CXX)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# This sample is not supported on QNX
+if(CMAKE_SYSTEM_NAME STREQUAL "QNX")
+    message(STATUS "Will not build sample ${PROJECT_NAME} - not supported on QNX")
+    return()
+endif()
+
+# Source file
+# Add target for conjugateGradientMultiDeviceCG
+add_executable(conjugateGradientMultiDeviceCG conjugateGradientMultiDeviceCG.cu)
+
+target_compile_options(conjugateGradientMultiDeviceCG PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(conjugateGradientMultiDeviceCG PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(conjugateGradientMultiDeviceCG PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_link_libraries(conjugateGradientMultiDeviceCG PRIVATE
+    # JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    CUDA::cublas
+    CUDA::cusparse
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/conjugateGradientMultiDeviceCG/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `conjugateGradientMultiDeviceCG.cu`
+
+Source: cpp/4_CUDA_Libraries/conjugateGradientMultiDeviceCG/conjugateGradientMultiDeviceCG.cu:36-54
+```cuda
+#include <cuda_runtime.h>
+#include <iostream>
+#include <map>
+#include <set>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <utility>
+
+// Utilities and system includes
+#include <cooperative_groups.h>
+#include <cooperative_groups/reduce.h>
+#include <helper_cuda.h>      // helper function CUDA error checking and initialization
+#include <helper_functions.h> // helper for shared functions common to CUDA Samples
+
+namespace cg = cooperative_groups;
+
+const char *sSDKname = "conjugateGradientMultiDeviceCG";
+
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/conjugateGradientMultiDeviceCG/conjugateGradientMultiDeviceCG.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/conjugateGradientMultiDeviceCG/conjugateGradientMultiDeviceCG.cu:291-310
+```cuda
+}
+
+__device__ void
+gpuDotProduct(float *vecA, float *vecB, int size, const cg::thread_block &cta, const PeerGroup &peer_group)
+{
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    extern __shared__ double tmp[];
+
+    double temp_sum = 0.0;
+
+    for (int i = peer_group.thread_rank(); i < size; i += peer_group.size()) {
+        temp_sum += (double)(vecA[i] * vecB[i]);
+    }
+
+    cg::thread_block_tile<32> tile32 = cg::tiled_partition<32>(cta);
+
+    temp_sum = cg::reduce(tile32, temp_sum, cg::plus<double>());
+
+    if (tile32.thread_rank() == 0) {
+        tmp[tile32.meta_group_rank()] = temp_sum;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/conjugateGradientMultiDeviceCG/conjugateGradientMultiDeviceCG.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/conjugateGradientMultiDeviceCG/conjugateGradientMultiDeviceCG.cu:477-496
+```cuda
+    }
+
+    return identicalGpus;
+}
+
+int main(int argc, char **argv)
+{
+    constexpr size_t kNumGpusRequired = 2;
+    int              N = 0, nz = 0, *I = NULL, *J = NULL;
+    float           *val = NULL;
+    const float      tol = 1e-5f;
+    float           *x;
+    float            rhs = 1.0;
+    float            r1;
+    float           *r, *p, *Ax;
+
+    printf("Starting [%s]...\n", sSDKname);
+    auto gpusByArch = getIdenticalGPUs();
+
+    auto it  = gpusByArch.begin();
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/conjugateGradientMultiDeviceCG/conjugateGradientMultiDeviceCG.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/conjugateGradientMultiDeviceCG/conjugateGradientMultiDeviceCG.cu:581-600
+```cuda
+
+    /* Generate a random tridiagonal symmetric matrix in CSR format */
+    N  = 10485760 * 2;
+    nz = (N - 2) * 3 + 4;
+
+    // JP: `cudaMallocManaged`: Unified Memory は CPU/GPU で同じ pointer を使います。prefetch や同期で移動タイミングを意識します。
+    checkCudaErrors(cudaMallocManaged((void **)&I, sizeof(int) * (N + 1)));
+    checkCudaErrors(cudaMallocManaged((void **)&J, sizeof(int) * nz));
+    checkCudaErrors(cudaMallocManaged((void **)&val, sizeof(float) * nz));
+
+    float *val_cpu = (float *)malloc(sizeof(float) * nz);
+
+    genTridiag(I, J, val_cpu, N, nz);
+
+    memcpy(val, val_cpu, sizeof(float) * nz);
+    cudaMemLocation deviceLoc;
+    deviceLoc.type = cudaMemLocationTypeDevice;
+    deviceLoc.id   = 0; // Device location with initial device 0
+    // JP: この連続する anchor 群では Unified Memory allocation/prefetch/advice です。migration、host/device visibility、同期位置 を確認します。
+    checkCudaErrors(cudaMemAdvise(I, sizeof(int) * (N + 1), cudaMemAdviseSetReadMostly, deviceLoc));
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/conjugateGradientMultiDeviceCG/conjugateGradientMultiDeviceCG.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

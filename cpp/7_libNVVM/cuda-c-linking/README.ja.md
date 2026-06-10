@@ -80,6 +80,255 @@ English anchor: read `cuda-c-linking` as a focused example of the CUDA concepts 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/7_libNVVM/cuda-c-linking/CMakeLists.txt:2-20
+```cmake
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/cuda-c-linking/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/7_libNVVM/cuda-c-linking/CMakeLists.txt:33-52
+```cmake
+                 "LLVM development libraries v7 to v14, opaque pointers are "
+                 "not supported in libNVVM for pre-Blackwell architectures.")
+  return()
+endif ()
+
+# JP: `add_executable`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+add_executable(cuda-c-linking cuda-c-linking.cpp)
+
+add_test(NAME cuda-c-linking
+   COMMAND cuda-c-linking
+   WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(cuda-c-linking ${NVVM_LIB} ${CUDA_LIB})
+
+# See https://llvm.org/docs/CMake.html#developing-llvm-passes-out-of-source
+separate_arguments(LLVM_DEFINITIONS_LIST NATIVE_COMMAND ${LLVM_DEFINITIONS})
+add_definitions(${LLVM_DEFINITIONS_LIST})
+include_directories(${LLVM_INCLUDE_DIRS})
+llvm_map_components_to_libnames(llvm_libs core support)
+target_link_libraries(cuda-c-linking ${llvm_libs})
+
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/cuda-c-linking/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `cuda-c-linking.cpp`
+
+Source: cpp/7_libNVVM/cuda-c-linking/cuda-c-linking.cpp:29-47
+```cpp
+#include <cassert>
+#include <cuda.h>
+#include <llvm/ADT/StringExtras.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/Module.h>
+#include <llvm/Support/CommandLine.h>
+#include <llvm/Support/FileSystem.h>
+#include <llvm/Support/Path.h>
+#include <llvm/Support/Program.h>
+#include <llvm/Support/raw_ostream.h>
+#include <memory>
+#include <nvvm.h>
+#include <string>
+
+#include "DDSWriter.h"
+
+static_assert(sizeof(void *) == 8, "Only 64bit targets are supported.");
+using namespace llvm;
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/cuda-c-linking/cuda-c-linking.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/7_libNVVM/cuda-c-linking/cuda-c-linking.cpp:58-77
+```cpp
+#define checkCudaErrors(err) __checkCudaErrors(err, __FILE__, __LINE__)
+// JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
+static void __checkCudaErrors(CUresult err, const char *filename, int line)
+{
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+    assert(filename);
+    if (CUDA_SUCCESS != err) {
+        const char    *ename = NULL;
+        const CUresult res   = cuGetErrorName(err, &ename);
+        fprintf(stderr,
+                "CUDA API Error %04d: \"%s\" from file <%s>, "
+                "line %i.\n",
+                err,
+                ((CUDA_SUCCESS == res) ? ename : "Unknown"),
+                filename,
+                line);
+        exit(err);
+    }
+}
+
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/cuda-c-linking/cuda-c-linking.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/7_libNVVM/cuda-c-linking/cuda-c-linking.cpp:162-200
+```cpp
+    nvvmResult  res       = nvvmCompileProgram(compileUnit, 1, options);
+    if (res != NVVM_SUCCESS) {
+        errs() << "nvvmCompileProgram failed!\n";
+        size_t logSize;
+        nvvmGetProgramLogSize(compileUnit, &logSize);
+        char *msg = new char[logSize];
+        nvvmGetProgramLog(compileUnit, msg);
+        errs() << msg << "\n";
+        delete[] msg;
+        exit(EXIT_FAILURE);
+    }
+
+    // Get the result PTX size and source.
+    size_t ptxSize = 0;
+    checkNVVMCall(nvvmGetCompiledResultSize(compileUnit, &ptxSize));
+    char *ptx = new char[ptxSize];
+    checkNVVMCall(nvvmGetCompiledResult(compileUnit, ptx));
+
+    // Clean-up libNVVM.
+    checkNVVMCall(nvvmDestroyProgram(&compileUnit));
+
+    return std::string(ptx);
+}
+
+int main(int argc, char **argv)
+{
+    cl::ParseCommandLineOptions(argc, argv, "cuda-c-linking");
+
+    // Locate the pre-built library.
+    std::string      libpath0 = sys::fs::getMainExecutable(argv[0], (void *)main);
+    SmallString<256> libpath(libpath0);
+    const char      *mathlibFile = "libmathfuncs64.a";
+    sys::path::remove_filename(libpath);
+    sys::path::append(libpath, mathlibFile);
+
+    if (!sys::fs::exists(libpath.c_str())) {
+        errs() << "Unable to locate math library, expected at " << libpath << '\n';
+        return EXIT_FAILURE;
+    }
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/cuda-c-linking/cuda-c-linking.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/7_libNVVM/cuda-c-linking/cuda-c-linking.cpp:313-337
+```cpp
+    const unsigned gridSizeZ  = 1;
+
+    // Execute the kernel.
+    outs() << "Launching kernel\n";
+    void *params[] = {&devBuffer};
+    // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    checkCudaErrors(cuLaunchKernel(
+        function, gridSizeX, gridSizeY, gridSizeZ, blockSizeX, blockSizeY, blockSizeZ, 0, NULL, params, NULL));
+
+    // Retrieve the result data from the device.
+    // JP: `cuMemcpyDtoH`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cuMemcpyDtoH(&data[0], devBuffer, sizeof(float) * width * height * 4));
+
+    writeDDS("mandelbrot.dds", data, width, height);
+    outs() << "Output saved to mandelbrot.dds\n";
+
+    // Cleanup.
+    delete[] data;
+    // JP: `cuMemFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cuMemFree(devBuffer));
+    checkCudaErrors(cuModuleUnload(cudaModule));
+    checkCudaErrors(cuCtxDestroy(context));
+
+    return 0;
+}
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/cuda-c-linking/cuda-c-linking.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `math-funcs.cu`
+
+Source: cpp/7_libNVVM/cuda-c-linking/math-funcs.cu:34-87
+```cuda
+extern "C" __device__ void mandelbrot(float *Data)
+{
+
+    // Which pixel am I?
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    unsigned DataX  = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned DataY  = blockIdx.y * blockDim.y + threadIdx.y;
+    unsigned Width  = gridDim.x * blockDim.x;
+    unsigned Height = gridDim.y * blockDim.y;
+
+    float R, G, B, A;
+
+    // Scale coordinates to (-2.5, 1) and (-1, 1)
+
+    float NormX = (float)DataX / (float)Width;
+    NormX *= 3.5f;
+    NormX -= 2.5f;
+
+    float NormY = (float)DataY / (float)Height;
+    NormY *= 2.0f;
+    NormY -= 1.0f;
+
+    float X0 = NormX;
+    float Y0 = NormY;
+
+    float X = 0.0f;
+    float Y = 0.0f;
+
+    unsigned Iter    = 0;
+    unsigned MaxIter = 1000;
+
+    // Iterate
+    while (X * X + Y * Y < 4.0f && Iter < MaxIter) {
+        float XTemp = X * X - Y * Y + X0;
+        Y           = 2.0f * X * Y + Y0;
+
+        X = XTemp;
+
+        Iter++;
+    }
+
+    unsigned ColorG = Iter % 50;
+    unsigned ColorB = Iter % 25;
+
+    R = 0.0f;
+    G = (float)ColorG / 50.0f;
+    B = (float)ColorB / 25.0f;
+    A = 1.0f;
+
+    Data[DataY * Width * 4 + DataX * 4 + 0] = R;
+    Data[DataY * Width * 4 + DataX * 4 + 1] = G;
+    Data[DataY * Width * 4 + DataX * 4 + 2] = B;
+    Data[DataY * Width * 4 + DataX * 4 + 3] = A;
+}
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/cuda-c-linking/math-funcs.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

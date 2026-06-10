@@ -79,6 +79,196 @@ English anchor: read `systemWideAtomics` as a focused example of the CUDA concep
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/systemWideAtomics/CMakeLists.txt:1-45
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(systemWideAtomics LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
+    message(STATUS "Will not build sample systemWideAtomics - not supported on aarch64")
+else()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        # Source file
+        # Add target for systemWideAtomics
+        add_executable(systemWideAtomics systemWideAtomics.cu)
+
+        target_compile_options(systemWideAtomics PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+        target_compile_features(systemWideAtomics PRIVATE cxx_std_17 cuda_std_17)
+
+        set_target_properties(systemWideAtomics PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+    else()
+        message(STATUS "Will not build sample systemWideAtomics - requires Linux OS")
+    endif()
+endif()
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/systemWideAtomics/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `systemWideAtomics.cu`
+
+Source: cpp/0_Introduction/systemWideAtomics/systemWideAtomics.cu:33-83
+```cuda
+#include <cstdio>
+#include <ctime>
+#include <cuda_runtime.h>
+#include <helper_cuda.h>
+#include <math.h>
+#include <stdint.h>
+
+#define min(a, b) (a) < (b) ? (a) : (b)
+#define max(a, b) (a) > (b) ? (a) : (b)
+
+#define LOOP_NUM 50
+
+__global__ void atomicKernel(int *atom_arr)
+{
+    // JP: `blockDim`, `blockIdx`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    unsigned int tid = blockDim.x * blockIdx.x + threadIdx.x;
+
+    for (int i = 0; i < LOOP_NUM; i++) {
+        // Atomic addition
+        atomicAdd_system(&atom_arr[0], 10);
+
+        // Atomic exchange
+        atomicExch_system(&atom_arr[1], tid);
+
+        // Atomic maximum
+        atomicMax_system(&atom_arr[2], tid);
+
+        // Atomic minimum
+        atomicMin_system(&atom_arr[3], tid);
+
+        // Atomic increment (modulo 17+1)
+        atomicInc_system((unsigned int *)&atom_arr[4], 17);
+
+        // Atomic decrement
+        atomicDec_system((unsigned int *)&atom_arr[5], 137);
+
+        // Atomic compare-and-swap
+        atomicCAS_system(&atom_arr[6], tid - 1, tid);
+
+        // Bitwise atomic instructions
+
+        // Atomic AND
+        atomicAnd_system(&atom_arr[7], 2 * tid + 7);
+
+        // Atomic OR
+        atomicOr_system(&atom_arr[8], 1 << tid);
+
+        // Atomic XOR
+        atomicXor_system(&atom_arr[9], tid);
+    }
+}
+```
+
+> JP: この抜粋は `cpp/0_Introduction/systemWideAtomics/systemWideAtomics.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/systemWideAtomics/systemWideAtomics.cu:274-293
+```cuda
+    }
+
+    return true;
+}
+
+int main(int argc, char **argv)
+{
+    // set device
+    cudaDeviceProp device_prop;
+    int            dev_id = findCudaDevice(argc, (const char **)argv);
+    checkCudaErrors(cudaGetDeviceProperties(&device_prop, dev_id));
+
+    if (!device_prop.managedMemory) {
+        // This samples requires being run on a device that supports Unified Memory
+        // JP: managed_memory: Unified Memory は CPU/GPU で同じ pointer を使います。prefetch や同期で移動タイミングを意識します。
+        fprintf(stderr, "Unified Memory not supported on this device\n");
+        exit(EXIT_WAIVED);
+    }
+
+    int computeMode;
+```
+
+> JP: この抜粋は `cpp/0_Introduction/systemWideAtomics/systemWideAtomics.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/systemWideAtomics/systemWideAtomics.cu:316-335
+```cuda
+
+    int *atom_arr;
+
+    if (device_prop.pageableMemoryAccess) {
+        printf("CAN access pageable memory\n");
+        atom_arr = (int *)malloc(sizeof(int) * numData);
+    }
+    else {
+        printf("CANNOT access pageable memory\n");
+        // JP: この anchor では Unified Memory allocation/prefetch/advice です。migration、host/device visibility、同期位置 を確認します。
+        checkCudaErrors(cudaMallocManaged(&atom_arr, sizeof(int) * numData));
+    }
+
+    for (unsigned int i = 0; i < numData; i++)
+        atom_arr[i] = 0;
+
+    // To make the AND and XOR tests generate something other than 0...
+    atom_arr[7] = atom_arr[9] = 0xff;
+
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+```
+
+> JP: この抜粋は `cpp/0_Introduction/systemWideAtomics/systemWideAtomics.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/systemWideAtomics/systemWideAtomics.cu:348-362
+```cuda
+    // Compute & verify reference solution
+    int testResult = verify(atom_arr, 2 * numThreads * numBlocks);
+
+    if (device_prop.pageableMemoryAccess) {
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        free(atom_arr);
+    }
+    else {
+        // JP: `cudaFree`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+        cudaFree(atom_arr);
+    }
+
+    printf("systemWideAtomics completed, returned %s \n", testResult ? "OK" : "ERROR!");
+    exit(testResult ? EXIT_SUCCESS : EXIT_FAILURE);
+}
+```
+
+> JP: この抜粋は `cpp/0_Introduction/systemWideAtomics/systemWideAtomics.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

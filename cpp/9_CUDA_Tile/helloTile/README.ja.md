@@ -81,6 +81,105 @@ English anchor: read `helloTile` as a focused example of the CUDA concepts used 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/9_CUDA_Tile/helloTile/CMakeLists.txt:1-32
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(helloTile LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_CUDA_ARCHITECTURES 80 86 87 89 90 100 110 120)
+
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --enable-tile")
+
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+add_executable(helloTile helloTile.cu)
+
+target_compile_features(helloTile PRIVATE cxx_std_20 cuda_std_20)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/helloTile/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `helloTile.cu`
+
+Source: cpp/9_CUDA_Tile/helloTile/helloTile.cu:38-83
+```cuda
+#include "helper_cuda.h"
+
+__global__ void simtKernel(int* x) {
+  printf("Hello, SIMT!\n");
+  printf("[SIMT] *x == %i\n", *x);
+
+  *x = 100;
+  printf("[SIMT] *x = %i\n\n", *x);
+}
+
+__tile_global__ void tileKernel(int* x) {
+  printf("Hello, Tile!\n");
+  printf("[Tile] *x == %i\n", *x);
+
+  *x = 200;
+  printf("[Tile] *x = %i\n\n", *x);
+}
+
+int main() {
+  int* d_x = nullptr;
+
+  // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+  checkCudaErrors(cudaMalloc(&d_x, sizeof(int)));
+  // JP: `cudaMemset`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+  checkCudaErrors(cudaMemset(d_x, 0, sizeof(int)));
+
+  // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+  simtKernel<<<1, 1>>>(d_x);
+  checkCudaErrors(cudaGetLastError());
+  // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+  checkCudaErrors(cudaDeviceSynchronize());
+
+  /* launches tile kernel, the threads per block parameter is omitted because it must always be 1. */
+  tileKernel<<<1>>>(d_x);
+  checkCudaErrors(cudaGetLastError());
+  // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
+  checkCudaErrors(cudaDeviceSynchronize());
+
+  int h_x = 0;
+  checkCudaErrors(cudaMemcpy(&h_x, d_x, sizeof(int), cudaMemcpyDeviceToHost));
+  // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+  checkCudaErrors(cudaFree(d_x));
+
+  printf("Hello, Host!\n");
+  printf("[Host] *x == %i\n", h_x);
+}
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/helloTile/helloTile.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

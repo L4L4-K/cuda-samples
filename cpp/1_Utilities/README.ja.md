@@ -96,6 +96,24 @@ English anchor: read `1_Utilities` as a focused example of the CUDA concepts use
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/1_Utilities/CMakeLists.txt:1-5
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+add_subdirectory(deviceQuery)
+add_subdirectory(deviceQueryDrv)
+add_subdirectory(topologyQuery)
+```
+
+> JP: この抜粋は `cpp/1_Utilities/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
@@ -109,10 +127,10 @@ English anchor: read `1_Utilities` as a focused example of the CUDA concepts use
 | `atomicSupported` | 複数 thread が同じ address を更新する箇所です。競合と順序の意味を確認します。 |
 | `CUDART_VERSION` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaGetDeviceCount` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
+| `cudaDeviceProp` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cuDeviceGetName` | Driver API の handle 境界です。context/module/function と error code を追います。 |
 | `cudaDeviceGetP2PAttribute` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `Program` | 実行時 compile/link の境界です。log、module、kernel name の対応を確認します。 |
-| `cudaDeviceProp` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaGetDeviceProperties` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 
 > **日本語**

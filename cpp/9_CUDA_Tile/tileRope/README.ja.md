@@ -81,6 +81,172 @@ English anchor: read `tileRope` as a focused example of the CUDA concepts used i
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/9_CUDA_Tile/tileRope/CMakeLists.txt:1-32
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(tileRope LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_CUDA_ARCHITECTURES 80 86 87 89 90 100 110 120)
+
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --enable-tile")
+
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+add_executable(tileRope tileRope.cu)
+
+target_compile_features(tileRope PRIVATE cxx_std_20 cuda_std_20)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileRope/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `tileRope.cu`
+
+Source: cpp/9_CUDA_Tile/tileRope/tileRope.cu:44-62
+```cuda
+#include "helper_cuda.h"
+
+#include "cuda_tile.h"
+#include "cuda_fp16.h"
+
+#include <cstdio>
+#include <cstdlib>
+#include <cmath>
+
+/* Compile-time sample shape: one block per (batch, position) token. */
+constexpr int BATCH         = 1;
+constexpr int Q_HEADS       = 8;
+constexpr int K_HEADS       = 8;
+constexpr int SEQ_LEN       = 64;
+constexpr int HEAD_DIM      = 64;
+constexpr int HALF_ROPE_DIM = HEAD_DIM / 2;
+constexpr int BLOCK_QH      = Q_HEADS;
+constexpr int BLOCK_KH      = K_HEADS;
+constexpr int BLOCK_HD      = HALF_ROPE_DIM;
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileRope/tileRope.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/9_CUDA_Tile/tileRope/tileRope.cu:71-90
+```cuda
+
+/* Initializes q, k and the cos/sin tables on device. The cos/sin tables
+ * are laid out as (COS_BS, SEQ_LEN, HALF_ROPE_DIM): one entry per
+ * (batch, position, frequency-index) triple. */
+__global__ void initializeInputs(__half* q, __half* k, __half* cos, __half* sin) {
+  // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+  std::size_t tid = (std::size_t)blockIdx.x * blockDim.x + threadIdx.x;
+
+  if (tid < Q_SIZE) {
+    int d = (int)(tid % HEAD_DIM);
+    q[tid] = __half{float(d % 11) / 10.0f - 0.5f};
+  }
+  if (tid < K_SIZE) {
+    int d = (int)(tid % HEAD_DIM);
+    k[tid] = __half{float(d % 13) / 10.0f - 0.5f};
+  }
+  if (tid < COS_SIZE) {
+    int i = (int)(tid % HALF_ROPE_DIM);
+    int s = (int)((tid / HALF_ROPE_DIM) % SEQ_LEN);
+    float exponent = -2.0f * float(i) / float(HEAD_DIM);
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileRope/tileRope.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/9_CUDA_Tile/tileRope/tileRope.cu:222-283
+```cuda
+  __half* d_q   = nullptr;
+  __half* d_k   = nullptr;
+  __half* d_cos = nullptr;
+  __half* d_sin = nullptr;
+
+  // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+  checkCudaErrors(cudaMalloc(&d_q,   Q_SIZE   * sizeof(__half)));
+  checkCudaErrors(cudaMalloc(&d_k,   K_SIZE   * sizeof(__half)));
+  checkCudaErrors(cudaMalloc(&d_cos, COS_SIZE * sizeof(__half)));
+  checkCudaErrors(cudaMalloc(&d_sin, COS_SIZE * sizeof(__half)));
+
+  int threads_per_block = 256;
+  int num_blocks        = (int)((INIT_N + threads_per_block - 1) / threads_per_block);
+
+  // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+  initializeInputs<<<num_blocks, threads_per_block>>>(d_q, d_k, d_cos, d_sin);
+  checkCudaErrors(cudaGetLastError());
+
+  /* Snapshot the inputs before the in-place kernel mutates them. */
+  __half* h_q_in = new __half[Q_SIZE];
+  __half* h_k_in = new __half[K_SIZE];
+  __half* h_cos  = new __half[COS_SIZE];
+  __half* h_sin  = new __half[COS_SIZE];
+  // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+  checkCudaErrors(cudaMemcpy(h_q_in, d_q,   Q_SIZE   * sizeof(__half), cudaMemcpyDeviceToHost));
+  checkCudaErrors(cudaMemcpy(h_k_in, d_k,   K_SIZE   * sizeof(__half), cudaMemcpyDeviceToHost));
+  checkCudaErrors(cudaMemcpy(h_cos,  d_cos, COS_SIZE * sizeof(__half), cudaMemcpyDeviceToHost));
+  checkCudaErrors(cudaMemcpy(h_sin,  d_sin, COS_SIZE * sizeof(__half), cudaMemcpyDeviceToHost));
+
+  rope<__half, BATCH, Q_HEADS, K_HEADS, BLOCK_QH, BLOCK_KH, BLOCK_HD,
+       HALF_ROPE_DIM, HEAD_DIM, COS_BS, SEQ_LEN>
+      // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
+      <<<BATCH * SEQ_LEN>>>(d_q, d_k, d_cos, d_sin);
+  checkCudaErrors(cudaGetLastError());
+
+  // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+  checkCudaErrors(cudaDeviceSynchronize());
+
+  __half* h_q_out = new __half[Q_SIZE];
+  __half* h_k_out = new __half[K_SIZE];
+  // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
+  checkCudaErrors(cudaMemcpy(h_q_out, d_q, Q_SIZE * sizeof(__half), cudaMemcpyDeviceToHost));
+  checkCudaErrors(cudaMemcpy(h_k_out, d_k, K_SIZE * sizeof(__half), cudaMemcpyDeviceToHost));
+
+  if (!verify(h_q_in, h_q_out, h_cos, h_sin, Q_HEADS, "Q")) return 1;
+  if (!verify(h_k_in, h_k_out, h_cos, h_sin, K_HEADS, "K")) return 1;
+
+  printf("Success! RoPE matches expected results.\n");
+
+  // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+  checkCudaErrors(cudaFree(d_q));
+  checkCudaErrors(cudaFree(d_k));
+  checkCudaErrors(cudaFree(d_cos));
+  checkCudaErrors(cudaFree(d_sin));
+
+  delete[] h_q_in;
+  delete[] h_k_in;
+  delete[] h_cos;
+  delete[] h_sin;
+  delete[] h_q_out;
+  delete[] h_k_out;
+}
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileRope/tileRope.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

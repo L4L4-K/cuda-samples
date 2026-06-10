@@ -74,13 +74,218 @@ English anchor: read `histEqualizationNPP` as a focused example of the CUDA conc
 
 ## Concrete Reading Path
 
-- `histEqualizationNPP.cpp`: focus on `nppStreamCtx`, `cudaError`, `npp`, `CUDA`, `cudaMalloc`.
+- `histEqualizationNPP.cpp`: focus on `nppStreamCtx`, `CUDA`, `cudaError`, `npp`, `cudaMalloc`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/histEqualizationNPP/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(histEqualizationNPP LANGUAGES CXX)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/histEqualizationNPP/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/histEqualizationNPP/CMakeLists.txt:42-61
+```cmake
+        ${CUDAToolkit_INCLUDE_DIRS}
+        ${FreeImage_INCLUDE_DIRS}
+    )
+
+    target_link_libraries(histEqualizationNPP PRIVATE
+        # JP: `nppc`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+        CUDA::nppc
+        CUDA::nppisu
+        CUDA::nppist
+        CUDA::nppicc
+        CUDA::cudart
+        ${FreeImage_LIBRARIES}
+    )
+
+    # Copy data files to output directory
+    add_custom_command(TARGET histEqualizationNPP POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../Common/data/teapot512.pgm
+        ${CMAKE_CURRENT_BINARY_DIR}/
+    )
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/histEqualizationNPP/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `histEqualizationNPP.cpp`
+
+Source: cpp/4_CUDA_Libraries/histEqualizationNPP/histEqualizationNPP.cpp:29-47
+```cpp
+#if defined(WIN32) || defined(_WIN32) || defined(WIN64) || defined(_WIN64)
+#pragma warning(disable : 4819)
+#define WINDOWS_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
+#include <Exceptions.h>
+#include <ImageIO.h>
+#include <ImagesCPU.h>
+#include <ImagesNPP.h>
+#include <fstream>
+#include <helper_cuda.h>
+#include <iostream>
+#include <npp.h>
+#include <string.h>
+#include <string>
+
+#if defined(WIN32) || defined(_WIN32) || defined(WIN64) || defined(_WIN64)
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/histEqualizationNPP/histEqualizationNPP.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/histEqualizationNPP/histEqualizationNPP.cpp:64-100
+```cpp
+
+    int dev = findCudaDevice(argc, argv);
+
+    cudaDeviceProp deviceProp;
+    cudaGetDeviceProperties(&deviceProp, dev);
+    std::cerr << "cudaSetDevice GPU" << dev << " = " << deviceProp.name << std::endl;
+
+    checkCudaErrors(cudaSetDevice(dev));
+
+    return dev;
+}
+
+int main(int argc, char *argv[])
+{
+    printf("%s Starting...\n\n", argv[0]);
+
+    try {
+        std::string sFilename;
+        char       *filePath;
+
+        cudaDeviceInit(argc, (const char **)argv);
+
+        // JP: `nppStreamCtx`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+        NppStreamContext nppStreamCtx;
+        nppStreamCtx.hStream =
+            0; // The NULL stream by default, set this to whatever your stream ID is if not the NULL stream.
+
+        cudaError_t cudaError = cudaGetDevice(&nppStreamCtx.nCudaDeviceId);
+        if (cudaError != cudaSuccess) {
+            printf("CUDA error: no devices supporting CUDA.\n");
+            return NPP_NOT_SUFFICIENT_COMPUTE_CAPABILITY;
+        }
+
+        const NppLibraryVersion *libVer = nppGetLibVersion();
+
+        printf("NPP Library Version %d.%d.%d\n", libVer->major, libVer->minor, libVer->build);
+
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/histEqualizationNPP/histEqualizationNPP.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/histEqualizationNPP/histEqualizationNPP.cpp:205-245
+```cpp
+
+        NppiSize oSizeROI = {(int)oDeviceSrc.width(), (int)oDeviceSrc.height()}; // full image
+        // create device scratch buffer for nppiHistogram
+        size_t nDeviceBufferSize;
+        // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+        nppiHistogramEvenGetBufferSize_8u_C1R_Ctx(oSizeROI, levelCount, &nDeviceBufferSize, nppStreamCtx);
+        Npp8u *pDeviceBuffer;
+        // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
+        NPP_CHECK_CUDA(cudaMalloc((void **)&pDeviceBuffer, nDeviceBufferSize));
+
+        // compute levels values on host
+        Npp32s levelsHost[levelCount];
+        // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+        NPP_CHECK_NPP(nppiEvenLevelsHost_32s(levelsHost, levelCount, 0, binCount));
+        // compute the histogram
+        NPP_CHECK_NPP(nppiHistogramEven_8u_C1R_Ctx(oDeviceSrc.data(),
+                                                   oDeviceSrc.pitch(),
+                                                   oSizeROI,
+                                                   histDevice,
+                                                   levelCount,
+                                                   0,
+                                                   binCount,
+                                                   pDeviceBuffer,
+                                                   nppStreamCtx));
+        // copy histogram and levels to host memory
+        Npp32s histHost[binCount];
+        // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+        NPP_CHECK_CUDA(cudaMemcpy(histHost, histDevice, binCount * sizeof(Npp32s), cudaMemcpyDeviceToHost));
+
+        Npp32s lutHost[levelCount];
+
+        // fill LUT
+        {
+            Npp32s *pHostHistogram = histHost;
+            Npp32s  totalSum       = 0;
+
+            for (; pHostHistogram < histHost + binCount; ++pHostHistogram) {
+                totalSum += *pHostHistogram;
+            }
+
+            NPP_ASSERT(totalSum <= oSizeROI.width * oSizeROI.height);
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/histEqualizationNPP/histEqualizationNPP.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/histEqualizationNPP/histEqualizationNPP.cpp:290-309
+```cpp
+                                                lutDevice, // value and level arrays are in host memory
+                                                lvlsDevice,
+                                                levelCount,
+                                                nppStreamCtx));
+
+        // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        NPP_CHECK_CUDA(cudaFree(lutDevice));
+        NPP_CHECK_CUDA(cudaFree(lvlsDevice));
+#else
+        NPP_CHECK_NPP(nppiLUT_Linear_8u_C1R_Ctx(oDeviceSrc.data(),
+                                                oDeviceSrc.pitch(),
+                                                oDeviceDst.data(),
+                                                oDeviceDst.pitch(),
+                                                oSizeROI,
+                                                lutHost, // value and level arrays are in host memory
+                                                levelsHost,
+                                                levelCount,
+                                                nppStreamCtx));
+#endif
+
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/histEqualizationNPP/histEqualizationNPP.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

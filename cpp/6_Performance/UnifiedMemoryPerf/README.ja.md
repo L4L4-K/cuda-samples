@@ -88,6 +88,333 @@ English anchor: read `UnifiedMemoryPerf` as a focused example of the CUDA concep
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/6_Performance/UnifiedMemoryPerf/CMakeLists.txt:1-41
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(UnifiedMemoryPerf LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for UnifiedMemoryPerf
+add_executable(UnifiedMemoryPerf helperFunctions.cpp matrixMultiplyPerf.cu commonKernels.cu)
+
+target_compile_options(UnifiedMemoryPerf PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(UnifiedMemoryPerf PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(UnifiedMemoryPerf PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_include_directories(UnifiedMemoryPerf PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/6_Performance/UnifiedMemoryPerf/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `commonDefs.hpp`
+
+Source: cpp/6_Performance/UnifiedMemoryPerf/commonDefs.hpp:29-82
+```cpp
+#ifndef _COMMON_DEFS_
+#define _COMMON_DEFS_
+#include <cuda.h>
+
+#define ONE_KB 1024
+#define ONE_MB (ONE_KB * ONE_KB)
+
+extern size_t maxSampleSizeInMb;
+extern int    numKernelRuns;
+extern int    verboseResults;
+
+extern unsigned int findNumSizesToTest(unsigned int minSize, unsigned int maxSize, unsigned int multiplier);
+
+// For Tracking the different memory allocation types
+typedef enum memAllocType_enum {
+    MEMALLOC_TYPE_START,
+    USE_MANAGED_MEMORY_WITH_HINTS = MEMALLOC_TYPE_START,
+    USE_MANAGED_MEMORY_WITH_HINTS_ASYNC,
+    USE_MANAGED_MEMORY,
+    USE_ZERO_COPY,
+    USE_HOST_PAGEABLE_AND_DEVICE_MEMORY,
+    USE_HOST_PAGEABLE_AND_DEVICE_MEMORY_ASYNC,
+    USE_HOST_PAGELOCKED_AND_DEVICE_MEMORY,
+    USE_HOST_PAGELOCKED_AND_DEVICE_MEMORY_ASYNC,
+    MEMALLOC_TYPE_END = USE_HOST_PAGELOCKED_AND_DEVICE_MEMORY_ASYNC,
+    MEMALLOC_TYPE_INVALID,
+    MEMALLOC_TYPE_COUNT = MEMALLOC_TYPE_INVALID
+} MemAllocType;
+
+typedef enum bandwidthType_enum { READ_BANDWIDTH, WRITE_BANDWIDTH } BandwidthType;
+
+extern const char *memAllocTypeStr[];
+extern const char *memAllocTypeShortStr[];
+
+struct resultsData;
+struct testResults;
+
+void           createAndInitTestResults(struct testResults **results,
+                                        const char          *testName,
+                                        unsigned int         numMeasurements,
+                                        unsigned int         numSizesToTest);
+unsigned long *getPtrSizesToTest(struct testResults *results);
+
+void freeTestResultsAndAllResultsData(struct testResults *results);
+
+void    createResultDataAndAddToTestResults(struct resultsData **ptrData,
+                                            struct testResults  *results,
+                                            const char          *resultsName,
+                                            bool                 printOnlyInVerbose,
+                                            bool                 reportAsBandwidth);
+double *getPtrRunTimesInMs(struct resultsData *data, int allocType, int sizeIndex);
+
+void printResults(struct testResults *results, bool print_launch_transfer_results, bool print_std_deviation);
+#endif
+```
+
+> JP: この抜粋は `cpp/6_Performance/UnifiedMemoryPerf/commonDefs.hpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `commonKernels.cu`
+
+Source: cpp/6_Performance/UnifiedMemoryPerf/commonKernels.cu:29-35
+```cuda
+#include "commonKernels.hpp"
+
+__global__ void spinWhileLessThanOne(volatile unsigned int *latch)
+{
+    while (latch[0] < 1)
+        ;
+}
+```
+
+> JP: この抜粋は `cpp/6_Performance/UnifiedMemoryPerf/commonKernels.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `commonKernels.hpp`
+
+Source: cpp/6_Performance/UnifiedMemoryPerf/commonKernels.hpp:29-29
+```cpp
+__global__ void spinWhileLessThanOne(volatile unsigned int *latch);
+```
+
+> JP: この抜粋は `cpp/6_Performance/UnifiedMemoryPerf/commonKernels.hpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `helperFunctions.cpp`
+
+Source: cpp/6_Performance/UnifiedMemoryPerf/helperFunctions.cpp:29-47
+```cpp
+#include <stdio.h>
+#include <string.h>
+
+#include "commonDefs.hpp"
+#define CU_INIT_UUID
+#include <cmath>
+
+#define UNITS_Time "ms"
+#define UNITS_BW   "MB/s"
+#define KB_str     "KB"
+#define MB_str     "MB"
+
+struct resultsData
+{
+    char                resultsName[64];
+    struct testResults *results;
+    // this has MEMALLOC_TYPE_COUNT * results->numSizesToTest *
+    // results->numMeasurements elements
+    double            **runTimesInMs[MEMALLOC_TYPE_COUNT];
+```
+
+> JP: この抜粋は `cpp/6_Performance/UnifiedMemoryPerf/helperFunctions.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/6_Performance/UnifiedMemoryPerf/helperFunctions.cpp:86-105
+```cpp
+                              unsigned int         numMeasurements,
+                              unsigned int         numSizesToTest)
+{
+    unsigned int        i;
+    struct testResults *results;
+    results = (struct testResults *)malloc(sizeof(struct testResults));
+    memset(results, 0, sizeof(struct testResults));
+    strcpy(results->testName, testName);
+    results->numMeasurements = numMeasurements;
+    results->numSizesToTest  = numSizesToTest;
+    results->sizesToTest     = (unsigned long *)malloc(numSizesToTest * sizeof(unsigned long));
+    results->resultsDataHead = NULL;
+    results->resultsDataTail = NULL;
+
+    *ptrResults = results;
+}
+
+unsigned long *getPtrSizesToTest(struct testResults *results) { return results->sizesToTest; }
+
+void createResultDataAndAddToTestResults(struct resultsData **ptrData,
+```
+
+> JP: この抜粋は `cpp/6_Performance/UnifiedMemoryPerf/helperFunctions.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/6_Performance/UnifiedMemoryPerf/helperFunctions.cpp:148-167
+```cpp
+    unsigned int        i, j;
+    for (data = results->resultsDataHead; data != NULL;) {
+        for (i = 0; i < MEMALLOC_TYPE_COUNT; i++) {
+            for (j = 0; j < results->numSizesToTest; j++) {
+                // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+                free(data->runTimesInMs[i][j]);
+            }
+            free(data->runTimesInMs[i]);
+            free(data->averageRunTimesInMs[i]);
+            free(data->stdDevRunTimesInMs[i]);
+            free(data->stdDevBandwidthInMBps[i]);
+        }
+        dataToFree = data;
+        data       = data->next;
+        free(dataToFree);
+    }
+    free(results->sizesToTest);
+    free(results);
+}
+
+```
+
+> JP: この抜粋は `cpp/6_Performance/UnifiedMemoryPerf/helperFunctions.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `matrixMultiplyPerf.cu`
+
+Source: cpp/6_Performance/UnifiedMemoryPerf/matrixMultiplyPerf.cu:29-47
+```cuda
+#include <helper_cuda.h>
+#include <helper_timer.h>
+
+#include "commonDefs.hpp"
+#include "commonKernels.hpp"
+
+#define VERIFY_GPU_CORRECTNESS 0
+
+size_t maxSampleSizeInMb = 64;
+int    numKernelRuns     = 20;
+int    verboseResults    = 0;
+
+const char *memAllocTypeStr[MEMALLOC_TYPE_COUNT] = {"Managed_Memory_With_Hints",
+                                                    "Managed_Memory_With_Hints_FullyAsync",
+                                                    "Managed_Memory_NoHints",
+                                                    "Zero_Copy",
+                                                    "Memcpy_HostMalloc_DeviceCudaMalloc",
+                                                    "MemcpyAsync_HostMalloc_DeviceCudaMalloc",
+                                                    "Memcpy_HostCudaHostAlloc_DeviceCudaMalloc",
+```
+
+> JP: この抜粋は `cpp/6_Performance/UnifiedMemoryPerf/matrixMultiplyPerf.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/6_Performance/UnifiedMemoryPerf/matrixMultiplyPerf.cu:131-150
+```cuda
+
+#define BLOCK_SIZE 32
+__global__ void matrixMultiplyKernel(float *C, float *A, float *B, unsigned int matrixDim)
+{
+    // Block index
+    // JP: `blockIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int bx = blockIdx.x;
+    int by = blockIdx.y;
+
+    // Thread index
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+
+    unsigned int wA = matrixDim;
+    unsigned int wB = matrixDim;
+
+    // Index of the first sub-matrix of A processed by the block
+    int aBegin = matrixDim * BLOCK_SIZE * by;
+
+    // Index of the last sub-matrix of A processed by the block
+```
+
+> JP: この抜粋は `cpp/6_Performance/UnifiedMemoryPerf/matrixMultiplyPerf.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/6_Performance/UnifiedMemoryPerf/matrixMultiplyPerf.cu:181-200
+```cuda
+        As[ty][tx] = A[a + wA * ty + tx];
+        Bs[ty][tx] = B[b + wB * ty + tx];
+
+        // Synchronize to make sure the matrices are loaded
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
+        __syncthreads();
+
+        // Multiply the two matrices together;
+        // each thread computes one element
+        // of the block sub-matrix
+#pragma unroll
+
+        for (int k = 0; k < BLOCK_SIZE; ++k) {
+            Csub += As[ty][k] * Bs[k][tx];
+        }
+
+        // Synchronize to make sure that the preceding
+        // computation is done before loading two new
+        // sub-matrices of A and B in the next iteration
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
+```
+
+> JP: この抜粋は `cpp/6_Performance/UnifiedMemoryPerf/matrixMultiplyPerf.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/6_Performance/UnifiedMemoryPerf/matrixMultiplyPerf.cu:241-263
+```cuda
+    sdkCreateTimer(&cpuAccessTimer);
+    unsigned int i;
+
+    cudaDeviceProp deviceProp;
+    checkCudaErrors(cudaGetDeviceProperties(&deviceProp, device_id));
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    checkCudaErrors(cudaStreamCreate(&streamToRunOn));
+
+    randValuesX = (float *)malloc(size);
+    if (!randValuesX) {
+        exit(EXIT_FAILURE); // exit since memory allocation error
+    }
+    randValuesY = (float *)malloc(size);
+    if (!randValuesY) {
+        exit(EXIT_FAILURE); // exit since memory allocation error
+    }
+    randValuesVerifyXmulY = (float *)malloc(size);
+    if (!randValuesVerifyXmulY) {
+        exit(EXIT_FAILURE); // exit since memory allocation error
+    }
+    randValuesVerifyYmulX = (float *)malloc(size);
+    if (!randValuesVerifyYmulX) {
+        exit(EXIT_FAILURE); // exit since memory allocation error
+```
+
+> JP: この抜粋は `cpp/6_Performance/UnifiedMemoryPerf/matrixMultiplyPerf.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
@@ -101,9 +428,9 @@ English anchor: read `UnifiedMemoryPerf` as a focused example of the CUDA concep
 | `cudaFreeHost` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
 | `cudaStreamSynchronize` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
 | `cudaStreamAttachMemAsync` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaMemcpyHostToDevice` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaMemAttachHost` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
-| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaHostGetDevicePointer` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaMemcpy` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 

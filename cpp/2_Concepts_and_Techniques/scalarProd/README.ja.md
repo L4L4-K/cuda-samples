@@ -84,6 +84,260 @@ English anchor: read `scalarProd` as a focused example of the CUDA concepts used
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/2_Concepts_and_Techniques/scalarProd/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(scalarProd LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for scalarProd
+add_executable(scalarProd scalarProd_cpu.cpp scalarProd.cu)
+
+target_compile_options(scalarProd PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(scalarProd PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(scalarProd PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/scalarProd/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `scalarProd.cu`
+
+Source: cpp/2_Concepts_and_Techniques/scalarProd/scalarProd.cu:34-52
+```cuda
+#include <helper_cuda.h>
+#include <helper_functions.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+///////////////////////////////////////////////////////////////////////////////
+// Calculate scalar products of VectorN vectors of ElementN elements on CPU
+///////////////////////////////////////////////////////////////////////////////
+extern "C" void scalarProdCPU(float *h_C, float *h_A, float *h_B, int vectorN, int elementN);
+
+///////////////////////////////////////////////////////////////////////////////
+// Calculate scalar products of VectorN vectors of ElementN elements on GPU
+///////////////////////////////////////////////////////////////////////////////
+#include "scalarProd_kernel.cuh"
+
+////////////////////////////////////////////////////////////////////////////////
+// Helper function, returning uniformly distributed
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/scalarProd/scalarProd.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/scalarProd/scalarProd.cu:75-145
+```cuda
+const int RESULT_SZ = VECTOR_N * sizeof(float);
+
+///////////////////////////////////////////////////////////////////////////////
+// Main program
+///////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    float              *h_A, *h_B, *h_C_CPU, *h_C_GPU;
+    float              *d_A, *d_B, *d_C;
+    double              delta, ref, sum_delta, sum_ref, L1norm;
+    StopWatchInterface *hTimer = NULL;
+    int                 i;
+
+    printf("%s Starting...\n\n", argv[0]);
+
+    // use command-line specified CUDA device, otherwise use device with highest
+    // Gflops/s
+    findCudaDevice(argc, (const char **)argv);
+
+    sdkCreateTimer(&hTimer);
+
+    printf("Initializing data...\n");
+    printf("...allocating CPU memory.\n");
+    h_A     = (float *)malloc(DATA_SZ);
+    h_B     = (float *)malloc(DATA_SZ);
+    h_C_CPU = (float *)malloc(RESULT_SZ);
+    h_C_GPU = (float *)malloc(RESULT_SZ);
+
+    printf("...allocating GPU memory.\n");
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc((void **)&d_A, DATA_SZ));
+    checkCudaErrors(cudaMalloc((void **)&d_B, DATA_SZ));
+    checkCudaErrors(cudaMalloc((void **)&d_C, RESULT_SZ));
+
+    printf("...generating input data in CPU mem.\n");
+    srand(123);
+
+    // Generating input data on CPU
+    for (i = 0; i < DATA_N; i++) {
+        h_A[i] = RandFloat(0.0f, 1.0f);
+        h_B[i] = RandFloat(0.0f, 1.0f);
+    }
+
+    printf("...copying input data to GPU mem.\n");
+    // Copy options data to GPU memory for further processing
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpy(d_A, h_A, DATA_SZ, cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(d_B, h_B, DATA_SZ, cudaMemcpyHostToDevice));
+    printf("Data init done.\n");
+
+    printf("Executing GPU kernel...\n");
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    checkCudaErrors(cudaDeviceSynchronize());
+    sdkResetTimer(&hTimer);
+    sdkStartTimer(&hTimer);
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    scalarProdGPU<<<128, 256>>>(d_C, d_A, d_B, VECTOR_N, ELEMENT_N);
+    getLastCudaError("scalarProdGPU() execution failed\n");
+    checkCudaErrors(cudaDeviceSynchronize());
+    sdkStopTimer(&hTimer);
+    printf("GPU time: %f msecs.\n", sdkGetTimerValue(&hTimer));
+
+    printf("Reading back GPU result...\n");
+    // Read back GPU results to compare them to CPU results
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
+    checkCudaErrors(cudaMemcpy(h_C_GPU, d_C, RESULT_SZ, cudaMemcpyDeviceToHost));
+
+    printf("Checking GPU results...\n");
+    printf("..running CPU scalar product calculation\n");
+    scalarProdCPU(h_C_CPU, h_A, h_B, VECTOR_N, ELEMENT_N);
+
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/scalarProd/scalarProd.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/scalarProd/scalarProd.cu:157-175
+```cuda
+    }
+
+    L1norm = sum_delta / sum_ref;
+
+    printf("Shutting down...\n");
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaFree(d_C));
+    checkCudaErrors(cudaFree(d_B));
+    checkCudaErrors(cudaFree(d_A));
+    free(h_C_GPU);
+    free(h_C_CPU);
+    free(h_B);
+    free(h_A);
+    sdkDeleteTimer(&hTimer);
+
+    printf("L1 error: %E\n", L1norm);
+    printf((L1norm < 1e-6) ? "Test passed\n" : "Test failed!\n");
+    exit(L1norm < 1e-6 ? EXIT_SUCCESS : EXIT_FAILURE);
+}
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/scalarProd/scalarProd.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `scalarProd_cpu.cpp`
+
+Source: cpp/2_Concepts_and_Techniques/scalarProd/scalarProd_cpu.cpp:33-46
+```cpp
+extern "C" void scalarProdCPU(float *h_C, float *h_A, float *h_B, int vectorN, int elementN)
+{
+    for (int vec = 0; vec < vectorN; vec++) {
+        int vectorBase = elementN * vec;
+        int vectorEnd  = vectorBase + elementN;
+
+        double sum = 0;
+
+        for (int pos = vectorBase; pos < vectorEnd; pos++)
+            sum += h_A[pos] * h_B[pos];
+
+        h_C[vec] = (float)sum;
+    }
+}
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/scalarProd/scalarProd_cpu.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `scalarProd_kernel.cuh`
+
+Source: cpp/2_Concepts_and_Techniques/scalarProd/scalarProd_kernel.cuh:29-47
+```cuda
+#include <cooperative_groups.h>
+
+namespace cg = cooperative_groups;
+
+///////////////////////////////////////////////////////////////////////////////
+// On G80-class hardware 24-bit multiplication takes 4 clocks per warp
+// (the same as for floating point  multiplication and addition),
+// whereas full 32-bit multiplication takes 16 clocks per warp.
+// So if integer multiplication operands are  guaranteed to fit into 24 bits
+// (always lie within [-8M, 8M - 1] range in signed case),
+// explicit 24-bit multiplication is preferred for performance.
+///////////////////////////////////////////////////////////////////////////////
+#define IMUL(a, b) __mul24(a, b)
+
+///////////////////////////////////////////////////////////////////////////////
+// Calculate scalar products of VectorN vectors of ElementN elements on GPU
+// Parameters restrictions:
+// 1) ElementN is strongly preferred to be a multiple of warp size to
+//    meet alignment constraints of memory coalescing.
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/scalarProd/scalarProd_kernel.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/scalarProd/scalarProd_kernel.cuh:52-71
+```cuda
+{
+    // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    cg::thread_block cta = cg::this_thread_block();
+    // Accumulators cache
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    __shared__ float accumResult[ACCUM_N];
+
+    ////////////////////////////////////////////////////////////////////////////
+    // Cycle through every pair of vectors,
+    // taking into account that vector counts can be different
+    // from total number of thread blocks
+    ////////////////////////////////////////////////////////////////////////////
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+    for (int vec = blockIdx.x; vec < vectorN; vec += gridDim.x) {
+        int vectorBase = IMUL(elementN, vec);
+        int vectorEnd  = vectorBase + elementN;
+
+        ////////////////////////////////////////////////////////////////////////
+        // Each accumulator cycles through vectors with
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/scalarProd/scalarProd_kernel.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

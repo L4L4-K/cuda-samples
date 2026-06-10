@@ -82,6 +82,131 @@ English anchor: read `deviceQuery` as a focused example of the CUDA concepts use
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/1_Utilities/deviceQuery/CMakeLists.txt:1-45
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(deviceQuery LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for deviceQuery
+add_executable(deviceQuery deviceQuery.cpp)
+
+target_compile_options(deviceQuery PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(deviceQuery PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(deviceQuery PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_include_directories(deviceQuery PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+target_link_libraries(deviceQuery PUBLIC
+    CUDA::cudart
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/1_Utilities/deviceQuery/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `deviceQuery.cpp`
+
+Source: cpp/1_Utilities/deviceQuery/deviceQuery.cpp:34-52
+```cpp
+#include <cuda_runtime.h>
+#include <helper_cuda.h>
+#include <iostream>
+#include <memory>
+#include <string>
+
+int   *pArgc = NULL;
+char **pArgv = NULL;
+
+#if CUDART_VERSION < 5000
+
+// CUDA-C includes
+#include <cuda.h>
+
+// This function wraps the CUDA Driver API into a template function
+template <class T> inline void getCudaAttribute(T *attribute, CUdevice_attribute device_attribute, int device)
+{
+    // JP: `cuDeviceGetAttribute`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
+    CUresult error = cuDeviceGetAttribute(attribute, device_attribute, device);
+```
+
+> JP: この抜粋は `cpp/1_Utilities/deviceQuery/deviceQuery.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/1_Utilities/deviceQuery/deviceQuery.cpp:63-96
+```cpp
+
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    pArgc = &argc;
+    pArgv = argv;
+
+    printf("%s Starting...\n\n", argv[0]);
+    printf(" CUDA Device Query (Runtime API) version (CUDART static linking)\n\n");
+
+    int         deviceCount = 0;
+    cudaError_t error_id    = cudaGetDeviceCount(&deviceCount);
+
+    if (error_id != cudaSuccess) {
+        printf("cudaGetDeviceCount returned %d\n-> %s\n", static_cast<int>(error_id), cudaGetErrorString(error_id));
+        // JP: validation: `cudaGetDeviceCount` の API error path です。結果配列ではなく、CUDA device query 自体の失敗を扱います。
+        printf("Result = FAIL\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // This function call returns 0 if there are no CUDA capable devices.
+    if (deviceCount == 0) {
+        printf("There are no available device(s) that support CUDA\n");
+    }
+    else {
+        printf("Detected %d CUDA Capable device(s)\n", deviceCount);
+    }
+
+    int dev, driverVersion = 0, runtimeVersion = 0;
+
+    for (dev = 0; dev < deviceCount; ++dev) {
+```
+
+> JP: この抜粋は `cpp/1_Utilities/deviceQuery/deviceQuery.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
@@ -89,16 +214,16 @@ English anchor: read `deviceQuery` as a focused example of the CUDA concepts use
 | `Device` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaSetDevice` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `CUDART_VERSION` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
+| `cudaGetDeviceCount` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaDeviceGetAttribute` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cuDeviceGetAttribute` | Driver API の handle 境界です。context/module/function と error code を追います。 |
-| `cudaGetDeviceCount` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaGetDeviceProperties` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
+| `cudaDeviceProp` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cuSafeCallNoSync` | Driver API の handle 境界です。context/module/function と error code を追います。 |
 | `cudaGetErrorString` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaDriverGetVersion` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaRuntimeGetVersion` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaDeviceCanAccessPeer` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
-| `cudaDeviceProp` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `CUdevice_attribute` | Driver API の handle 境界です。context/module/function と error code を追います。 |
 
 > **日本語**

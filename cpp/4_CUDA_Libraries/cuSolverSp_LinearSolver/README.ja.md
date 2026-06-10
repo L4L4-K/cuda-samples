@@ -80,7 +80,7 @@ English anchor: read `cuSolverSp_LinearSolver` as a focused example of the CUDA 
 
 ## Concrete Reading Path
 
-- `cuSolverSp_LinearSolver.cpp`: focus on `cudaMemcpyAsync`, `cudaMalloc`, `cudaFree`, `cudaMemcpyHostToDevice`, `cusparseHandle`.
+- `cuSolverSp_LinearSolver.cpp`: focus on `CUDA`, `cudaMemcpyAsync`, `cudaMalloc`, `cudaFree`, `cudaMemcpyHostToDevice`.
 - `mmio.c`: focus on control flow and helper functions.
 - `mmio.h`: focus on control flow and helper functions.
 - `mmio_wrapper.cpp`: focus on `cuGet`, `cuComplex`, `cuDoubleComplex`, `CUDA`, `cusolverDn`.
@@ -90,6 +90,423 @@ English anchor: read `cuSolverSp_LinearSolver` as a focused example of the CUDA 
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/CMakeLists.txt:1-62
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+# JP: `cuSolverSp_LinearSolver`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。 CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+project(cuSolverSp_LinearSolver LANGUAGES C CXX)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for cuSolverSp_LinearSolver
+add_executable(cuSolverSp_LinearSolver cuSolverSp_LinearSolver.cpp mmio.c mmio_wrapper.cpp)
+
+target_compile_options(cuSolverSp_LinearSolver PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(cuSolverSp_LinearSolver PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(cuSolverSp_LinearSolver PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_include_directories(cuSolverSp_LinearSolver PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+target_link_libraries(cuSolverSp_LinearSolver PRIVATE
+    CUDA::cudart
+    CUDA::cublas
+    CUDA::cusolver
+)
+
+# Copy data files to output directory
+add_custom_command(TARGET cuSolverSp_LinearSolver POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_CURRENT_SOURCE_DIR}/lap2D_5pt_n100.mtx
+    ${CMAKE_CURRENT_BINARY_DIR}
+)
+
+# Copy data files to output directory
+add_custom_command(TARGET cuSolverSp_LinearSolver POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_CURRENT_SOURCE_DIR}/lap3D_7pt_n20.mtx
+    ${CMAKE_CURRENT_BINARY_DIR}
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `cuSolverSp_LinearSolver.cpp`
+
+Source: cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/cuSolverSp_LinearSolver.cpp:32-73
+```cpp
+ extension .mtx).
+ *  For example, the user can download matrices in Florida Sparse Matrix
+ Collection.
+ *  (http://www.cise.ufl.edu/research/sparse/matrices/)
+ *
+ *  The user needs to choose a solver by the switch -R<solver> and
+ *  to provide the path of the matrix by the switch -F<file>, then
+ *  the program solves
+ *          A*x = b
+ *  and reports relative error
+ *          |b-A*x|/(|A|*|x|+|b|)
+ *
+ *  How does it work?
+ *     The example solves A*x = b by the following steps
+ *  step 1: B = A(Q,Q)
+ *     Q is the ordering to minimize zero fill-in.
+ *     The user can choose symrcm or symamd.
+ *  step 2: solve B*z = Q*b
+ *  step 3: x = inv(Q)*z
+ *
+ *  Above three steps can be combined by the formula
+ *        (Q*A*Q')*(Q*x) = (Q*b)
+ *
+ *  The elapsed time is also reported so the user can compare efficiency of
+ different solvers.
+ *
+ *  How to use
+        // JP: `cuSolverSp_LinearSolver`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。 CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+        /cuSolverSp_LinearSolver            // Default: Cholesky, symrcm &
+ file=lap2D_5pt_n100.mtx
+ *     ./cuSolverSp_LinearSolver -R=chol  -file=<file>   // cholesky
+ factorization
+ *     ./cuSolverSp_LinearSolver -R=lu -P=symrcm -file=<file>     // symrcm + LU
+ with partial pivoting
+ *     ./cuSolverSp_LinearSolver -R=qr -P=symamd -file=<file>     // symamd + QR
+ factorization
+ *
+ *
+ *  Remark: the absolute error on solution x is meaningless without knowing
+ condition number of A.
+ *     The relative error on residual should be close to machine zero,
+ i.e. 1.e-15.
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/cuSolverSp_LinearSolver.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/cuSolverSp_LinearSolver.cpp:79-98
+```cpp
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "cusolverSp.h"
+#include "cusparse.h"
+#include "helper_cuda.h"
+#include "helper_cusolver.h"
+
+template <typename T_ELEM>
+int loadMMSparseMatrix(char    *filename,
+                       char     elem_type,
+                       bool     csrFormat,
+                       int     *m,
+                       int     *n,
+                       int     *nnz,
+                       T_ELEM **aVal,
+                       int    **aRowInd,
+                       int    **aColInd,
+                       int      extendSymMatrix);
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/cuSolverSp_LinearSolver.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/cuSolverSp_LinearSolver.cpp:288-310
+```cpp
+        fprintf(stderr, "Error: only support square matrix\n");
+        return 1;
+    }
+
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+    checkCudaErrors(cusolverSpCreate(&handle));
+    checkCudaErrors(cusparseCreate(&cusparseHandle));
+
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    checkCudaErrors(cudaStreamCreate(&stream));
+    /* bind stream to cusparse and cusolver*/
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+    checkCudaErrors(cusolverSpSetStream(handle, stream));
+    checkCudaErrors(cusparseSetStream(cusparseHandle, stream));
+
+    /* configure matrix descriptor*/
+    checkCudaErrors(cusparseCreateMatDescr(&descrA));
+    checkCudaErrors(cusparseSetMatType(descrA, CUSPARSE_MATRIX_TYPE_GENERAL));
+    if (baseA) {
+        checkCudaErrors(cusparseSetMatIndexBase(descrA, CUSPARSE_INDEX_BASE_ONE));
+    }
+    else {
+        checkCudaErrors(cusparseSetMatIndexBase(descrA, CUSPARSE_INDEX_BASE_ZERO));
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/cuSolverSp_LinearSolver.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/cuSolverSp_LinearSolver.cpp:436-455
+```cpp
+        h_Qb[row] = h_b[h_Q[row]];
+    }
+
+    printf("step 4: prepare data on device\n");
+    checkCudaErrors(
+        // JP: `cudaMemcpyAsync`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+        cudaMemcpyAsync(d_csrRowPtrA, h_csrRowPtrA, sizeof(int) * (rowsA + 1), cudaMemcpyHostToDevice, stream));
+    checkCudaErrors(cudaMemcpyAsync(d_csrColIndA, h_csrColIndA, sizeof(int) * nnzA, cudaMemcpyHostToDevice, stream));
+    checkCudaErrors(cudaMemcpyAsync(d_csrValA, h_csrValA, sizeof(double) * nnzA, cudaMemcpyHostToDevice, stream));
+    checkCudaErrors(
+        cudaMemcpyAsync(d_csrRowPtrB, h_csrRowPtrB, sizeof(int) * (rowsA + 1), cudaMemcpyHostToDevice, stream));
+    checkCudaErrors(cudaMemcpyAsync(d_csrColIndB, h_csrColIndB, sizeof(int) * nnzA, cudaMemcpyHostToDevice, stream));
+    checkCudaErrors(cudaMemcpyAsync(d_csrValB, h_csrValB, sizeof(double) * nnzA, cudaMemcpyHostToDevice, stream));
+    checkCudaErrors(cudaMemcpyAsync(d_b, h_b, sizeof(double) * rowsA, cudaMemcpyHostToDevice, stream));
+    checkCudaErrors(cudaMemcpyAsync(d_Qb, h_Qb, sizeof(double) * rowsA, cudaMemcpyHostToDevice, stream));
+    checkCudaErrors(cudaMemcpyAsync(d_Q, h_Q, sizeof(int) * rowsA, cudaMemcpyHostToDevice, stream));
+
+    printf("step 5: solve A*x = b on CPU \n");
+    start = second();
+
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/cuSolverSp_LinearSolver.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `mmio.c`
+
+Source: cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/mmio.c:11-29
+```c
+#if defined(_WIN32)
+#define _CRT_SECURE_NO_WARNINGS
+#endif
+
+#include "mmio.h"
+
+#include <ctype.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int mm_read_unsymmetric_sparse(const char *fname, int *M_, int *N_, int *nz_, double **val_, int **I_, int **J_)
+{
+    FILE       *f;
+    MM_typecode matcode;
+    int         M, N, nz;
+    int         i;
+    double     *val;
+    int        *I, *J;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/mmio.c` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/mmio.c:56-75
+```c
+    *N_  = N;
+    *nz_ = nz;
+
+    /* reserve memory for matrices */
+
+    I   = (int *)malloc(nz * sizeof(int));
+    J   = (int *)malloc(nz * sizeof(int));
+    val = (double *)malloc(nz * sizeof(double));
+
+    *val_ = val;
+    *I_   = I;
+    *J_   = J;
+
+    /* NOTE: when reading in doubles, ANSI C requires the use of the "l"  */
+    /*   specifier as in "%lg", "%lf", "%le", otherwise errors will occur */
+    /*  (ANSI C X3.159-1989, Sec. 4.9.6.2, p. 136 lines 13-15)            */
+
+    for (i = 0; i < nz; i++) {
+        if (fscanf(f, "%d %d %lg\n", &I[i], &J[i], &val[i]) != 3) {
+            return -1;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/mmio.c` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/mmio.c:365-384
+```c
+    char *str = mm_typecode_to_str(matcode);
+    int   ret_code;
+
+    ret_code = fprintf(f, "%s %s\n", MatrixMarketBanner, str);
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    free(str);
+    if (ret_code != 2)
+        return MM_COULD_NOT_WRITE_FILE;
+    else
+        return 0;
+}
+
+int mm_write_mtx_crd(char fname[], int M, int N, int nz, int I[], int J[], double val[], MM_typecode matcode)
+{
+    FILE *f;
+    int   i;
+
+    if (strcmp(fname, "stdout") == 0)
+        f = stdout;
+    else if ((f = fopen(fname, "w")) == NULL)
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/mmio.c` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `mmio.h`
+
+Source: cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/mmio.h:10-28
+```cpp
+#ifndef MM_IO_H
+#define MM_IO_H
+
+#include <stdio.h>
+
+#if defined(__cplusplus)
+extern "C"
+{
+#endif /* __cplusplus */
+
+#define MM_MAX_LINE_LENGTH  1025
+#define MatrixMarketBanner  "%%MatrixMarket"
+#define MM_MAX_TOKEN_LENGTH 64
+
+    typedef char MM_typecode[4];
+
+    char *mm_typecode_to_str(MM_typecode matcode);
+
+    int mm_read_banner(FILE *f, MM_typecode *matcode);
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/mmio.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `mmio_wrapper.cpp`
+
+Source: cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/mmio_wrapper.cpp:4-22
+```cpp
+#include <cusolverDn.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "mmio.h"
+
+/* avoid Windows warnings (for example: strcpy, fscanf, etc.) */
+#if defined(_WIN32)
+#define _CRT_SECURE_NO_WARNINGS
+#endif
+
+/* various __inline__ __device__  function to initialize a T_ELEM */
+// JP: `cuGet`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
+template <typename T_ELEM> __inline__ T_ELEM cuGet(int);
+template <> __inline__ float                 cuGet<float>(int x) { return float(x); }
+
+template <> __inline__ double cuGet<double>(int x) { return double(x); }
+
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/mmio_wrapper.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/mmio_wrapper.cpp:266-285
+```cpp
+        tempColInd = (int *)malloc((*nnz + count) * sizeof(int));
+        if (mm_is_real(matcode) || mm_is_integer(matcode)) {
+            tempVal = (double *)malloc((*nnz + count) * sizeof(double));
+        }
+        else {
+            tempVal = (double *)malloc(2 * (*nnz + count) * sizeof(double));
+        }
+        // copy the elements regular and transposed locations
+        for (j = 0, i = 0; i < (*nnz); i++) {
+            tempRowInd[j] = trow[i];
+            tempColInd[j] = tcol[i];
+            if (mm_is_real(matcode) || mm_is_integer(matcode)) {
+                tempVal[j] = tval[i];
+            }
+            else {
+                tempVal[2 * j]     = tval[2 * i];
+                tempVal[2 * j + 1] = tval[2 * i + 1];
+            }
+            j++;
+            if (trow[i] != tcol[i]) {
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/mmio_wrapper.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/mmio_wrapper.cpp:307-326
+```cpp
+            }
+        }
+        (*nnz) += count;
+        // free temporary storage
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        free(trow);
+        free(tcol);
+        free(tval);
+    }
+    else {
+        tempRowInd = trow;
+        tempColInd = tcol;
+        tempVal    = tval;
+    }
+    // life time of (trow, tcol, tval) is over.
+    // please use COO format (tempRowInd, tempColInd, tempVal)
+
+    // use qsort to sort COO format
+    work = (struct cooFormat *)malloc(sizeof(struct cooFormat) * (*nnz));
+    if (NULL == work) {
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/mmio_wrapper.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/mmio_wrapper.cpp:393-412
+```cpp
+
+        *aColInd = cscColPtr;
+        *aRowInd = (int *)malloc((*nnz) * sizeof(int));
+    }
+
+    /* transfrom the matrix values of type double into one of the cusparse library types */
+    *aVal = (T_ELEM *)malloc((*nnz) * sizeof(T_ELEM));
+
+    for (i = 0; i < (*nnz); i++) {
+        if (csrFormat) {
+            (*aColInd)[i] = tempColInd[i];
+        }
+        else {
+            (*aRowInd)[i] = tempRowInd[i];
+        }
+        if (mm_is_real(matcode) || mm_is_integer(matcode)) {
+            (*aVal)[i] = cuGet<T_ELEM>(tempVal[work[i].p]);
+        }
+        else {
+            (*aVal)[i] = cuGet<T_ELEM>(tempVal[2 * work[i].p], tempVal[2 * work[i].p + 1]);
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cuSolverSp_LinearSolver/mmio_wrapper.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

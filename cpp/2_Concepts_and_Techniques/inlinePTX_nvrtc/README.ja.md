@@ -84,6 +84,179 @@ English anchor: read `inlinePTX_nvrtc` as a focused example of the CUDA concepts
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/2_Concepts_and_Techniques/inlinePTX_nvrtc/CMakeLists.txt:1-49
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(inlinePTX_nvrtc LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for inlinePTX_nvrtc
+add_executable(inlinePTX_nvrtc inlinePTX.cpp)
+
+target_compile_options(inlinePTX_nvrtc PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(inlinePTX_nvrtc PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(inlinePTX_nvrtc PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_link_libraries(inlinePTX_nvrtc PRIVATE
+    # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
+    CUDA::nvrtc
+    CUDA::cuda_driver
+)
+
+# Copy clock_kernel.cu to the output directory
+add_custom_command(TARGET inlinePTX_nvrtc POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_CURRENT_SOURCE_DIR}/inlinePTX_kernel.cu ${CMAKE_CURRENT_BINARY_DIR}
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/inlinePTX_nvrtc/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `inlinePTX.cpp`
+
+Source: cpp/2_Concepts_and_Techniques/inlinePTX_nvrtc/inlinePTX.cpp:29-93
+```cpp
+/*
+ * Demonstration of inline PTX (assembly language) usage in CUDA kernels
+ */
+
+// System includes
+#include <assert.h>
+#include <stdio.h>
+
+// CUDA runtime
+#include <cuda_runtime.h>
+#include <nvrtc_helper.h>
+
+// helper functions and utilities to work with CUDA
+#include <helper_functions.h>
+
+void sequence_cpu(int *h_ptr, int length)
+{
+    for (int elemID = 0; elemID < length; elemID++) {
+        h_ptr[elemID] = elemID % 32;
+    }
+}
+
+int main(int argc, char **argv)
+{
+    printf("CUDA inline PTX assembler sample\n");
+
+    char  *cubin, *kernel_file;
+    size_t cubinSize;
+
+    kernel_file = sdkFindFilePath("inlinePTX_kernel.cu", argv[0]);
+    compileFileToCUBIN(kernel_file, argc, argv, &cubin, &cubinSize, 0);
+
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
+    CUmodule module = loadCUBIN(cubin, argc, argv);
+
+    CUfunction kernel_addr;
+
+    checkCudaErrors(cuModuleGetFunction(&kernel_addr, module, "sequence_gpu"));
+
+    const int N     = 1000;
+    int      *h_ptr = (int *)malloc(N * sizeof(int));
+
+    dim3 cudaBlockSize(256, 1, 1);
+    dim3 cudaGridSize((N + cudaBlockSize.x - 1) / cudaBlockSize.x, 1, 1);
+
+    CUdeviceptr d_ptr;
+    // JP: `cuMemAlloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cuMemAlloc(&d_ptr, N * sizeof(int)));
+
+    void *arr[] = {(void *)&d_ptr, (void *)&N};
+    // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    checkCudaErrors(cuLaunchKernel(kernel_addr,
+                                   cudaGridSize.x,
+                                   cudaGridSize.y,
+                                   cudaGridSize.z, /* grid dim */
+                                   cudaBlockSize.x,
+                                   cudaBlockSize.y,
+                                   cudaBlockSize.z, /* block dim */
+                                   0,
+                                   0,       /* shared mem, stream */
+                                   &arr[0], /* arguments */
+                                   0));
+
+    checkCudaErrors(cuCtxSynchronize());
+
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/inlinePTX_nvrtc/inlinePTX.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/inlinePTX_nvrtc/inlinePTX.cpp:105-114
+```cpp
+        }
+    }
+
+    printf("Test %s.\n", bValid ? "Successful" : "Failed");
+
+    // JP: `cuMemFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cuMemFree(d_ptr));
+
+    return bValid ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/inlinePTX_nvrtc/inlinePTX.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `inlinePTX_kernel.cu`
+
+Source: cpp/2_Concepts_and_Techniques/inlinePTX_nvrtc/inlinePTX_kernel.cu:29-42
+```cuda
+extern "C" __global__ void sequence_gpu(int *d_ptr, int length)
+{
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+    int elemID = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (elemID < length) {
+        unsigned int laneid;
+
+        // This command gets the lane ID within the current warp
+        asm("mov.u32 %0, %%laneid;" : "=r"(laneid));
+
+        d_ptr[elemID] = laneid;
+    }
+}
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/inlinePTX_nvrtc/inlinePTX_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

@@ -79,6 +79,163 @@ English anchor: read `cubDeviceTransform` as a focused example of the CUDA conce
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/cubDeviceTransform/CMakeLists.txt:1-65
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(cubDeviceTransform LANGUAGES C CXX CUDA)
+
+# Disable response file for libraries on QNX as qcc does not support lib paths with double quotes
+if(CMAKE_SYSTEM_NAME STREQUAL "QNX")
+    set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_LIBRARIES OFF)
+endif()
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Fetch CCCL via CPM.
+# Override with -DCCCL_SOURCE_DIR=/path/to/cccl to use a local checkout
+set(CCCL_SAMPLES_CCCL_TAG "v3.3.3" CACHE STRING
+    "Tag/branch of NVIDIA/cccl to fetch for the CCCL samples")
+
+if(NOT TARGET CCCL::CCCL)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/CPM.cmake")
+    if(DEFINED CCCL_SOURCE_DIR AND NOT CCCL_SOURCE_DIR STREQUAL "")
+        CPMAddPackage(NAME CCCL SOURCE_DIR "${CCCL_SOURCE_DIR}")
+    else()
+        CPMAddPackage(
+            NAME CCCL
+            GIT_REPOSITORY "https://github.com/NVIDIA/cccl"
+            GIT_TAG "${CCCL_SAMPLES_CCCL_TAG}"
+        )
+    endif()
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for cubDeviceTransform
+add_executable(cubDeviceTransform cubDeviceTransform.cu)
+
+target_compile_options(cubDeviceTransform PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(cubDeviceTransform PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(cubDeviceTransform PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_link_libraries(cubDeviceTransform PRIVATE
+    CUDA::cudart
+    CCCL::CCCL
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cubDeviceTransform/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `cubDeviceTransform.cu`
+
+Source: cpp/4_CUDA_Libraries/cubDeviceTransform/cubDeviceTransform.cu:38-56
+```cuda
+#include <stdio.h>
+#include <stdlib.h>
+#include <vector>
+
+/* Includes, cuda */
+#include <cuda_runtime.h>
+#include <helper_cuda.h>
+
+/* Includes, cccl */
+#include <cub/device/device_transform.cuh>
+#include <cuda/iterator>
+#include <thrust/device_vector.h>
+#include <thrust/host_vector.h>
+
+static bool run_n_to_one_transform()
+{
+    /* result[i] = (a[i] + b[i]) * c[i], with c = counting_iterator<int>(100). */
+    thrust::device_vector<int>   a        = {0, -2, 5, 3};
+    thrust::device_vector<float> b        = {5.2f, 3.1f, -1.1f, 3.0f};
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cubDeviceTransform/cubDeviceTransform.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/cubDeviceTransform/cubDeviceTransform.cu:61-80
+```cuda
+        return static_cast<int>((x + y) * z);
+    };
+
+    checkCudaErrors(cub::DeviceTransform::Transform(
+        cuda::std::tuple{a.begin(), b.begin(), counting}, result.begin(), a.size(), op));
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    checkCudaErrors(cudaDeviceSynchronize());
+
+    thrust::host_vector<int>   ha  = a;
+    thrust::host_vector<float> hb  = b;
+    thrust::host_vector<int>   got = result;
+    std::vector<int>           expected(a.size());
+    for (size_t i = 0; i < a.size(); ++i) {
+        expected[i] = static_cast<int>((ha[i] + hb[i]) * static_cast<int>(100 + i));
+    }
+
+    bool ok = true;
+    printf("cub::DeviceTransform::Transform (N=3 inputs -> 1 output)\n");
+    printf("  result = (a + b) * c with c = counting_iterator(100)\n");
+    printf("  got      = {");
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cubDeviceTransform/cubDeviceTransform.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/cubDeviceTransform/cubDeviceTransform.cu:140-159
+```cuda
+        printf(" %d", v);
+    printf(" }  %s\n", ok ? "OK" : "FAIL");
+    return ok;
+}
+
+int main(int argc, char **argv)
+{
+    int devID = findCudaDevice(argc, (const char **)argv);
+    cudaDeviceProp props;
+    checkCudaErrors(cudaGetDeviceProperties(&props, devID));
+    printf("Device: %s (Compute Capability %d.%d)\n\n", props.name, props.major, props.minor);
+
+    bool ok = true;
+    ok &= run_n_to_one_transform();
+    printf("\n");
+    ok &= run_n_to_m_transform();
+
+    printf("\n%s\n", ok ? "Done" : "FAILED");
+    return ok ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cubDeviceTransform/cubDeviceTransform.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

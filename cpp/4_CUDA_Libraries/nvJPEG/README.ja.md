@@ -81,13 +81,189 @@ English anchor: read `nvJPEG` as a focused example of the CUDA concepts used in 
 
 ## Concrete Reading Path
 
-- `nvJPEG.cpp`: focus on `nvjpeg_handle`, `nvjpeg_decoupled_state`, `nvjpeg_decoder`, `nvjpegImage_t`, `nvjpeg_state`.
+- `nvJPEG.cpp`: focus on `nvjpeg_handle`, `CUDA`, `nvjpeg_decoupled_state`, `nvjpeg_decoder`, `nvjpegImage_t`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/nvJPEG/CMakeLists.txt:1-54
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+# JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+project(nvJPEG LANGUAGES CXX)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for nvJPEG
+add_executable(nvJPEG nvJPEG.cpp)
+
+target_compile_options(nvJPEG PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(nvJPEG PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(nvJPEG PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_include_directories(nvJPEG PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+target_link_libraries(nvJPEG PRIVATE
+    CUDA::cudart
+    CUDA::nvjpeg
+)
+
+# Copy data to the output directory
+add_custom_command(TARGET nvJPEG POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_CURRENT_SOURCE_DIR}/images
+    ${CMAKE_CURRENT_BINARY_DIR}/images
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/nvJPEG/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `nvJPEG.cpp`
+
+Source: cpp/4_CUDA_Libraries/nvJPEG/nvJPEG.cpp:32-54
+```cpp
+
+#include <cuda_runtime_api.h>
+
+#include "helper_nvJPEG.hxx"
+
+// JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+int dev_malloc(void **p, size_t s) { return (int)cudaMalloc(p, s); }
+
+// JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+int dev_free(void *p) { return (int)cudaFree(p); }
+
+// JP: `cudaHostAlloc`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
+int host_malloc(void **p, size_t s, unsigned int f) { return (int)cudaHostAlloc(p, s, f); }
+
+int host_free(void *p) { return (int)cudaFreeHost(p); }
+
+typedef std::vector<std::string>       FileNames;
+typedef std::vector<std::vector<char>> FileData;
+
+struct decode_params_t
+{
+    std::string input_dir;
+    int         batch_size;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/nvJPEG/nvJPEG.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/nvJPEG/nvJPEG.cpp:146-165
+```cpp
+    int                       heights[NVJPEG_MAX_COMPONENT];
+    int                       channels;
+    nvjpegChromaSubsampling_t subsampling;
+
+    for (int i = 0; i < file_data.size(); i++) {
+        checkCudaErrors(nvjpegGetImageInfo(params.nvjpeg_handle,
+                                           (unsigned char *)file_data[i].data(),
+                                           file_len[i],
+                                           &channels,
+                                           &subsampling,
+                                           widths,
+                                           heights));
+
+        img_width[i]  = widths[0];
+        img_height[i] = heights[0];
+
+        std::cout << "Processing: " << current_names[i] << std::endl;
+        std::cout << "Image is " << channels << " channels." << std::endl;
+        for (int c = 0; c < channels; c++) {
+            std::cout << "Channel #" << c << " size: " << widths[c] << " x " << heights[c] << std::endl;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/nvJPEG/nvJPEG.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/nvJPEG/nvJPEG.cpp:271-290
+```cpp
+                  // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+                  std::vector<nvjpegImage_t> &out,
+                  decode_params_t            &params,
+                  double                     &time)
+{
+    // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    checkCudaErrors(cudaStreamSynchronize(params.stream));
+    cudaEvent_t startEvent = NULL, stopEvent = NULL;
+    float       loopTime = 0;
+
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    checkCudaErrors(cudaEventCreate(&startEvent, cudaEventBlockingSync));
+    checkCudaErrors(cudaEventCreate(&stopEvent, cudaEventBlockingSync));
+
+    if (!params.batched) {
+        if (!params.pipelined) // decode one image at a time
+        {
+            checkCudaErrors(cudaEventRecord(startEvent, params.stream));
+            for (int i = 0; i < params.batch_size; i++) {
+                // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/nvJPEG/nvJPEG.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/nvJPEG/nvJPEG.cpp:493-512
+```cpp
+    }
+
+    return -1;
+}
+
+int main(int argc, const char *argv[])
+{
+    int pidx;
+
+    if ((pidx = findParamIndex(argv, argc, "-h")) != -1 || (pidx = findParamIndex(argv, argc, "--help")) != -1) {
+        std::cout << "Usage: " << argv[0]
+                  << " -i images_dir [-b batch_size] [-t total_images] [-device= "
+                     "device_id] [-w warmup_iterations] [-o output_dir] "
+                     "[-pipelined] [-batched] [-fmt output_format]\n";
+        std::cout << "Parameters: " << std::endl;
+        std::cout << "\timages_dir\t:\tPath to single image or directory of images" << std::endl;
+        std::cout << "\tbatch_size\t:\tDecode images from input by batches of "
+                     "specified size"
+                  << std::endl;
+        std::cout << "\ttotal_images\t:\tDecode this much images, if there are "
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/nvJPEG/nvJPEG.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

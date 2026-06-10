@@ -94,7 +94,7 @@ English anchor: read `particles` as a focused example of the CUDA concepts used 
 - `particleSystem.cpp`: focus on `CUDA`, `cudaMalloc`, `cudaFree`, `CUDART_PI_F`, `cudaGraphicsResource`.
 - `particleSystem.cuh`: focus on `cudaGraphicsResource`, `CUDA`, `cudaInit`.
 - `particleSystem.h`: focus on `CUDA`, `cudaGraphicsResource`.
-- `particleSystem_cuda.cu`: focus on `cudaGraphicsResource`, `thrust::device_ptr`, `CUDA`, `cudaMemcpy`, `launch`.
+- `particleSystem_cuda.cu`: focus on `cudaGraphicsResource`, `thrust::device_ptr`, `launch`, `CUDA`, `cudaMemcpy`.
 - `particles.cpp`: focus on `CUDA`, `gridDim`, `cudaInit`, `cudaDeviceSynchronize`, `atomic`.
 - `particles_kernel.cuh`: focus on control flow and helper functions.
 - `particles_kernel_impl.cuh`: focus on `cudaParams`, `threadIdx`, `blockIdx`, `blockDim`, `__shared__`.
@@ -109,6 +109,686 @@ English anchor: read `particles` as a focused example of the CUDA concepts used 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/2_Concepts_and_Techniques/particles/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(particles LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/particles/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `particleSystem.cpp`
+
+Source: cpp/2_Concepts_and_Techniques/particles/particleSystem.cpp:13-32
+```cpp
+// OpenGL Graphics includes
+#define HELPERGL_EXTERN_GL_FUNC_IMPLEMENTATION
+#include "particleSystem.h"
+
+#include <algorithm>
+#include <assert.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cuda_runtime.h>
+#include <helper_cuda.h>
+#include <helper_functions.h>
+#include <helper_gl.h>
+#include <math.h>
+#include <memory.h>
+
+#include "particleSystem.cuh"
+#include "particles_kernel.cuh"
+
+#ifndef CUDART_PI_F
+#define CUDART_PI_F 3.141592654f
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/particles/particleSystem.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/particles/particleSystem.cpp:149-168
+```cpp
+    assert(!m_bInitialized);
+
+    m_numParticles = numParticles;
+
+    // allocate host storage
+    m_hPos = new float[m_numParticles * 4];
+    m_hVel = new float[m_numParticles * 4];
+    memset(m_hPos, 0, m_numParticles * 4 * sizeof(float));
+    memset(m_hVel, 0, m_numParticles * 4 * sizeof(float));
+
+    m_hCellStart = new uint[m_numGridCells];
+    memset(m_hCellStart, 0, m_numGridCells * sizeof(uint));
+
+    m_hCellEnd = new uint[m_numGridCells];
+    memset(m_hCellEnd, 0, m_numGridCells * sizeof(uint));
+
+    // allocate GPU data
+    unsigned int memSize = sizeof(float) * 4 * m_numParticles;
+
+    if (m_bUseOpenGL) {
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/particles/particleSystem.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/particles/particleSystem.cpp:244-263
+```cpp
+        unregisterGLBufferObject(m_cuda_posvbo_resource);
+        glDeleteBuffers(1, (const GLuint *)&m_posVbo);
+        glDeleteBuffers(1, (const GLuint *)&m_colorVBO);
+    }
+    else {
+        // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        checkCudaErrors(cudaFree(m_cudaPosVBO));
+        checkCudaErrors(cudaFree(m_cudaColorVBO));
+    }
+}
+
+// step the simulation
+void ParticleSystem::update(float deltaTime)
+{
+    assert(m_bInitialized);
+
+    float *dPos;
+
+    if (m_bUseOpenGL) {
+        dPos = (float *)mapGLBufferObject(&m_cuda_posvbo_resource);
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/particles/particleSystem.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `particleSystem.cuh`
+
+Source: cpp/2_Concepts_and_Techniques/particles/particleSystem.cuh:29-73
+```cuda
+extern "C"
+{
+    void cudaInit(int argc, char **argv);
+
+    void allocateArray(void **devPtr, int size);
+    void freeArray(void *devPtr);
+
+    void threadSync();
+
+    // JP: `cudaGraphicsResource`, `cuda_vbo_resource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
+    void copyArrayFromDevice(void *host, const void *device, struct cudaGraphicsResource **cuda_vbo_resource, int size);
+    void copyArrayToDevice(void *device, const void *host, int offset, int size);
+    void registerGLBufferObject(uint vbo, struct cudaGraphicsResource **cuda_vbo_resource);
+    void unregisterGLBufferObject(struct cudaGraphicsResource *cuda_vbo_resource);
+    void *mapGLBufferObject(struct cudaGraphicsResource **cuda_vbo_resource);
+    void  unmapGLBufferObject(struct cudaGraphicsResource *cuda_vbo_resource);
+
+    void setParameters(SimParams *hostParams);
+
+    void integrateSystem(float *pos, float *vel, float deltaTime, uint numParticles);
+
+    void calcHash(uint *gridParticleHash, uint *gridParticleIndex, float *pos, int numParticles);
+
+    void reorderDataAndFindCellStart(uint  *cellStart,
+                                     uint  *cellEnd,
+                                     float *sortedPos,
+                                     float *sortedVel,
+                                     uint  *gridParticleHash,
+                                     uint  *gridParticleIndex,
+                                     float *oldPos,
+                                     float *oldVel,
+                                     uint   numParticles,
+                                     uint   numCells);
+
+    void collide(float *newVel,
+                 float *sortedPos,
+                 float *sortedVel,
+                 uint  *gridParticleIndex,
+                 uint  *cellStart,
+                 uint  *cellEnd,
+                 uint   numParticles,
+                 uint   numCells);
+
+    void sortParticles(uint *dGridParticleHash, uint *dGridParticleIndex, uint numParticles);
+}
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/particles/particleSystem.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `particleSystem.h`
+
+Source: cpp/2_Concepts_and_Techniques/particles/particleSystem.h:29-47
+```cpp
+#ifndef __PARTICLESYSTEM_H__
+#define __PARTICLESYSTEM_H__
+
+#define DEBUG_GRID 0
+#define DO_TIMING  0
+
+#include <helper_functions.h>
+
+#include "particles_kernel.cuh"
+#include "vector_functions.h"
+
+// Particle system class
+class ParticleSystem
+{
+public:
+    ParticleSystem(uint numParticles, uint3 gridSize, bool bUseOpenGL);
+    ~ParticleSystem();
+
+    enum ParticleConfig { CONFIG_RANDOM, CONFIG_GRID, _NUM_CONFIGS };
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/particles/particleSystem.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/particles/particleSystem.h:129-148
+```cpp
+    uint m_colorVBO; // vertex buffer object for colors
+
+    float *m_cudaPosVBO;   // these are the CUDA deviceMem Pos
+    float *m_cudaColorVBO; // these are the CUDA deviceMem Color
+
+    // JP: `cudaGraphicsResource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
+    struct cudaGraphicsResource *m_cuda_posvbo_resource;   // handles OpenGL-CUDA exchange
+    struct cudaGraphicsResource *m_cuda_colorvbo_resource; // handles OpenGL-CUDA exchange
+
+    // params
+    SimParams m_params;
+    uint3     m_gridSize;
+    uint      m_numGridCells;
+
+    StopWatchInterface *m_timer;
+
+    uint m_solverIterations;
+};
+
+#endif // __PARTICLESYSTEM_H__
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/particles/particleSystem.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `particleSystem_cuda.cu`
+
+Source: cpp/2_Concepts_and_Techniques/particles/particleSystem_cuda.cu:32-50
+```cuda
+#if defined(__APPLE__) || defined(MACOSX)
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#include <GLUT/glut.h>
+#else
+#include <GL/freeglut.h>
+#endif
+
+#include <cstdio>
+#include <cstdlib>
+#include <cuda_gl_interop.h>
+#include <cuda_runtime.h>
+#include <helper_cuda.h>
+#include <helper_functions.h>
+#include <string.h>
+
+#include "particles_kernel_impl.cuh"
+#include "thrust/device_ptr.h"
+#include "thrust/for_each.h"
+#include "thrust/iterator/zip_iterator.h"
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/particles/particleSystem_cuda.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/particles/particleSystem_cuda.cu:65-95
+```cuda
+            printf("No CUDA Capable devices found, exiting...\n");
+            exit(EXIT_SUCCESS);
+        }
+    }
+
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    void allocateArray(void **devPtr, size_t size) { checkCudaErrors(cudaMalloc(devPtr, size)); }
+
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    void freeArray(void *devPtr) { checkCudaErrors(cudaFree(devPtr)); }
+
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    void threadSync() { checkCudaErrors(cudaDeviceSynchronize()); }
+
+    void copyArrayToDevice(void *device, const void *host, int offset, int size)
+    {
+        // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+        checkCudaErrors(cudaMemcpy((char *)device + offset, host, size, cudaMemcpyHostToDevice));
+    }
+
+    // JP: `cudaGraphicsResource`, `cuda_vbo_resource`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
+    void registerGLBufferObject(uint vbo, struct cudaGraphicsResource **cuda_vbo_resource)
+    {
+        checkCudaErrors(cudaGraphicsGLRegisterBuffer(cuda_vbo_resource, vbo, cudaGraphicsMapFlagsNone));
+    }
+
+    void unregisterGLBufferObject(struct cudaGraphicsResource *cuda_vbo_resource)
+    {
+        checkCudaErrors(cudaGraphicsUnregisterResource(cuda_vbo_resource));
+    }
+
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/particles/particleSystem_cuda.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/particles/particleSystem_cuda.cu:152-171
+```cuda
+        uint numThreads, numBlocks;
+        computeGridSize(numParticles, 256, numBlocks, numThreads);
+
+        // execute the kernel
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+        calcHashD<<<numBlocks, numThreads>>>(gridParticleHash, gridParticleIndex, (float4 *)pos, numParticles);
+
+        // check if kernel invocation generated an error
+        getLastCudaError("Kernel execution failed");
+    }
+
+    void reorderDataAndFindCellStart(uint  *cellStart,
+                                     uint  *cellEnd,
+                                     float *sortedPos,
+                                     float *sortedVel,
+                                     uint  *gridParticleHash,
+                                     uint  *gridParticleIndex,
+                                     float *oldPos,
+                                     float *oldVel,
+                                     uint   numParticles,
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/particles/particleSystem_cuda.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `particles.cpp`
+
+Source: cpp/2_Concepts_and_Techniques/particles/particles.cpp:30-48
+```cpp
+    Particle system example with collisions using uniform grid
+
+    CUDA 2.1 SDK release 12/2008
+    - removed atomic grid method, some optimization, added demo mode.
+
+    CUDA 2.2 release 3/2009
+    - replaced sort function with latest radix sort, now disables v-sync.
+    - added support for automated testing and comparison to a reference value.
+*/
+
+// OpenGL Graphics includes
+#include <helper_gl.h>
+#if defined(WIN32)
+#include <GL/wglew.h>
+#endif
+#if defined(__APPLE__) || defined(__MACOSX)
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#include <GLUT/glut.h>
+#ifndef glutCloseFunc
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/particles/particles.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/particles/particles.cpp:143-162
+```cpp
+extern "C" void copyArrayFromDevice(void *host, const void *device, unsigned int vbo, int size);
+
+// initialize particle system
+void initParticleSystem(int numParticles, uint3 gridSize, bool bUseOpenGL)
+{
+    psystem = new ParticleSystem(numParticles, gridSize, bUseOpenGL);
+    psystem->reset(ParticleSystem::CONFIG_GRID);
+
+    if (bUseOpenGL) {
+        renderer = new ParticleRenderer;
+        renderer->setParticleRadius(psystem->getParticleRadius());
+        renderer->setColorBuffer(psystem->getColorBuffer());
+    }
+
+    sdkCreateTimer(&timer);
+}
+
+void cleanup()
+{
+    sdkDeleteTimer(&timer);
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/particles/particles.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/particles/particles.cpp:197-216
+```cpp
+}
+
+void runBenchmark(int iterations, char *exec_path)
+{
+    printf("Run %u particles simulation for %d iterations...\n\n", numParticles, iterations);
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    cudaDeviceSynchronize();
+    sdkStartTimer(&timer);
+
+    for (int i = 0; i < iterations; ++i) {
+        psystem->update(timestep);
+    }
+
+    cudaDeviceSynchronize();
+    sdkStopTimer(&timer);
+    float fAvgSeconds = ((float)1.0e-3 * (float)sdkGetTimerValue(&timer) / (float)iterations);
+
+    printf("particles, Throughput = %.4f KParticles/s, Time = %.5f s, Size = %u "
+           "particles, NumDevsUsed = %u, Workgroup = %u\n",
+           (1.0e-3 * numParticles) / fAvgSeconds,
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/particles/particles.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/particles/particles.cpp:661-680
+```cpp
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+#if defined(__linux__)
+    setenv("DISPLAY", ":0", 0);
+#endif
+
+    printf("%s Starting...\n\n", sSDKsample);
+
+    printf("NOTE: The CUDA Samples are not meant for performance measurements. "
+           "Results may vary when GPU Boost is enabled.\n\n");
+
+    numParticles  = NUM_PARTICLES;
+    // JP: `gridDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    uint gridDim  = GRID_SIZE;
+    numIterations = 0;
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/particles/particles.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `particles_kernel.cuh`
+
+Source: cpp/2_Concepts_and_Techniques/particles/particles_kernel.cuh:29-60
+```cuda
+#ifndef PARTICLES_KERNEL_H
+#define PARTICLES_KERNEL_H
+
+#include "vector_types.h"
+typedef unsigned int uint;
+
+// simulation parameters
+struct SimParams
+{
+    float3 colliderPos;
+    float  colliderRadius;
+
+    float3 gravity;
+    float  globalDamping;
+    float  particleRadius;
+
+    uint3  gridSize;
+    uint   numCells;
+    float3 worldOrigin;
+    float3 cellSize;
+
+    uint numBodies;
+    uint maxParticlesPerCell;
+
+    float spring;
+    float damping;
+    float shear;
+    float attraction;
+    float boundaryDamping;
+};
+
+#endif
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/particles/particles_kernel.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `particles_kernel_impl.cuh`
+
+Source: cpp/2_Concepts_and_Techniques/particles/particles_kernel_impl.cuh:33-51
+```cuda
+#ifndef _PARTICLES_KERNEL_H_
+#define _PARTICLES_KERNEL_H_
+
+#include <cooperative_groups.h>
+#include <math.h>
+#include <stdio.h>
+
+#include "thrust/device_ptr.h"
+#include "thrust/for_each.h"
+#include "thrust/iterator/zip_iterator.h"
+#include "thrust/sort.h"
+
+// for cuda::std::get
+#include <cuda/std/utility>
+
+namespace cg = cooperative_groups;
+#include "helper_math.h"
+#include "math_constants.h"
+#include "particles_kernel.cuh"
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/particles/particles_kernel_impl.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/particles/particles_kernel_impl.cuh:70-89
+```cuda
+        float3          vel     = make_float3(velData.x, velData.y, velData.z);
+
+        vel += cudaParams.gravity * deltaTime;
+        vel *= cudaParams.globalDamping;
+
+        // new position = old position + velocity * deltaTime
+        pos += vel * deltaTime;
+
+// set this to zero to disable collisions with cube sides
+#if 1
+
+        if (pos.x > 1.0f - cudaParams.particleRadius) {
+            pos.x = 1.0f - cudaParams.particleRadius;
+            vel.x *= cudaParams.boundaryDamping;
+        }
+
+        if (pos.x < -1.0f + cudaParams.particleRadius) {
+            pos.x = -1.0f + cudaParams.particleRadius;
+            vel.x *= cudaParams.boundaryDamping;
+        }
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/particles/particles_kernel_impl.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/particles/particles_kernel_impl.cuh:140-159
+```cuda
+__global__ void calcHashD(uint   *gridParticleHash,  // output
+                          uint   *gridParticleIndex, // output
+                          float4 *pos,               // input: positions
+                          uint    numParticles)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    uint index = __umul24(blockIdx.x, blockDim.x) + threadIdx.x;
+
+    if (index >= numParticles)
+        return;
+
+    volatile float4 p = pos[index];
+
+    // get address in grid
+    int3 gridPos = calcGridPos(make_float3(p.x, p.y, p.z));
+    uint hash    = calcGridHash(gridPos);
+
+    // store grid hash and particle index
+    gridParticleHash[index]  = hash;
+    gridParticleIndex[index] = index;
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/particles/particles_kernel_impl.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `render_particles.cpp`
+
+Source: cpp/2_Concepts_and_Techniques/particles/render_particles.cpp:24-47
+```cpp
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+// JP: この file では stream/event による非同期実行と同期、CUDA Graph の依存関係と replay、Runtime/Driver/NVRTC の境界 を確認します。英語の識別子/API/出力文字列は保持します。
+
+#include <assert.h>
+#include <math.h>
+#include <stdio.h>
+
+// OpenGL Graphics includes
+#define HELPERGL_EXTERN_GL_FUNC_IMPLEMENTATION
+#include <helper_gl.h>
+
+#include "render_particles.h"
+#include "shaders.h"
+
+#ifndef M_PI
+#define M_PI 3.1415926535897932384626433832795
+#endif
+
+ParticleRenderer::ParticleRenderer()
+    : m_pos(0)
+    , m_numParticles(0)
+    , m_pointSize(1.0f)
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/particles/render_particles.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `render_particles.h`
+
+Source: cpp/2_Concepts_and_Techniques/particles/render_particles.h:29-76
+```cpp
+#ifndef __RENDER_PARTICLES__
+#define __RENDER_PARTICLES__
+
+class ParticleRenderer
+{
+public:
+    ParticleRenderer();
+    ~ParticleRenderer();
+
+    void setPositions(float *pos, int numParticles);
+    void setVertexBuffer(unsigned int vbo, int numParticles);
+    void setColorBuffer(unsigned int vbo) { m_colorVBO = vbo; }
+
+    enum DisplayMode { PARTICLE_POINTS, PARTICLE_SPHERES, PARTICLE_NUM_MODES };
+
+    void display(DisplayMode mode = PARTICLE_POINTS);
+    void displayGrid();
+
+    void setPointSize(float size) { m_pointSize = size; }
+    void setParticleRadius(float r) { m_particleRadius = r; }
+    void setFOV(float fov) { m_fov = fov; }
+    void setWindowSize(int w, int h)
+    {
+        m_window_w = w;
+        m_window_h = h;
+    }
+
+protected: // methods
+    void   _initGL();
+    void   _drawPoints();
+    GLuint _compileProgram(const char *vsource, const char *fsource);
+
+protected: // data
+    float *m_pos;
+    int    m_numParticles;
+
+    float m_pointSize;
+    float m_particleRadius;
+    float m_fov;
+    int   m_window_w, m_window_h;
+
+    GLuint m_program;
+
+    GLuint m_vbo;
+    GLuint m_colorVBO;
+};
+
+#endif //__ RENDER_PARTICLES__
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/particles/render_particles.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `shaders.cpp`
+
+Source: cpp/2_Concepts_and_Techniques/particles/shaders.cpp:29-66
+```cpp
+#define STRINGIFY(A) #A
+
+// vertex shader
+const char *vertexShader = STRINGIFY(uniform float pointRadius; // point size in world space
+                                     uniform float pointScale;  // scale to calculate size in pixels
+                                     uniform float densityScale;
+                                     uniform float densityOffset;
+                                     void          main() {
+                                         // calculate window-space point size
+                                         vec3  posEye = vec3(gl_ModelViewMatrix * vec4(gl_Vertex.xyz, 1.0));
+                                         float dist   = length(posEye);
+                                         gl_PointSize = pointRadius * (pointScale / dist);
+
+                                         gl_TexCoord[0] = gl_MultiTexCoord0;
+                                         gl_Position = gl_ModelViewProjectionMatrix * vec4(gl_Vertex.xyz, 1.0);
+
+                                         gl_FrontColor = gl_Color;
+                                     });
+
+// pixel shader for rendering points as shaded spheres
+const char *spherePixelShader = STRINGIFY(void main() {
+    const vec3 lightDir = vec3(0.577, 0.577, 0.577);
+
+    // calculate normal from texture coordinates
+    vec3 N;
+    N.xy      = gl_TexCoord[0].xy * vec2(2.0, -2.0) + vec2(-1.0, 1.0);
+    float mag = dot(N.xy, N.xy);
+
+    if (mag > 1.0)
+        discard; // kill pixels outside circle
+
+    N.z = sqrt(1.0 - mag);
+
+    // calculate lighting
+    float diffuse = max(0.0, dot(lightDir, N));
+
+    gl_FragColor = gl_Color * diffuse;
+});
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/particles/shaders.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `shaders.h`
+
+Source: cpp/2_Concepts_and_Techniques/particles/shaders.h:29-30
+```cpp
+extern const char *vertexShader;
+extern const char *spherePixelShader;
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/particles/shaders.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
@@ -120,9 +800,9 @@ English anchor: read `particles` as a focused example of the CUDA concepts used 
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
 | `cudaInit` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaDeviceSynchronize` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaMemcpy` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `thrust::device_ptr` | CUDA library call です。handle/descriptor/workspace と data layout を確認します。 |
-| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `atomic` | 複数 thread が同じ address を更新する箇所です。競合と順序の意味を確認します。 |
 | `gridDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `blockIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |

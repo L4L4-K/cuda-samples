@@ -79,6 +79,139 @@ English anchor: read `tileTranspose` as a focused example of the CUDA concepts u
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/9_CUDA_Tile/tileTranspose/CMakeLists.txt:1-32
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(tileTranspose LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_CUDA_ARCHITECTURES 80 86 87 89 90 100 110 120)
+
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --enable-tile")
+
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+add_executable(tileTranspose tileTranspose.cu)
+
+target_compile_features(tileTranspose PRIVATE cxx_std_20 cuda_std_20)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileTranspose/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `tileTranspose.cu`
+
+Source: cpp/9_CUDA_Tile/tileTranspose/tileTranspose.cu:38-56
+```cuda
+#include "helper_cuda.h"
+#include "cuda_tile.h"
+#include <cstdio>
+
+constexpr int CHUNK_N = 128;
+constexpr int CHUNK_M = 256;
+
+/* Declares a tile kernel with '__restrict__' pointers (important for performance) */
+__tile_global__ void transpose(float* __restrict__ a,
+                               float* __restrict__ b,
+                               std::size_t n,
+                               std::size_t m) {
+  /* set up the namespace */
+  namespace ct = cuda::tiles;
+  using namespace ct::literals;
+
+  /* indicate to the compiler that the pointers are aligned (important for optimizations) */
+  a = ct::assume_aligned(a, 16_ic);
+  b = ct::assume_aligned(b, 16_ic);
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileTranspose/tileTranspose.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/9_CUDA_Tile/tileTranspose/tileTranspose.cu:78-132
+```cuda
+
+int main() {
+  int n = 800;
+  int m = 400;
+
+  float* h_a = new float[n * m];
+  for (int idx = 0; idx != n * m; ++idx) {
+    h_a[idx] = idx;
+  }
+
+  float* d_a = nullptr;
+  float* d_b = nullptr;
+
+  int num_blocks_n = 1 + (n - 1) / CHUNK_N;
+  int num_blocks_m = 1 + (m - 1) / CHUNK_M;
+
+  // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+  checkCudaErrors(cudaMalloc(&d_a, n * m * sizeof(float)));
+  // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+  checkCudaErrors(cudaMemcpy(d_a, h_a, n * m * sizeof(float), cudaMemcpyHostToDevice));
+
+  checkCudaErrors(cudaMalloc(&d_b, n * m * sizeof(float)));
+
+  // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+  transpose<<<dim3(num_blocks_n, num_blocks_m)>>>(d_a, d_b, n, m);
+  checkCudaErrors(cudaGetLastError());
+
+  // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+  checkCudaErrors(cudaDeviceSynchronize());
+
+  float* h_b = new float[n * m];
+  checkCudaErrors(cudaMemcpy(h_b, d_b, n * m * sizeof(float), cudaMemcpyDeviceToHost));
+
+  for (int idx = 0; idx != n; ++idx) {
+    for (int jdx = 0; jdx != m; ++jdx) {
+      float expected = h_a[idx * m + jdx];
+      float actual = h_b[jdx * n + idx];
+      if (expected != actual) {
+        printf("Expected: h_b[%i][%i] == %f\n", jdx, idx, expected);
+        printf("Actual:   h_b[%i][%i] == %f\n", jdx, idx, actual);
+
+        return 1;
+      }
+    }
+  }
+
+  printf("Success! Matrix transpose matches expected results.\n");
+
+  // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+  checkCudaErrors(cudaFree(d_a));
+  checkCudaErrors(cudaFree(d_b));
+
+  delete[] h_a;
+  delete[] h_b;
+}
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileTranspose/tileTranspose.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

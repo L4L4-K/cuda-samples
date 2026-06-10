@@ -366,11 +366,11 @@ English anchor: read `0_Introduction` as a focused example of the CUDA concepts 
 
 ## Concrete Reading Path
 
-- `UnifiedMemoryStreams/UnifiedMemoryStreams.cu`: focus on `cudaStreamAttachMemAsync`, `cudaMallocManaged`, `cudaStream_t`, `cublasHandle_t`, `cudaMemAttachHost`.
+- `UnifiedMemoryStreams/UnifiedMemoryStreams.cu`: focus on `cudaStreamAttachMemAsync`, `CUDA`, `cudaMallocManaged`, `cudaStream_t`, `cublasHandle_t`.
 - `asyncAPI/asyncAPI.cu`: focus on `CUDA`, `launch`, `cudaEventDestroy`, `blockIdx`, `blockDim`.
 - `clock/clock.cu`: focus on `CUDA`, `blockDim`, `cudaMalloc`, `cudaFree`, `__shared__`.
 - `clock_nvrtc/clock.cpp`: focus on `cudaBlockSize`, `cudaGridSize`, `cuMemAlloc`, `cuMemFree`, `CUDA`.
-- `clock_nvrtc/clock_kernel.cu`: focus on `blockDim`, `__shared__`, `__syncthreads`, `threadIdx`, `launch`.
+- `clock_nvrtc/clock_kernel.cu`: focus on `blockDim`, `__shared__`, `threadIdx`, `__syncthreads`, `launch`.
 - `cudaOpenMP/cudaOpenMP.cu`: focus on `CUDA`, `launch`, `blockIdx`, `blockDim`, `threadIdx`.
 - `fp16ScalarProduct/fp16ScalarProduct.cu`: focus on `threadIdx`, `__syncthreads`, `blockDim`, `blockIdx`, `cudaMemcpy`.
 - `matrixMul/matrixMul.cu`: focus on `CUDA`, `cudaMallocHost`, `cudaMalloc`, `cudaMemcpyAsync`, `cudaFreeHost`.
@@ -384,14 +384,75 @@ English anchor: read `0_Introduction` as a focused example of the CUDA concepts 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/CMakeLists.txt:1-48
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+add_subdirectory(UnifiedMemoryStreams)
+add_subdirectory(asyncAPI)
+add_subdirectory(clock)
+add_subdirectory(clock_nvrtc)
+add_subdirectory(cudaOpenMP)
+add_subdirectory(fp16ScalarProduct)
+add_subdirectory(matrixMul)
+add_subdirectory(matrixMulDrv)
+add_subdirectory(matrixMulDynlinkJIT)
+add_subdirectory(matrixMul_nvrtc)
+add_subdirectory(mergeSort)
+add_subdirectory(simpleAWBarrier)
+add_subdirectory(simpleAssert)
+add_subdirectory(simpleAssert_nvrtc)
+add_subdirectory(simpleAtomicIntrinsics)
+add_subdirectory(simpleAtomicIntrinsics_nvrtc)
+add_subdirectory(simpleAttributes)
+add_subdirectory(simpleCUDA2GL)
+add_subdirectory(simpleCallback)
+add_subdirectory(simpleCooperativeGroups)
+add_subdirectory(simpleCubemapTexture)
+add_subdirectory(simpleDrvRuntime)
+add_subdirectory(simpleHyperQ)
+add_subdirectory(simpleIPC)
+add_subdirectory(simpleLayeredTexture)
+add_subdirectory(simpleMPI)
+add_subdirectory(simpleMultiCopy)
+add_subdirectory(simpleMultiGPU)
+add_subdirectory(simpleOccupancy)
+add_subdirectory(simpleP2P)
+add_subdirectory(simplePitchLinearTexture)
+add_subdirectory(simplePrintf)
+add_subdirectory(simpleStreams)
+add_subdirectory(simpleSurfaceWrite)
+add_subdirectory(simpleTemplates)
+add_subdirectory(simpleTexture)
+add_subdirectory(simpleTexture3D)
+add_subdirectory(simpleTextureDrv)
+add_subdirectory(simpleVoteIntrinsics)
+add_subdirectory(simpleZeroCopy)
+add_subdirectory(template)
+add_subdirectory(systemWideAtomics)
+add_subdirectory(vectorAdd)
+add_subdirectory(vectorAddDrv)
+add_subdirectory(vectorAddMMAP)
+add_subdirectory(vectorAdd_nvrtc)
+```
+
+> JP: この抜粋は `cpp/0_Introduction/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
 | - | - |
 | `threadIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `CUresult` | Driver API の handle 境界です。context/module/function と error code を追います。 |
-| `CUDAAPI` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
+| `CUDAAPI` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `blockIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `CUdeviceptr` | Driver API の handle 境界です。context/module/function と error code を追います。 |
 | `blockDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |

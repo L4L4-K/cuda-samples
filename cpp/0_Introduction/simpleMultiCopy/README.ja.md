@@ -71,13 +71,189 @@ English anchor: read `simpleMultiCopy` as a focused example of the CUDA concepts
 
 ## Concrete Reading Path
 
-- `simpleMultiCopy.cu`: focus on `CUDA`, `cudaEventRecord`, `cudaEventSynchronize`, `cudaMemcpyAsync`, `cudaEventElapsedTime`.
+- `simpleMultiCopy.cu`: focus on `CUDA`, `cudaEventRecord`, `launch`, `cudaEventSynchronize`, `cudaMemcpyAsync`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/simpleMultiCopy/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleMultiCopy LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simpleMultiCopy
+add_executable(simpleMultiCopy simpleMultiCopy.cu)
+
+target_compile_options(simpleMultiCopy PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleMultiCopy PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simpleMultiCopy PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleMultiCopy/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleMultiCopy.cu`
+
+Source: cpp/0_Introduction/simpleMultiCopy/simpleMultiCopy.cu:44-75
+```cuda
+const char *sSDKname = "simpleMultiCopy";
+
+// includes, system
+#include <stdio.h>
+
+// include CUDA
+#include <cuda_runtime.h>
+
+// includes, project
+#include <helper_cuda.h>
+#include <helper_functions.h> // helper for shared that are common to CUDA Samples
+
+// includes, kernels
+// Declare the CUDA kernels here and main() code that is needed to launch
+// Compute workload on the system
+__global__ void incKernel(int *g_out, int *g_in, int N, int inner_reps)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (idx < N) {
+        for (int i = 0; i < inner_reps; ++i) {
+            g_out[idx] = g_in[idx] + 1;
+        }
+    }
+}
+
+#define STREAM_COUNT 4
+
+// Uncomment to simulate data source/sink IO times
+// #define SIMULATE_IO
+
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleMultiCopy/simpleMultiCopy.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleMultiCopy/simpleMultiCopy.cu:104-123
+```cuda
+bool  test();
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char *argv[])
+{
+    int            cuda_device = 0;
+    float          scale_factor;
+    cudaDeviceProp deviceProp;
+
+    printf("[%s] - Starting...\n", sSDKname);
+
+    if (checkCmdLineFlag(argc, (const char **)argv, "device")) {
+        cuda_device = getCmdLineArgumentInt(argc, (const char **)argv, "device=");
+
+        if (cuda_device < 0) {
+            printf("Invalid command line parameters\n");
+            exit(EXIT_FAILURE);
+        }
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleMultiCopy/simpleMultiCopy.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleMultiCopy/simpleMultiCopy.cu:167-220
+```cuda
+    grid.x = thread_blocks % 65535;
+    grid.y = (thread_blocks / 65535 + 1);
+
+    // Allocate resources
+
+    h_data_source = (int *)malloc(memsize);
+    h_data_sink   = (int *)malloc(memsize);
+
+    for (int i = 0; i < STREAM_COUNT; ++i) {
+        // JP: `cudaHostAlloc`, `cudaHostAllocDefault`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
+        checkCudaErrors(cudaHostAlloc(&h_data_in[i], memsize, cudaHostAllocDefault));
+        // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+        checkCudaErrors(cudaMalloc(&d_data_in[i], memsize));
+        // JP: `cudaMemset`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+        checkCudaErrors(cudaMemset(d_data_in[i], 0, memsize));
+
+        checkCudaErrors(cudaHostAlloc(&h_data_out[i], memsize, cudaHostAllocDefault));
+        checkCudaErrors(cudaMalloc(&d_data_out[i], memsize));
+
+        // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+        checkCudaErrors(cudaStreamCreate(&stream[i]));
+        checkCudaErrors(cudaEventCreate(&cycleDone[i]));
+
+        cudaEventRecord(cycleDone[i], stream[i]);
+    }
+
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    init();
+
+    // Kernel warmup
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    incKernel<<<grid, block>>>(d_data_out[0], d_data_in[0], N, inner_reps);
+
+    // Time copies and kernel
+    cudaEventRecord(start, 0);
+    checkCudaErrors(cudaMemcpyAsync(d_data_in[0], h_data_in[0], memsize, cudaMemcpyHostToDevice, 0));
+    cudaEventRecord(stop, 0);
+    // JP: `cudaEventSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    cudaEventSynchronize(stop);
+
+    float memcpy_h2d_time;
+    cudaEventElapsedTime(&memcpy_h2d_time, start, stop);
+
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    cudaEventRecord(start, 0);
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
+    checkCudaErrors(cudaMemcpyAsync(h_data_out[0], d_data_out[0], memsize, cudaMemcpyDeviceToHost, 0));
+    // JP: この連続する anchor 群では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
+    cudaEventRecord(stop, 0);
+    cudaEventSynchronize(stop);
+
+    float memcpy_d2h_time;
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleMultiCopy/simpleMultiCopy.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 
@@ -87,6 +263,7 @@ English anchor: read `simpleMultiCopy` as a focused example of the CUDA concepts
 | `cudaEventSynchronize` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
 | `cudaMemcpyAsync` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaEventElapsedTime` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaHostAlloc` | pinned host memory を作り、async copy や DMA の前提を作る API です。 |
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
 | `cudaEventCreate` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
@@ -95,7 +272,6 @@ English anchor: read `simpleMultiCopy` as a focused example of the CUDA concepts
 | `cudaMemset` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaFreeHost` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
-| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaEvent_t` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
 
 > **日本語**

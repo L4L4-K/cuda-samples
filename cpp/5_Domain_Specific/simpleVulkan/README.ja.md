@@ -96,6 +96,392 @@ English anchor: read `simpleVulkan` as a focused example of the CUDA concepts us
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/5_Domain_Specific/simpleVulkan/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleVulkan LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkan/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `SineWaveSimulation.cu`
+
+Source: cpp/5_Domain_Specific/simpleVulkan/SineWaveSimulation.cu:29-80
+```cuda
+#include <algorithm>
+#include <helper_cuda.h>
+
+#include "SineWaveSimulation.h"
+
+__global__ void sinewave(float *heightMap, unsigned int width, unsigned int height, float time)
+{
+    const float  freq   = 4.0f;
+    // JP: `gridDim`, `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    const size_t stride = gridDim.x * blockDim.x;
+
+    // Iterate through the entire array in a way that is
+    // independent of the grid configuration
+    for (size_t tid = blockIdx.x * blockDim.x + threadIdx.x; tid < width * height; tid += stride) {
+        // Calculate the x, y coordinates
+        const size_t y = tid / width;
+        const size_t x = tid - y * width;
+        // Normalize x, y to [0,1]
+        const float u = ((2.0f * x) / width) - 1.0f;
+        const float v = ((2.0f * y) / height) - 1.0f;
+        // Calculate the new height value
+        const float w = 0.5f * sinf(u * freq + time) * cosf(v * freq + time);
+        // Store this new height value
+        heightMap[tid] = w;
+    }
+}
+
+SineWaveSimulation::SineWaveSimulation(size_t width, size_t height)
+    : m_heightMap(nullptr)
+    , m_width(width)
+    , m_height(height)
+{
+}
+
+void SineWaveSimulation::initCudaLaunchConfig(int device)
+{
+    cudaDeviceProp prop = {};
+    checkCudaErrors(cudaSetDevice(device));
+    checkCudaErrors(cudaGetDeviceProperties(&prop, device));
+
+    // We don't need large block sizes, since there's not much inter-thread
+    // communication
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+    m_threads = prop.warpSize;
+
+    // Use the occupancy calculator and fill the gpu as best as we can
+    checkCudaErrors(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&m_blocks, sinewave, prop.warpSize, 0));
+    m_blocks *= prop.multiProcessorCount;
+
+    // Go ahead and the clamp the blocks to the minimum needed for this
+    // height/width
+    m_blocks = std::min(m_blocks, (int)((m_width * m_height + m_threads - 1) / m_threads));
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkan/SineWaveSimulation.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `SineWaveSimulation.h`
+
+Source: cpp/5_Domain_Specific/simpleVulkan/SineWaveSimulation.h:29-58
+```cpp
+#pragma once
+#ifndef __SINESIM_H__
+#define __SINESIM_H__
+
+#include <cuda_runtime_api.h>
+#include <stdint.h>
+#include <vector>
+
+#include "linmath.h"
+
+class SineWaveSimulation
+{
+    float *m_heightMap;
+    size_t m_width, m_height;
+    int    m_blocks, m_threads;
+
+public:
+    SineWaveSimulation(size_t width, size_t height);
+    ~SineWaveSimulation();
+    void initSimulation(float *heightMap);
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+    void stepSimulation(float time, cudaStream_t stream = 0);
+    void initCudaLaunchConfig(int device);
+    int  initCuda(uint8_t *vkDeviceUUID, size_t UUID_SIZE);
+
+    size_t getWidth() const { return m_width; }
+    size_t getHeight() const { return m_height; }
+};
+
+#endif // __SINESIM_H__
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkan/SineWaveSimulation.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `VulkanBaseApp.cpp`
+
+Source: cpp/5_Domain_Specific/simpleVulkan/VulkanBaseApp.cpp:35-53
+```cpp
+#include "VulkanBaseApp.h"
+
+#include <algorithm>
+#include <fstream>
+#include <functional>
+#include <iostream>
+#include <limits>
+#include <set>
+#include <stdexcept>
+#include <string.h>
+
+#define GLFW_INCLUDE_VULKAN
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#include <GLFW/glfw3.h>
+
+#ifdef _WIN64
+#include <VersionHelpers.h>
+#include <aclapi.h>
+#include <dxgi1_2.h>
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkan/VulkanBaseApp.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/simpleVulkan/VulkanBaseApp.cpp:280-299
+```cpp
+
+WindowsSecurityAttributes::WindowsSecurityAttributes()
+{
+    m_winPSecurityDescriptor = (PSECURITY_DESCRIPTOR)calloc(1, SECURITY_DESCRIPTOR_MIN_LENGTH + 2 * sizeof(void **));
+    if (!m_winPSecurityDescriptor) {
+        // JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+        throw std::runtime_error("Failed to allocate memory for security descriptor");
+    }
+
+    PSID *ppSID = (PSID *)((PBYTE)m_winPSecurityDescriptor + SECURITY_DESCRIPTOR_MIN_LENGTH);
+    PACL *ppACL = (PACL *)((PBYTE)ppSID + sizeof(PSID *));
+
+    InitializeSecurityDescriptor(m_winPSecurityDescriptor, SECURITY_DESCRIPTOR_REVISION);
+
+    SID_IDENTIFIER_AUTHORITY sidIdentifierAuthority = SECURITY_WORLD_SID_AUTHORITY;
+    AllocateAndInitializeSid(&sidIdentifierAuthority, 1, SECURITY_WORLD_RID, 0, 0, 0, 0, 0, 0, 0, ppSID);
+
+    EXPLICIT_ACCESS explicitAccess;
+    ZeroMemory(&explicitAccess, sizeof(EXPLICIT_ACCESS));
+    explicitAccess.grfAccessPermissions = STANDARD_RIGHTS_ALL | SPECIFIC_RIGHTS_ALL;
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkan/VulkanBaseApp.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/simpleVulkan/VulkanBaseApp.cpp:324-343
+```cpp
+    }
+    if (*ppACL) {
+        LocalFree(*ppACL);
+    }
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    free(m_winPSecurityDescriptor);
+}
+#endif /* _WIN64 */
+
+static VkFormat findSupportedFormat(VkPhysicalDevice             physicalDevice,
+                                    const std::vector<VkFormat> &candidates,
+                                    VkImageTiling                tiling,
+                                    VkFormatFeatureFlags         features)
+{
+    for (VkFormat format : candidates) {
+        VkFormatProperties props;
+        vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &props);
+        if (tiling == VK_IMAGE_TILING_LINEAR && (props.linearTilingFeatures & features) == features) {
+            return format;
+        }
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkan/VulkanBaseApp.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `VulkanBaseApp.h`
+
+Source: cpp/5_Domain_Specific/simpleVulkan/VulkanBaseApp.h:29-47
+```cpp
+#pragma once
+#ifndef __VULKANBASEAPP_H__
+#define __VULKANBASEAPP_H__
+
+#include <string>
+#include <vector>
+#include <vulkan/vulkan.h>
+#ifdef _WIN64
+#define NOMINMAX
+// Add windows.h to the include path
+#include <windows.h>
+// Add vulkan_win32.h to the include path
+#include <vulkan/vulkan_win32.h>
+#endif /* _WIN64 */
+
+/* remove _VK_TIMELINE_SEMAPHORE to use binary semaphores */
+// use vulkan timeline semaphore
+#define _VK_TIMELINE_SEMAPHORE
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkan/VulkanBaseApp.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `linmath.h`
+
+Source: cpp/5_Domain_Specific/simpleVulkan/linmath.h:22-40
+```cpp
+#ifndef LINMATH_H
+#define LINMATH_H
+
+#define _USE_MATH_DEFINES
+#include <math.h>
+
+// Converts degrees to radians.
+#define degreesToRadians(angleDegrees) (angleDegrees * M_PI / 180.0)
+
+// Converts radians to degrees.
+#define radiansToDegrees(angleRadians) (angleRadians * 180.0 / M_PI)
+
+typedef float      vec3[3];
+static inline void vec3_add(vec3 r, vec3 const a, vec3 const b)
+{
+    int i;
+    for (i = 0; i < 3; ++i)
+        r[i] = a[i] + b[i];
+}
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkan/linmath.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `main.cpp`
+
+Source: cpp/5_Domain_Specific/simpleVulkan/main.cpp:29-47
+```cpp
+#include <algorithm>
+#include <chrono>
+#include <iomanip>
+#include <iostream>
+
+#include "SineWaveSimulation.h"
+#include "VulkanBaseApp.h"
+#include "helper_cuda.h"
+#include "linmath.h"
+
+typedef float vec2[2];
+std::string   execution_path;
+
+#ifdef NDEBUG
+#define ENABLE_VALIDATION (false)
+#else
+#define ENABLE_VALIDATION (true)
+#endif
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkan/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/simpleVulkan/main.cpp:98-122
+```cpp
+        m_shaderFiles.push_back(std::make_pair(VK_SHADER_STAGE_FRAGMENT_BIT, fragment_shader_path));
+    }
+    ~VulkanCudaSineWave()
+    {
+        // Make sure there's no pending work before we start tearing down
+        // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+        checkCudaErrors(cudaStreamSynchronize(m_stream));
+
+#ifdef _VK_TIMELINE_SEMAPHORE
+        if (m_vkTimelineSemaphore != VK_NULL_HANDLE) {
+            // JP: `cudaDestroyExternalSemaphore`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+            checkCudaErrors(cudaDestroyExternalSemaphore(m_cudaTimelineSemaphore));
+            vkDestroySemaphore(m_device, m_vkTimelineSemaphore, nullptr);
+        }
+#endif /* _VK_TIMELINE_SEMAPHORE */
+
+        if (m_vkSignalSemaphore != VK_NULL_HANDLE) {
+            checkCudaErrors(cudaDestroyExternalSemaphore(m_cudaSignalSemaphore));
+            vkDestroySemaphore(m_device, m_vkSignalSemaphore, nullptr);
+        }
+        if (m_vkWaitSemaphore != VK_NULL_HANDLE) {
+            checkCudaErrors(cudaDestroyExternalSemaphore(m_cudaWaitSemaphore));
+            vkDestroySemaphore(m_device, m_vkWaitSemaphore, nullptr);
+        }
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkan/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/simpleVulkan/main.cpp:520-532
+```cpp
+            m_lastTime  = currentTime;
+        }
+    }
+};
+
+int main(int argc, char **argv)
+{
+    execution_path = argv[0];
+    VulkanCudaSineWave app((1ULL << 8ULL), (1ULL << 8ULL));
+    app.init();
+    app.mainLoop();
+    return 0;
+}
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkan/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `sinewave.frag`
+
+Source: cpp/5_Domain_Specific/simpleVulkan/sinewave.frag:29-38
+```glsl
+#version 450
+#extension GL_ARB_separate_shader_objects : enable
+
+layout(location = 0) in vec3 fragColor;
+
+layout(location = 0) out vec4 outColor;
+
+void main() {
+    outColor = vec4(fragColor, 1.0);
+}
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkan/sinewave.frag` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `sinewave.vert`
+
+Source: cpp/5_Domain_Specific/simpleVulkan/sinewave.vert:28-43
+```glsl
+#version 450
+#extension GL_ARB_separate_shader_objects : enable
+
+layout(binding = 0) uniform UniformBufferObject {
+	mat4 modelViewProj;
+} ubo;
+
+layout(location = 0) in float height;
+layout(location = 1) in vec2 xyPos;
+
+layout(location = 0) out vec3 fragColor;
+
+void main() {
+    gl_Position = ubo.modelViewProj * vec4(xyPos.xy, height, 1.0f);
+    fragColor = vec3(0.0f, (height + 0.5f), 0.0f);
+}
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkan/sinewave.vert` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

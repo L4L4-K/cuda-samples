@@ -538,6 +538,53 @@ English anchor: read `2_Concepts_and_Techniques` as a focused example of the CUD
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/2_Concepts_and_Techniques/CMakeLists.txt:1-34
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+add_subdirectory(EGLStream_CUDA_CrossGPU)
+add_subdirectory(EGLStream_CUDA_Interop)
+add_subdirectory(FunctionPointers)
+add_subdirectory(MC_EstimatePiInlineP)
+add_subdirectory(MC_EstimatePiInlineQ)
+add_subdirectory(MC_EstimatePiP)
+add_subdirectory(MC_EstimatePiQ)
+add_subdirectory(MC_SingleAsianOptionP)
+add_subdirectory(boxFilter)
+add_subdirectory(convolutionSeparable)
+add_subdirectory(convolutionTexture)
+add_subdirectory(dct8x8)
+add_subdirectory(eigenvalues)
+add_subdirectory(histogram)
+add_subdirectory(imageDenoising)
+add_subdirectory(inlinePTX)
+add_subdirectory(inlinePTX_nvrtc)
+add_subdirectory(interval)
+add_subdirectory(particles)
+add_subdirectory(radixSortThrust)
+add_subdirectory(reduction)
+add_subdirectory(reductionMultiBlockCG)
+add_subdirectory(scalarProd)
+add_subdirectory(scan)
+add_subdirectory(segmentationTreeThrust)
+add_subdirectory(shfl_scan)
+add_subdirectory(sortingNetworks)
+add_subdirectory(streamOrderedAllocation)
+add_subdirectory(streamOrderedAllocationIPC)
+add_subdirectory(streamOrderedAllocationP2P)
+add_subdirectory(threadFenceReduction)
+add_subdirectory(threadMigration)
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
@@ -546,8 +593,8 @@ English anchor: read `2_Concepts_and_Techniques` as a focused example of the CUD
 | `blockIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `cudaResult` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaProducer` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
-| `blockDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
+| `blockDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `__shared__` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |
 | `cudaMemcpy` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |

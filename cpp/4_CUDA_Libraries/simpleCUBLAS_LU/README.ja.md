@@ -73,13 +73,180 @@ English anchor: read `simpleCUBLAS_LU` as a focused example of the CUDA concepts
 
 ## Concrete Reading Path
 
-- `simpleCUBLAS_LU.cpp`: focus on `cuBLAS`, `cudaMemcpy`, `cudaMalloc`, `cudaFree`, `cublasStatus_t`.
+- `simpleCUBLAS_LU.cpp`: focus on `cuBLAS`, `cudaMemcpy`, `CUDA`, `cudaMalloc`, `cudaFree`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/simpleCUBLAS_LU/CMakeLists.txt:1-47
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleCUBLAS_LU LANGUAGES CXX)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simpleCUBLAS_LU
+add_executable(simpleCUBLAS_LU simpleCUBLAS_LU.cpp)
+
+target_compile_options(simpleCUBLAS_LU PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleCUBLAS_LU PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simpleCUBLAS_LU PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_include_directories(simpleCUBLAS_LU PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+target_link_libraries(simpleCUBLAS_LU PRIVATE
+    CUDA::cudart
+    # JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    CUDA::cublas
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUBLAS_LU/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleCUBLAS_LU.cpp`
+
+Source: cpp/4_CUDA_Libraries/simpleCUBLAS_LU/simpleCUBLAS_LU.cpp:45-63
+```cpp
+#include <stdio.h>
+#include <stdlib.h>
+
+// cuda libraries and helpers
+#include <cublas_v2.h>
+#include <cuda_runtime.h>
+#include <helper_cuda.h>
+
+// configurable parameters
+// dimension of matrix
+#define N          4
+#define BATCH_SIZE 10000
+
+// use double precision data type
+#define DOUBLE_PRECISION /* comment this to use single precision */
+#ifdef DOUBLE_PRECISION
+#define DATA_TYPE double
+#define MAX_ERROR 1e-15
+#else
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUBLAS_LU/simpleCUBLAS_LU.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/simpleCUBLAS_LU/simpleCUBLAS_LU.cpp:69-90
+```cpp
+#define PIVOT /* comment this to disable pivot use */
+
+// helper functions
+
+// wrapper around cublas<t>getrfBatched()
+// JP: `cublasStatus_t`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+cublasStatus_t
+cublasXgetrfBatched(cublasHandle_t handle, int n, DATA_TYPE *const A[], int lda, int *P, int *info, int batchSize)
+{
+#ifdef DOUBLE_PRECISION
+    return cublasDgetrfBatched(handle, n, A, lda, P, info, batchSize);
+#else
+    return cublasSgetrfBatched(handle, n, A, lda, P, info, batchSize);
+#endif
+}
+
+// wrapper around malloc
+// clears the allocated memory to 0
+// terminates the program if malloc fails
+void *xmalloc(size_t size)
+{
+    void *ptr = malloc(size);
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUBLAS_LU/simpleCUBLAS_LU.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/simpleCUBLAS_LU/simpleCUBLAS_LU.cpp:234-253
+```cpp
+        int j             = pivot[i];
+        Pmat[(j * N) + i] = (DATA_TYPE)1.0;
+    }
+}
+
+int main(int argc, char **argv)
+{
+    // cuBLAS variables
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+    cublasStatus_t status;
+    cublasHandle_t handle;
+
+    // host variables
+    size_t matSize = N * N * sizeof(DATA_TYPE);
+
+    DATA_TYPE *h_AarrayInput;
+    DATA_TYPE *h_AarrayOutput;
+    DATA_TYPE *h_ptr_array[BATCH_SIZE];
+
+    int *h_pivotArray;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUBLAS_LU/simpleCUBLAS_LU.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/simpleCUBLAS_LU/simpleCUBLAS_LU.cpp:312-331
+```cpp
+        initRandomMatrix(h_AarrayInput + (i * N * N));
+    }
+
+    // copy data to device from host
+    printf("> copying data from host memory to GPU memory..\n");
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpy(d_Aarray, h_AarrayInput, BATCH_SIZE * matSize, cudaMemcpyHostToDevice));
+
+    // create pointer array for matrices
+    for (int i = 0; i < BATCH_SIZE; i++)
+        h_ptr_array[i] = d_Aarray + (i * N * N);
+
+    // copy pointer array to device memory
+    checkCudaErrors(cudaMemcpy(d_ptr_array, h_ptr_array, BATCH_SIZE * sizeof(DATA_TYPE *), cudaMemcpyHostToDevice));
+
+    // perform LU decomposition
+    printf("> performing LU decomposition..\n");
+#ifdef PIVOT
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+    status = cublasXgetrfBatched(handle, N, d_ptr_array, N, d_pivotArray, d_infoArray, BATCH_SIZE);
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUBLAS_LU/simpleCUBLAS_LU.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

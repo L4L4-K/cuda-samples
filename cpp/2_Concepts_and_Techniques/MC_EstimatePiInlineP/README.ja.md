@@ -92,6 +92,406 @@ English anchor: read `MC_EstimatePiInlineP` as a focused example of the CUDA con
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineP/CMakeLists.txt:1-42
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(MC_EstimatePiInlineP LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for MC_EstimatePiInlineP
+add_executable(MC_EstimatePiInlineP src/main.cpp src/piestimator.cu src/test.cpp)
+
+target_compile_options(MC_EstimatePiInlineP PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(MC_EstimatePiInlineP PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(MC_EstimatePiInlineP PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_include_directories(MC_EstimatePiInlineP PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/inc
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineP/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `inc/cudasharedmem.h`
+
+Source: cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineP/inc/cudasharedmem.h:29-60
+```cpp
+#ifndef CUDASHAREDMEM_H
+#define CUDASHAREDMEM_H
+
+//****************************************************************************
+// Because dynamically sized shared memory arrays are declared "extern",
+// we can't templatize them directly.  To get around this, we declare a
+// simple wrapper struct that will declare the extern array with a different
+// name depending on the type.  This avoids compiler errors about duplicate
+// definitions.
+//
+// To use dynamically allocated shared memory in a templatized __global__ or
+// __device__ function, just replace code like this:
+//      template<class T>
+//      __global__ void
+//      foo( T* g_idata, T* g_odata)
+//      {
+//          // Shared mem size is determined by the host app at run time
+//          extern __shared__  T sdata[];
+//          ...
+//          x = sdata[i];
+//          sdata[i] = x;
+//          ...
+//      }
+//
+// With this:
+//      template<class T>
+//      __global__ void
+//      foo( T* g_idata, T* g_odata)
+//      {
+//          // Shared mem size is determined by the host app at run time
+//          SharedMemory<T> sdata;
+//          ...
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineP/inc/cudasharedmem.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `inc/piestimator.h`
+
+Source: cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineP/inc/piestimator.h:29-45
+```cpp
+#ifndef PIESTIMATOR_H
+#define PIESTIMATOR_H
+
+template <typename Real> class PiEstimator
+{
+public:
+    PiEstimator(unsigned int numSims, unsigned int device, unsigned int threadBlockSize, unsigned int seed);
+    Real operator()();
+
+private:
+    unsigned int m_seed;
+    unsigned int m_numSims;
+    unsigned int m_device;
+    unsigned int m_threadBlockSize;
+};
+
+#endif
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineP/inc/piestimator.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `inc/test.h`
+
+Source: cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineP/inc/test.h:29-61
+```cpp
+#ifndef TEST_H
+#define TEST_H
+
+template <typename Real> struct Test
+{
+    Test()
+        : pass(false) {};
+
+    int          device;
+    unsigned int numSims;
+    unsigned int threadBlockSize;
+    unsigned int seed;
+
+    bool   pass;
+    double elapsedTime;
+
+    bool operator()();
+};
+
+// Defaults are arbitrary to give sensible runtime
+#define k_sims_min  100000
+#define k_sims_max  10000000
+#define k_sims_def  100000
+#define k_sims_qa   100000
+#define k_bsize_min 32
+#define k_bsize_def 128
+#define k_bsize_qa  128
+#define k_seed_def  1234
+
+// Target value
+#define PI 3.14159265359
+
+#endif
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineP/inc/test.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `src/main.cpp`
+
+Source: cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineP/src/main.cpp:42-71
+```cpp
+#include <cuda_runtime.h>
+#include <helper_cuda.h>
+#include <iomanip>
+#include <iostream>
+#include <stdexcept>
+
+#include "../inc/test.h"
+
+// SDK information
+static const char *printfFile = "MonteCarloEstimatePiInlineP.txt";
+
+// Forward declarations
+void                          showHelp(const int argc, const char **argv);
+template <typename Real> void runTest(int argc, const char **argv);
+
+int main(int argc, char **argv)
+{
+    using std::invalid_argument;
+    using std::string;
+
+    // Open the log file
+    printf("Monte Carlo Estimate Pi (with inline PRNG)\n");
+    printf("==========================================\n\n");
+
+    // If help flag is set, display help and exit immediately
+    if (checkCmdLineFlag(argc, (const char **)argv, "help")) {
+        printf("Displaying help on console\n");
+        showHelp(argc, (const char **)argv);
+        exit(EXIT_SUCCESS);
+    }
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineP/src/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineP/src/main.cpp:77-96
+```cpp
+        if (getCmdLineArgumentString(argc, (const char **)argv, "precision", &value)) {
+            // Check requested precision is valid
+            string prec(value);
+
+            // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+            if (prec.compare("single") == 0 || prec.compare("\"single\"") == 0) {
+                runTest<float>(argc, (const char **)argv);
+            }
+            else if (prec.compare("double") == 0 || prec.compare("\"double\"") == 0) {
+                runTest<double>(argc, (const char **)argv);
+            }
+            else {
+                printf("specified precision (%s) is invalid, must be \"single\" or "
+                       "\"double\".\n",
+                       value);
+                throw invalid_argument("precision");
+            }
+        }
+        else {
+            runTest<float>(argc, (const char **)argv);
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineP/src/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `src/piestimator.cu`
+
+Source: cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineP/src/piestimator.cu:29-64
+```cuda
+#include <cooperative_groups.h>
+#include <cuda_runtime.h>
+#include <numeric>
+#include <stdexcept>
+#include <string>
+#include <typeinfo>
+#include <vector>
+
+#include "../inc/piestimator.h"
+
+namespace cg = cooperative_groups;
+#include <curand_kernel.h>
+
+using std::string;
+using std::vector;
+
+// RNG init kernel
+// JP: `curandState`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+__global__ void initRNG(curandState *const rngStates, const unsigned int seed)
+{
+    // Determine thread ID
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // Initialise the RNG
+    curand_init(seed, tid, 0, &rngStates[tid]);
+}
+
+__device__ unsigned int reduce_sum(unsigned int in, cg::thread_block cta)
+{
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    extern __shared__ unsigned int sdata[];
+
+    // Perform first level of reduction:
+    // - Write to shared memory
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineP/src/piestimator.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineP/src/piestimator.cu:165-184
+```cuda
+        && (deviceProperties.major < 1 || (deviceProperties.major == 1 && deviceProperties.minor < 3))) {
+        throw std::runtime_error("Device does not have double precision support");
+    }
+
+    // Attach to GPU
+    cudaResult = cudaSetDevice(m_device);
+
+    if (cudaResult != cudaSuccess) {
+        string msg("Could not set CUDA device: ");
+        msg += cudaGetErrorString(cudaResult);
+        throw std::runtime_error(msg);
+    }
+
+    // Determine how to divide the work between cores
+    dim3 block;
+    dim3 grid;
+    block.x = m_threadBlockSize;
+    grid.x  = (m_numSims + m_threadBlockSize - 1) / m_threadBlockSize;
+
+    // Aim to launch around ten or more times as many blocks as there
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineP/src/piestimator.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineP/src/piestimator.cu:255-274
+```cuda
+    // Count the points inside unit quarter-circle
+    computeValue<Real><<<grid, block, block.x * sizeof(unsigned int)>>>(d_results, d_rngStates, m_numSims);
+
+    // Copy partial results back
+    vector<unsigned int> results(grid.x);
+    // JP: `cudaResult`, `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    cudaResult = cudaMemcpy(&results[0], d_results, grid.x * sizeof(unsigned int), cudaMemcpyDeviceToHost);
+
+    if (cudaResult != cudaSuccess) {
+        string msg("Could not copy partial results to host: ");
+        msg += cudaGetErrorString(cudaResult);
+        throw std::runtime_error(msg);
+    }
+
+    // Complete sum-reduction on host
+    Real value = static_cast<Real>(std::accumulate(results.begin(), results.end(), 0));
+
+    // Determine the proportion of points inside the quarter-circle,
+    // i.e. the area of the unit quarter-circle
+    value /= m_numSims;
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineP/src/piestimator.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineP/src/piestimator.cu:279-298
+```cuda
+    // value of pi.
+    value *= 4;
+
+    // Cleanup
+    if (d_rngStates) {
+        // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        cudaFree(d_rngStates);
+        d_rngStates = 0;
+    }
+
+    if (d_results) {
+        cudaFree(d_results);
+        d_results = 0;
+    }
+
+    return value;
+}
+
+// Explicit template instantiation
+template class PiEstimator<float>;
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineP/src/piestimator.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `src/test.cpp`
+
+Source: cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineP/src/test.cpp:30-48
+```cpp
+#include "../inc/test.h"
+
+#include <cassert>
+#include <cuda_runtime.h>
+#include <helper_timer.h>
+#include <iomanip>
+#include <iostream>
+#include <math.h>
+#include <memory>
+#include <sstream>
+#include <stdexcept>
+#include <stdio.h>
+#include <typeinfo>
+
+#include "../inc/piestimator.h"
+
+template <typename Real> bool Test<Real>::operator()()
+{
+    using std::endl;
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineP/src/test.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineP/src/test.cpp:68-87
+```cpp
+    sdkStartTimer(&timer);
+    Real result = estimator();
+    sdkStopTimer(&timer);
+    elapsedTime = sdkGetAverageTimerValue(&timer) / 1000.0f;
+
+    // Tolerance to compare result with expected
+    // This is just to check that nothing has gone very wrong with the
+    // test, the actual accuracy of the result depends on the number of
+    // Monte Carlo trials
+    const Real tolerance = static_cast<Real>(0.01);
+
+    // Display results
+    Real abserror = fabs(result - static_cast<Real>(PI));
+    Real relerror = abserror / static_cast<float>(PI);
+    printf("Precision:      %s\n", (typeid(Real) == typeid(double)) ? "double" : "single");
+    printf("Number of sims: %d\n", numSims);
+    printf("Tolerance:      %e\n", tolerance);
+    printf("GPU result:     %e\n", result);
+    printf("Expected:       %e\n", PI);
+    printf("Absolute error: %e\n", abserror);
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/MC_EstimatePiInlineP/src/test.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

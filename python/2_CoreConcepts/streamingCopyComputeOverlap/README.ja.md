@@ -71,13 +71,124 @@ English anchor: read `streamingCopyComputeOverlap` as a focused example of the C
 
 ## Concrete Reading Path
 
-- `streamingCopyComputeOverlap.py`: focus on `launch`, `CUDA`, `Stream`, `LaunchConfig`, `Device`.
+- `streamingCopyComputeOverlap.py`: focus on `CUDA`, `launch`, `Stream`, `LaunchConfig`, `Device`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `streamingCopyComputeOverlap.py`
+
+Source: python/2_CoreConcepts/streamingCopyComputeOverlap/streamingCopyComputeOverlap.py:2-20
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/streamingCopyComputeOverlap/streamingCopyComputeOverlap.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/streamingCopyComputeOverlap/streamingCopyComputeOverlap.py:31-51
+```python
+Demonstrates how to overlap memory transfers with kernel computation using
+CUDA streams to maximize GPU utilization.
+
+Uses pure cuda.core APIs:
+    - Device, Stream for device and stream management
+    - PinnedMemoryResource, DeviceMemoryResource for memory allocation
+    - Buffer.copy_to() for async memory copies
+    - Program, LaunchConfig, launch for kernel compilation and execution
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "Utilities"))
+
+try:
+    import numpy as np
+    # JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
+    from cuda.core import (
+        Device,
+        DeviceMemoryResource,
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/streamingCopyComputeOverlap/streamingCopyComputeOverlap.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/streamingCopyComputeOverlap/streamingCopyComputeOverlap.py:65-84
+```python
+
+# CUDA Kernel - compute-intensive vector operation (grid-stride loop)
+VECTOR_SCALE_KERNEL = r"""
+extern "C" __global__
+void vector_scale(const float* input, float* output, float scale, size_t N) {
+    size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t stride = (size_t)gridDim.x * blockDim.x;
+    for (size_t i = tid; i < N; i += stride) {
+        float val = input[i] * scale;
+        // Add compute work to make kernel non-trivial
+        for (int j = 0; j < 50; j++) {
+            val = sqrtf(val * val + 1.0f);
+        }
+        output[i] = val;
+    }
+}
+"""
+
+
+def buffer_to_numpy(buffer, n_elements):
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/streamingCopyComputeOverlap/streamingCopyComputeOverlap.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/streamingCopyComputeOverlap/streamingCopyComputeOverlap.py:92-111
+```python
+    print("Using pure cuda.core APIs")
+    print("=" * 60)
+
+    # Initialize device
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
+    device = Device(0)
+    device.set_current()
+    print()
+    print_gpu_info(device)
+
+    # Compile kernel
+    arch = f"sm_{device.arch}"
+    program = Program(
+        VECTOR_SCALE_KERNEL, code_type="c++", options=ProgramOptions(arch=arch)
+    )
+    # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
+    kernel = program.compile(target_type="cubin").get_kernel("vector_scale")
+    print("Kernel compiled [OK]")
+
+    # Parameters
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/streamingCopyComputeOverlap/streamingCopyComputeOverlap.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

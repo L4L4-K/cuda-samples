@@ -79,6 +79,182 @@ English anchor: read `cuDLAHybridMode` as a focused example of the CUDA concepts
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/8_Platform_Specific/Tegra/cuDLAHybridMode/CMakeLists.txt:1-58
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../../cmake/Modules")
+
+# JP: `cuDLAHybridMode`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
+project(cuDLAHybridMode LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 87 110)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../../Common)
+
+find_library(CUDLA_LIB cudla PATHS ${CUDAToolkit_LIBRARY_DIR} ${CMAKE_LIBRARY_PATH})
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    if(CUDLA_LIB)
+        # Source file
+        # Add target for cuDLAHybridMode
+        # JP: この連続する anchor 群では CMake CUDA target/link/architecture wiring です。source、target、optional dependency、platform condition を確認します。
+        add_executable(cuDLAHybridMode main.cu)
+
+        target_compile_options(cuDLAHybridMode PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+        target_compile_features(cuDLAHybridMode PRIVATE cxx_std_17 cuda_std_17)
+
+        set_target_properties(cuDLAHybridMode PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+        target_include_directories(cuDLAHybridMode PUBLIC
+            ${CUDAToolkit_INCLUDE_DIRS}
+        )
+
+        target_link_libraries(cuDLAHybridMode
+            ${CUDLA_LIB}
+        )
+    else()
+        message(STATUS "CUDLA not found - will not build sample 'cuDLAHybridMode'")
+    endif()
+else()
+    message(STATUS "Will not build sample cuDLAHybridMode - requires Linux OS")
+endif()
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/cuDLAHybridMode/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `main.cu`
+
+Source: cpp/8_Platform_Specific/Tegra/cuDLAHybridMode/main.cu:29-47
+```cuda
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <sstream>
+#include <sys/stat.h>
+
+#include "cuda_runtime.h"
+#include "cudla.h"
+
+#define DPRINTF(...) printf(__VA_ARGS__)
+
+static void printTensorDesc(cudlaModuleTensorDescriptor *tensorDesc)
+{
+    DPRINTF("\tTENSOR NAME : %s\n", tensorDesc->name);
+    DPRINTF("\tsize: %lu\n", tensorDesc->size);
+
+    DPRINTF("\tdims: [%lu, %lu, %lu, %lu]\n", tensorDesc->n, tensorDesc->c, tensorDesc->h, tensorDesc->w);
+
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/cuDLAHybridMode/main.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/cuDLAHybridMode/main.cu:83-102
+```cuda
+
+void cleanUp(ResourceList *resourceList)
+{
+    if (resourceList->inputTensorDesc != NULL) {
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        free(resourceList->inputTensorDesc);
+        resourceList->inputTensorDesc = NULL;
+    }
+    if (resourceList->outputTensorDesc != NULL) {
+        free(resourceList->outputTensorDesc);
+        resourceList->outputTensorDesc = NULL;
+    }
+
+    if (resourceList->loadableData != NULL) {
+        free(resourceList->loadableData);
+        resourceList->loadableData = NULL;
+    }
+
+    if (resourceList->moduleHandle != NULL) {
+        cudlaModuleUnload(resourceList->moduleHandle, 0);
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/cuDLAHybridMode/main.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/cuDLAHybridMode/main.cu:132-151
+```cuda
+        cudaStreamDestroy(resourceList->stream);
+        resourceList->stream = NULL;
+    }
+}
+
+int main(int argc, char **argv)
+{
+    cudlaDevHandle devHandle;
+    cudlaModule    moduleHandle;
+    cudlaStatus    err;
+    FILE          *fp = NULL;
+    struct stat    st;
+    size_t         file_size;
+    size_t         actually_read = 0;
+    unsigned char *loadableData  = NULL;
+
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    cudaStream_t stream;
+    cudaError_t  result;
+    const char  *errPtr = NULL;
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/cuDLAHybridMode/main.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/cuDLAHybridMode/main.cu:173-192
+```cuda
+    }
+
+    file_size = st.st_size;
+    DPRINTF("The file size = %ld\n", file_size);
+
+    loadableData = (unsigned char *)malloc(file_size);
+    if (loadableData == NULL) {
+        DPRINTF("Cannot Allocate memory for loadable\n");
+        return 1;
+    }
+
+    actually_read = fread(loadableData, 1, file_size, fp);
+    if (actually_read != file_size) {
+        free(loadableData);
+        DPRINTF("Read wrong size\n");
+        return 1;
+    }
+    fclose(fp);
+
+    resourceList.loadableData = loadableData;
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/cuDLAHybridMode/main.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

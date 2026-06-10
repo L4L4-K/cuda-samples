@@ -88,6 +88,244 @@ English anchor: read `segmentationTreeThrust` as a focused example of the CUDA c
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/2_Concepts_and_Techniques/segmentationTreeThrust/CMakeLists.txt:1-58
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(segmentationTreeThrust LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for segmentationTreeThrust
+add_executable(segmentationTreeThrust segmentationTree.cu)
+
+target_compile_options(segmentationTreeThrust PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(segmentationTreeThrust PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(segmentationTreeThrust PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Copy data files to output directory
+add_custom_command(TARGET segmentationTreeThrust POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_CURRENT_SOURCE_DIR}/data/test.ppm
+    ${CMAKE_CURRENT_BINARY_DIR}/
+)
+
+# Copy data files to output directory
+add_custom_command(TARGET segmentationTreeThrust POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_CURRENT_SOURCE_DIR}/data/ref_00.ppm
+    ${CMAKE_CURRENT_BINARY_DIR}/
+)
+
+# Copy data files to output directory
+add_custom_command(TARGET segmentationTreeThrust POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_CURRENT_SOURCE_DIR}/data/ref_09.ppm
+    ${CMAKE_CURRENT_BINARY_DIR}/
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/segmentationTreeThrust/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `common.cuh`
+
+Source: cpp/2_Concepts_and_Techniques/segmentationTreeThrust/common.cuh:29-36
+```cuda
+#ifndef _COMMON_CUH_
+#define _COMMON_CUH_
+
+typedef unsigned char          uchar;
+typedef unsigned int           uint;
+typedef unsigned long long int ullint;
+
+#endif // #ifndef _COMMON_CUH_
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/segmentationTreeThrust/common.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `kernels.cuh`
+
+Source: cpp/2_Concepts_and_Techniques/segmentationTreeThrust/kernels.cuh:34-71
+```cuda
+#ifndef _KERNELS_H_
+#define _KERNELS_H_
+
+#include <stdio.h>
+
+#include "common.cuh"
+
+// Functors used with thrust library.
+template <typename Input> struct IsGreaterEqualThan
+{
+    __host__ __device__ IsGreaterEqualThan(uint upperBound)
+        : upperBound_(upperBound)
+    {
+    }
+
+    __host__ __device__ bool operator()(const Input &value) const { return value >= upperBound_; }
+
+    uint upperBound_;
+};
+
+// CUDA kernels.
+__global__ void addScalar(uint *array, int scalar, uint size)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    uint tid = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (tid < size) {
+        array[tid] += scalar;
+    }
+}
+
+__global__ void markSegments(const uint *verticesOffsets, uint *flags, uint verticesCount)
+{
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+    uint tid = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (tid < verticesCount) {
+        flags[verticesOffsets[tid]] = 1;
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/segmentationTreeThrust/kernels.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `segmentationTree.cu`
+
+Source: cpp/2_Concepts_and_Techniques/segmentationTreeThrust/segmentationTree.cu:41-59
+```cuda
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// STL includes.
+#include <algorithm>
+#include <deque>
+#include <fstream>
+#include <iostream>
+#include <iterator>
+#include <list>
+#include <vector>
+
+// Thrust library includes.
+#include <thrust/adjacent_difference.h>
+#include <thrust/copy.h>
+#include <thrust/device_free.h>
+#include <thrust/device_malloc.h>
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/segmentationTreeThrust/segmentationTree.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/segmentationTreeThrust/segmentationTree.cu:240-259
+```cuda
+        {
+        }
+
+        void buildFromDeviceData(thrust::device_ptr<uint> superVerticesOffsets, thrust::device_ptr<uint> verticesIDs)
+        {
+            // JP: `cudaMemcpy`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+            checkCudaErrors(cudaMemcpy(&(superNodesOffsets_[0]),
+                                       superVerticesOffsets.get(),
+                                       sizeof(uint) * superNodesOffsets_.size(),
+                                       cudaMemcpyDeviceToHost));
+
+            checkCudaErrors(
+                cudaMemcpy(&(nodes_[0]), verticesIDs.get(), sizeof(uint) * nodes_.size(), cudaMemcpyDeviceToHost));
+        }
+
+    private:
+        friend class Pyramid;
+
+        // The pair of the following vectors describes the
+        // relation between the consecutive levels.
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/segmentationTreeThrust/segmentationTree.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/segmentationTreeThrust/segmentationTree.cu:329-348
+```cuda
+            colors[colorIndex * 3]     = myrand() % 256;
+            colors[colorIndex * 3 + 1] = myrand() % 256;
+            colors[colorIndex * 3 + 2] = myrand() % 256;
+        }
+
+        uchar *image = new uchar[width * height * 3];
+
+        while (!nodesQueue.empty()) {
+            std::pair<uint, uint> currentNode = nodesQueue.front();
+            nodesQueue.pop_front();
+
+            uint pixelIndex   = currentNode.first;
+            uint pixelSegment = currentNode.second;
+
+            image[pixelIndex * 3]     = colors[pixelSegment * 3];
+            image[pixelIndex * 3 + 1] = colors[pixelSegment * 3 + 1];
+            image[pixelIndex * 3 + 2] = colors[pixelSegment * 3 + 2];
+        }
+
+        __savePPM(filename, image, width, height, 3);
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/segmentationTreeThrust/segmentationTree.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/segmentationTreeThrust/segmentationTree.cu:406-425
+```cuda
+            cout << "Algorithm failed (" << e.what() << ")" << endl;
+            exit(EXIT_FAILURE);
+        }
+
+        cudaEventRecord(stop, 0);
+        // JP: `cudaEventSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+        cudaEventSynchronize(stop);
+
+        float elapsedTime;
+        cudaEventElapsedTime(&elapsedTime, start, stop);
+
+        return elapsedTime;
+    }
+
+private:
+    void printMemoryUsage()
+    {
+        size_t availableMemory, totalMemory, usedMemory;
+
+        cudaMemGetInfo(&availableMemory, &totalMemory);
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/segmentationTreeThrust/segmentationTree.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

@@ -81,6 +81,90 @@ English anchor: read `vectorAdd` as a focused example of the CUDA concepts used 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `vectorAdd.py`
+
+Source: python/1_GettingStarted/vectorAdd/vectorAdd.py:2-20
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `python/1_GettingStarted/vectorAdd/vectorAdd.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/1_GettingStarted/vectorAdd/vectorAdd.py:57-76
+```python
+ * Computes the vector addition of A and B into C.
+ */
+template<typename T>
+__global__ void vectorAdd(const T *A, const T *B, T *C, int numElements)
+{
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+
+    if (i < numElements)
+    {
+        C[i] = A[i] + B[i];
+    }
+}
+"""
+
+
+def vector_add_cuda_core(num_elements=50000, device_id=0, verify=True):
+    """
+    Perform vector addition using cuda.core API.
+
+    Parameters
+```
+
+> JP: この抜粋は `python/1_GettingStarted/vectorAdd/vectorAdd.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/1_GettingStarted/vectorAdd/vectorAdd.py:89-108
+```python
+    """
+    try:
+        # Initialize device
+        print("[Vector addition using CUDA Core API]")
+        # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
+        device = Device(device_id)
+        device.set_current()
+
+        print(f"Device: {device.name}")
+        print(f"Compute Capability: sm_{device.arch}")
+
+        stream = device.create_stream()
+
+        # Compile kernel
+        print("Compiling kernel 'vectorAdd<float>'...")
+        program_options = ProgramOptions(std="c++17", arch=f"sm_{device.arch}")
+        # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
+        program = Program(VECTOR_ADD_KERNEL, code_type="c++", options=program_options)
+        module = program.compile("cubin", name_expressions=("vectorAdd<float>",))
+        kernel = module.get_kernel("vectorAdd<float>")
+```
+
+> JP: この抜粋は `python/1_GettingStarted/vectorAdd/vectorAdd.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

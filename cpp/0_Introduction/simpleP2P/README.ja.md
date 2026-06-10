@@ -81,6 +81,191 @@ English anchor: read `simpleP2P` as a focused example of the CUDA concepts used 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/simpleP2P/CMakeLists.txt:1-41
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleP2P LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simpleP2P
+if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
+    message(STATUS "Will not build sample simpleP2P - not supported on aarch64")
+else()
+    add_executable(simpleP2P simpleP2P.cu)
+
+    target_compile_options(simpleP2P PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+    target_compile_features(simpleP2P PRIVATE cxx_std_17 cuda_std_17)
+
+    set_target_properties(simpleP2P PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+endif()
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleP2P/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleP2P.cu`
+
+Source: cpp/0_Introduction/simpleP2P/simpleP2P.cu:35-70
+```cuda
+#include <stdio.h>
+#include <stdlib.h>
+
+// CUDA includes
+#include <cuda_runtime.h>
+
+// includes, project
+#include <helper_cuda.h>
+#include <helper_functions.h> // helper for shared that are common to CUDA Samples
+
+__global__ void SimpleKernel(float *src, float *dst)
+{
+    // Just a dummy kernel, doing enough for us to verify that everything
+    // worked
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    dst[idx]      = src[idx] * 2.0f;
+}
+
+inline bool IsAppBuiltAs64() { return sizeof(void *) == 8; }
+
+int main(int argc, char **argv)
+{
+    printf("[%s] - Starting...\n", argv[0]);
+
+    if (!IsAppBuiltAs64()) {
+        printf("%s is only supported with on 64-bit OSs and the application must be "
+               "built as a 64-bit target.  Test is being waived.\n",
+               argv[0]);
+        exit(EXIT_WAIVED);
+    }
+
+    // Number of GPUs
+    printf("Checking for multiple GPUs...\n");
+    int gpu_n;
+    checkCudaErrors(cudaGetDeviceCount(&gpu_n));
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleP2P/simpleP2P.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleP2P/simpleP2P.cu:137-156
+```cuda
+    const size_t buf_size = 1024 * 1024 * 16 * sizeof(float);
+    printf(
+        "Allocating buffers (%iMB on GPU%d, GPU%d and CPU Host)...\n", int(buf_size / 1024 / 1024), gpuid[0], gpuid[1]);
+    checkCudaErrors(cudaSetDevice(gpuid[0]));
+    float *g0;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc(&g0, buf_size));
+    checkCudaErrors(cudaSetDevice(gpuid[1]));
+    float *g1;
+    checkCudaErrors(cudaMalloc(&g1, buf_size));
+    float *h0;
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
+    checkCudaErrors(cudaMallocHost(&h0, buf_size)); // Automatically portable with UVA
+
+    // Create CUDA event handles
+    // JP: streams_events: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+    printf("Creating event handles...\n");
+    cudaEvent_t start_event, stop_event;
+    float       time_memcpy;
+    int         eventflags = cudaEventBlockingSync;
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleP2P/simpleP2P.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleP2P/simpleP2P.cu:163-191
+```cuda
+    for (int i = 0; i < 100; i++) {
+        // With UVA we don't need to specify source and target devices, the
+        // runtime figures this out by itself from the pointers
+        // Ping-pong copy between GPUs
+        if (i % 2 == 0) {
+            // JP: `cudaMemcpy`, `cudaMemcpyDefault`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+            checkCudaErrors(cudaMemcpy(g1, g0, buf_size, cudaMemcpyDefault));
+        }
+        else {
+            checkCudaErrors(cudaMemcpy(g0, g1, buf_size, cudaMemcpyDefault));
+        }
+    }
+
+    checkCudaErrors(cudaEventRecord(stop_event, 0));
+    // JP: `cudaEventSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    checkCudaErrors(cudaEventSynchronize(stop_event));
+    checkCudaErrors(cudaEventElapsedTime(&time_memcpy, start_event, stop_event));
+    printf("cudaMemcpyPeer / cudaMemcpy between GPU%d and GPU%d: %.2fGB/s\n",
+           gpuid[0],
+           gpuid[1],
+           (1.0f / (time_memcpy / 1000.0f)) * ((100.0f * buf_size)) / 1024.0f / 1024.0f / 1024.0f);
+
+    // Prepare host buffer and copy to GPU 0
+    printf("Preparing host buffer and memcpy to GPU%d...\n", gpuid[0]);
+
+    for (int i = 0; i < buf_size / sizeof(float); i++) {
+        h0[i] = float(i % 4096);
+    }
+
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleP2P/simpleP2P.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleP2P/simpleP2P.cu:250-269
+```cuda
+    checkCudaErrors(cudaSetDevice(gpuid[1]));
+    checkCudaErrors(cudaDeviceDisablePeerAccess(gpuid[0]));
+
+    // Cleanup and shutdown
+    printf("Shutting down...\n");
+    // JP: `cudaEventDestroy`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaEventDestroy(start_event));
+    checkCudaErrors(cudaEventDestroy(stop_event));
+    checkCudaErrors(cudaSetDevice(gpuid[0]));
+    checkCudaErrors(cudaFree(g0));
+    checkCudaErrors(cudaSetDevice(gpuid[1]));
+    checkCudaErrors(cudaFree(g1));
+    checkCudaErrors(cudaFreeHost(h0));
+
+    for (int i = 0; i < gpu_n; i++) {
+        checkCudaErrors(cudaSetDevice(i));
+    }
+
+    if (error_count != 0) {
+        printf("Test failed!\n");
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleP2P/simpleP2P.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
@@ -90,6 +275,7 @@ English anchor: read `simpleP2P` as a focused example of the CUDA concepts used 
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
 | `cudaMemcpyDefault` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaEventDestroy` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaDeviceEnablePeerAccess` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaMallocHost` | pinned host memory を作り、async copy や DMA の前提を作る API です。 |
 | `cudaEventCreateWithFlags` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
@@ -98,7 +284,6 @@ English anchor: read `simpleP2P` as a focused example of the CUDA concepts used 
 | `cudaDeviceSynchronize` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaDeviceDisablePeerAccess` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
-| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。

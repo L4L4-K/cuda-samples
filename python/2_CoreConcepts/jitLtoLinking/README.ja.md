@@ -73,13 +73,123 @@ English anchor: read `jitLtoLinking` as a focused example of the CUDA concepts u
 
 ## Concrete Reading Path
 
-- `jitLtoLinking.py`: focus on `Program`, `launch`, `ProgramOptions`, `CUDA`, `Device`.
+- `jitLtoLinking.py`: focus on `Program`, `CUDA`, `launch`, `ProgramOptions`, `Device`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `jitLtoLinking.py`
+
+Source: python/2_CoreConcepts/jitLtoLinking/jitLtoLinking.py:2-20
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/jitLtoLinking/jitLtoLinking.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/jitLtoLinking/jitLtoLinking.py:90-109
+```python
+extern "C" __global__
+void apply_transform(const float* __restrict__ in,
+                     float* __restrict__ out,
+                     size_t N)
+{
+    size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t stride = (size_t)gridDim.x * blockDim.x;
+    for (size_t i = tid; i < N; i += stride) {
+        out[i] = user_transform(in[i]);
+    }
+}
+"""
+
+# --------------------------------------------------------------------------
+# Module B: the user-supplied "plug-in" device function. A different
+# implementation of ``user_transform`` here produces different results without
+# rebuilding MAIN_SRC.
+# --------------------------------------------------------------------------
+USER_SRC = r"""
+extern "C" __device__
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/jitLtoLinking/jitLtoLinking.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/jitLtoLinking/jitLtoLinking.py:126-145
+```python
+    """Compile both modules to PTX and link them into a cubin (no LTO)."""
+    prog_opts = ProgramOptions(
+        std="c++17", arch=f"sm_{device.arch}", relocatable_device_code=True
+    )
+    # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
+    main_obj = Program(MAIN_SRC, "c++", options=prog_opts).compile("ptx")
+    user_obj = Program(USER_SRC, "c++", options=prog_opts).compile("ptx")
+
+    linker = Linker(main_obj, user_obj, options=LinkerOptions(arch=f"sm_{device.arch}"))
+    return linker.link("cubin")
+
+
+def link_lto(device):
+    """Compile both modules to LTO IR and link with LTO enabled."""
+    prog_opts = ProgramOptions(
+        std="c++17", arch=f"sm_{device.arch}", link_time_optimization=True
+    )
+    # JP: この連続する anchor 群では NVRTC/JIT compile/link output です。compile option、log、生成 code と後続 module/kernel の対応 を確認します。
+    main_obj = Program(MAIN_SRC, "c++", options=prog_opts).compile("ltoir")
+    user_obj = Program(USER_SRC, "c++", options=prog_opts).compile("ltoir")
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/jitLtoLinking/jitLtoLinking.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/jitLtoLinking/jitLtoLinking.py:162-181
+```python
+        np.uint64(size),
+    )
+    stream.sync()
+    actual = cp.asnumpy(d_out)
+    # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+    if not np.allclose(actual, expected, rtol=1e-5, atol=1e-5):
+        max_err = np.max(np.abs(actual - expected))
+        print(f"  [{mode}] verification FAILED (max_err={max_err})")
+        return False
+    print(f"  [{mode}] result verified against NumPy reference")
+    return True
+
+
+def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="JIT + LTO linking of two device modules with cuda.core"
+    )
+    parser.add_argument(
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/jitLtoLinking/jitLtoLinking.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

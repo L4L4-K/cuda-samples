@@ -79,6 +79,161 @@ English anchor: read `simplePitchLinearTexture` as a focused example of the CUDA
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/simplePitchLinearTexture/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simplePitchLinearTexture LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simplePitchLinearTexture
+add_executable(simplePitchLinearTexture simplePitchLinearTexture.cu)
+
+target_compile_options(simplePitchLinearTexture PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simplePitchLinearTexture PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simplePitchLinearTexture PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simplePitchLinearTexture/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simplePitchLinearTexture.cu`
+
+Source: cpp/0_Introduction/simplePitchLinearTexture/simplePitchLinearTexture.cu:42-60
+```cuda
+#include <stdio.h>
+
+#ifdef _WIN32
+#define WINDOWS_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
+// Includes CUDA
+#include <cuda_runtime.h>
+
+// Utilities and timing functions
+#include <helper_functions.h> // includes cuda.h and cuda_runtime_api.h
+
+// CUDA helper functions
+#include <helper_cuda.h> // helper functions for CUDA error check
+
+#define NUM_REPS 100 // number of repetitions performed
+#define TILE_DIM 16  // tile/block size
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simplePitchLinearTexture/simplePitchLinearTexture.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simplePitchLinearTexture/simplePitchLinearTexture.cu:72-91
+```cuda
+//! @param odata  output data in global memory
+////////////////////////////////////////////////////////////////////////////////
+__global__ void
+shiftPitchLinear(float *odata, int pitch, int width, int height, int shiftX, int shiftY, cudaTextureObject_t texRefPL)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int xid = blockIdx.x * blockDim.x + threadIdx.x;
+    int yid = blockIdx.y * blockDim.y + threadIdx.y;
+
+    odata[yid * pitch + xid] = tex2D<float>(texRefPL, (xid + shiftX) / (float)width, (yid + shiftY) / (float)height);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//! Shifts matrix elements using regular array
+//! @param odata  output data in global memory
+////////////////////////////////////////////////////////////////////////////////
+__global__ void
+shiftArray(float *odata, int pitch, int width, int height, int shiftX, int shiftY, cudaTextureObject_t texRefArray)
+{
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simplePitchLinearTexture/simplePitchLinearTexture.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simplePitchLinearTexture/simplePitchLinearTexture.cu:100-119
+```cuda
+void runTest(int argc, char **argv);
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    printf("%s starting...\n\n", sSDKsample);
+
+    runTest(argc, argv);
+
+    printf("%s completed, returned %s\n", sSDKsample, bTestResult ? "OK" : "ERROR!");
+    exit(bTestResult ? EXIT_SUCCESS : EXIT_FAILURE);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//! Run a simple test for CUDA
+////////////////////////////////////////////////////////////////////////////////
+void runTest(int argc, char **argv)
+{
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simplePitchLinearTexture/simplePitchLinearTexture.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simplePitchLinearTexture/simplePitchLinearTexture.cu:141-160
+```cuda
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    // Host allocation and initialization
+    float *h_idata = (float *)malloc(sizeof(float) * nx * ny);
+    float *h_odata = (float *)malloc(sizeof(float) * nx * ny);
+    float *gold    = (float *)malloc(sizeof(float) * nx * ny);
+
+    for (int i = 0; i < nx * ny; ++i) {
+        h_idata[i] = (float)i;
+    }
+
+    // Device memory allocation
+    // Pitch linear input data
+    float *d_idataPL;
+    size_t d_pitchBytes;
+
+    // JP: `cudaMallocPitch`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMallocPitch((void **)&d_idataPL, &d_pitchBytes, nx * sizeof(float), ny));
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simplePitchLinearTexture/simplePitchLinearTexture.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

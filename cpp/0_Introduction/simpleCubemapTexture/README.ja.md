@@ -71,7 +71,7 @@ English anchor: read `simpleCubemapTexture` as a focused example of the CUDA con
 
 ## Concrete Reading Path
 
-- `simpleCubemapTexture.cu`: focus on `CUDA`, `blockIdx`, `blockDim`, `threadIdx`, `cudaAddressModeWrap`.
+- `simpleCubemapTexture.cu`: focus on `CUDA`, `launch`, `blockIdx`, `blockDim`, `threadIdx`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
@@ -79,12 +79,187 @@ English anchor: read `simpleCubemapTexture` as a focused example of the CUDA con
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/simpleCubemapTexture/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleCubemapTexture LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simpleCubemapTexture
+add_executable(simpleCubemapTexture simpleCubemapTexture.cu)
+
+target_compile_options(simpleCubemapTexture PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleCubemapTexture PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simpleCubemapTexture PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleCubemapTexture/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleCubemapTexture.cu`
+
+Source: cpp/0_Introduction/simpleCubemapTexture/simpleCubemapTexture.cu:40-77
+```cuda
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// includes CUDA
+#include <cuda_runtime.h>
+
+// helper functions and utilities to work with CUDA
+#include <helper_cuda.h>
+#include <helper_functions.h>
+
+static const char *sSDKname = "simpleCubemapTexture";
+
+// includes, kernels
+
+////////////////////////////////////////////////////////////////////////////////
+//! Transform a cubemap face of a linear buffe using cubemap texture lookups
+//! @param g_odata  output data in global memory
+////////////////////////////////////////////////////////////////////////////////
+__global__ void transformKernel(float *g_odata, int width, cudaTextureObject_t tex)
+{
+    // calculate this thread's data point
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    // 0.5f offset and division are necessary to access the original data points
+    // in the texture (such that bilinear interpolation will not be activated).
+    // For details, see also CUDA Programming Guide, Appendix D
+
+    float u = ((x + 0.5f) / (float)width) * 2.f - 1.f;
+    float v = ((y + 0.5f) / (float)width) * 2.f - 1.f;
+
+    float cx, cy, cz;
+
+    for (unsigned int face = 0; face < 6; face++) {
+        // Layer 0 is positive X face
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleCubemapTexture/simpleCubemapTexture.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleCubemapTexture/simpleCubemapTexture.cu:117-136
+```cuda
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    // use command-line specified CUDA device, otherwise use device with highest
+    // Gflops/s
+    int devID = findCudaDevice(argc, (const char **)argv);
+
+    bool bResult = true;
+
+    // get number of SMs on this GPU
+    cudaDeviceProp deviceProps;
+
+    checkCudaErrors(cudaGetDeviceProperties(&deviceProps, devID));
+    printf("CUDA device [%s] has %d Multi-Processors ", deviceProps.name, deviceProps.multiProcessorCount);
+    printf("SM %d.%d\n", deviceProps.major, deviceProps.minor);
+
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleCubemapTexture/simpleCubemapTexture.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleCubemapTexture/simpleCubemapTexture.cu:144-163
+```cuda
+
+    // generate input data for layered texture
+    unsigned int width = 64, num_faces = 6, num_layers = 1;
+    unsigned int cubemap_size = width * width * num_faces;
+    unsigned int size         = cubemap_size * num_layers * sizeof(float);
+    float       *h_data       = (float *)malloc(size);
+
+    for (int i = 0; i < (int)(cubemap_size * num_layers); i++) {
+        h_data[i] = (float)i;
+    }
+
+    // this is the expected transformation of the input data (the expected output)
+    float *h_data_ref = (float *)malloc(size);
+
+    for (unsigned int layer = 0; layer < num_layers; layer++) {
+        for (int i = 0; i < (int)(cubemap_size); i++) {
+            h_data_ref[layer * cubemap_size + i] = -h_data[layer * cubemap_size + i] + layer;
+        }
+    }
+
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleCubemapTexture/simpleCubemapTexture.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleCubemapTexture/simpleCubemapTexture.cu:171-190
+```cuda
+    cudaArray            *cu_3darray;
+    //    checkCudaErrors(cudaMalloc3DArray( &cu_3darray, &channelDesc,
+    //    make_cudaExtent(width, height, num_layers), cudaArrayLayered ));
+    checkCudaErrors(
+        cudaMalloc3DArray(&cu_3darray, &channelDesc, make_cudaExtent(width, width, num_faces), cudaArrayCubemap));
+    cudaMemcpy3DParms myparms = {0};
+    myparms.srcPos            = make_cudaPos(0, 0, 0);
+    myparms.dstPos            = make_cudaPos(0, 0, 0);
+    myparms.srcPtr            = make_cudaPitchedPtr(h_data, width * sizeof(float), width, width);
+    myparms.dstArray          = cu_3darray;
+    myparms.extent            = make_cudaExtent(width, width, num_faces);
+    // JP: `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    myparms.kind              = cudaMemcpyHostToDevice;
+    checkCudaErrors(cudaMemcpy3D(&myparms));
+
+    cudaTextureObject_t tex;
+    cudaResourceDesc    texRes;
+    memset(&texRes, 0, sizeof(cudaResourceDesc));
+
+    texRes.resType         = cudaResourceTypeArray;
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleCubemapTexture/simpleCubemapTexture.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
 | - | - |
 | `cudaDeviceSynchronize` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `blockIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `blockDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `threadIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
@@ -96,7 +271,6 @@ English anchor: read `simpleCubemapTexture` as a focused example of the CUDA con
 | `cudaDestroyTextureObject` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
 | `cudaFreeArray` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
-| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。

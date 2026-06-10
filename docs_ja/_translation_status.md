@@ -9,10 +9,10 @@ English inventory for the local Japanese learning overlay.
 > `DONE` は対象ファイルがそろい、重要な CUDA/API アンカーの近くに具体的な `JP:` 注釈がある状態です。`PARTIAL` は、トップだけの一般コメントやアンカー不足が残っている状態です。
 
 - Status: DONE
-- Updated: 2026-06-10 07:24:08 UTC
+- Updated: 2026-06-10 08:01:06 UTC
 - Branch: `ja-study/local-annotations`
 - Base commit: `b7c5481c556c3fe98db060207ecaa41a4b9a9abc`
-- Current commit: `f7a53b04a8ebb0d9d99df6e3c23944eb5c1c5aad`
+- Current commit: `a34395f42e181140fda8b971916e54b13e0acef3`
 - Detailed annotation record: `docs_ja/_annotation_inventory.json`
 - Detailed sample README record: `docs_ja/_sample_readme_inventory.json`
 - Detailed theme guide record: `docs_ja/_theme_inventory.json`
@@ -37,16 +37,16 @@ English inventory for the local Japanese learning overlay.
 - glossary_files: 5
 - glossary_files_done: 5
 - glossary_files_partial: 0
-- annotation_files: 922
-- annotation_files_done: 922
+- annotation_files: 923
+- annotation_files_done: 923
 - annotation_files_partial: 0
-- annotation_anchor_files: 644
-- annotation_anchor_instances: 9815
-- annotation_anchor_instances_covered: 9815
+- annotation_anchor_files: 645
+- annotation_anchor_instances: 9817
+- annotation_anchor_instances_covered: 9817
 - annotation_anchor_instances_missing: 0
 - annotation_grouped_anchor_instances: 2613
 - annotation_inaccurate_comment_flags: 0
-- japanese_files: 844
+- japanese_files: 846
 
 ## Missing Or Partial Items
 
@@ -70,11 +70,11 @@ English inventory for the local Japanese learning overlay.
 
 ## Annotation Quality
 
-- DONE files: 922
+- DONE files: 923
 - PARTIAL files: 0
 - Anchor search window: 4 lines before to 2 lines after each anchor.
 - Grouping window: adjacent repeated anchors up to 8 lines apart, with a useful JP comment explaining the grouped resource/direction/cleanup pattern.
-- Covered anchor instances: 9815
+- Covered anchor instances: 9817
 - Missing anchor instances: 0
 - Grouped anchor instances: 2613
 - Inaccurate JP flags: 0
@@ -83,13 +83,13 @@ English inventory for the local Japanese learning overlay.
 
 - DONE guides: 255
 - PARTIAL guides: 0
-- Required sections: `## Purpose`, `## Prerequisites`, `## Files`, `## Execution Flow`, `## Concrete Reading Path`, `## Key APIs And Concepts`, `## Memory, Synchronization, And Performance Notes`, `## Build And Run`, `## Expected Behavior`, `## Common Mistakes`, `## Exercises`, `## Related Themes`
+- Required sections: `## Purpose`, `## Prerequisites`, `## Files`, `## Execution Flow`, `## Concrete Reading Path`, `## Code Walkthrough`, `## Key APIs And Concepts`, `## Memory, Synchronization, And Performance Notes`, `## Build And Run`, `## Expected Behavior`, `## Common Mistakes`, `## Exercises`, `## Related Themes`
 
 ## Theme Guide Quality
 
 - DONE guides: 16
 - PARTIAL guides: 0
-- Required sections: `## Concept`, `## Why It Matters`, `## Mental Model`, `## API Map`, `## Sample References`, `## Reading Steps`, `## Common Mistakes`, `## Performance Notes`, `## Exercises`, `## Cross-Theme Links`, `## Review Checklist`
+- Required sections: `## Concept`, `## Why It Matters`, `## Mental Model`, `## API Map`, `## Sample References`, `## Representative Code`, `## Reading Steps`, `## Common Mistakes`, `## Performance Notes`, `## Exercises`, `## Cross-Theme Links`, `## Review Checklist`
 
 ## Major Companion Quality
 

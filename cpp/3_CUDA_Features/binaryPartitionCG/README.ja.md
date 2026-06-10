@@ -79,6 +79,156 @@ English anchor: read `binaryPartitionCG` as a focused example of the CUDA concep
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/3_CUDA_Features/binaryPartitionCG/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(binaryPartitionCG LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for binaryPartitionCG
+add_executable(binaryPartitionCG binaryPartitionCG.cu)
+
+target_compile_options(binaryPartitionCG PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(binaryPartitionCG PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(binaryPartitionCG PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/binaryPartitionCG/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `binaryPartitionCG.cu`
+
+Source: cpp/3_CUDA_Features/binaryPartitionCG/binaryPartitionCG.cu:36-54
+```cuda
+       groups
+ * 5.) write it global counter of odd.
+ * 6.) sum the values loaded by individual threads(using reduce) and write it to
+       global even & odd elements sum.
+ *
+ * **NOTE** :
+ *    binary_partition results in splitting warp into divergent thread groups
+ *    this is not good from performance perspective, but in cases where warp
+ *    divergence is inevitable one can use binary_partition group.
+*/
+
+#include <cooperative_groups.h>
+#include <cooperative_groups/reduce.h>
+#include <helper_cuda.h>
+#include <stdio.h>
+
+namespace cg = cooperative_groups;
+
+void initOddEvenArr(int *inputArr, unsigned int size)
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/binaryPartitionCG/binaryPartitionCG.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/binaryPartitionCG/binaryPartitionCG.cu:102-168
+```cuda
+}
+
+/**
+ * Host main routine
+ */
+int main(int argc, const char **argv)
+{
+    int          deviceId = findCudaDevice(argc, argv);
+    int         *h_inputArr, *d_inputArr;
+    int         *h_numOfOdds, *d_numOfOdds;
+    int         *h_sumOfOddEvenElems, *d_sumOfOddEvenElems;
+    unsigned int arrSize = 1024 * 100;
+
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
+    checkCudaErrors(cudaMallocHost(&h_inputArr, sizeof(int) * arrSize));
+    checkCudaErrors(cudaMallocHost(&h_numOfOdds, sizeof(int)));
+    checkCudaErrors(cudaMallocHost(&h_sumOfOddEvenElems, sizeof(int) * 2));
+    initOddEvenArr(h_inputArr, arrSize);
+
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+    cudaStream_t stream;
+    checkCudaErrors(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc(&d_inputArr, sizeof(int) * arrSize));
+    checkCudaErrors(cudaMalloc(&d_numOfOdds, sizeof(int)));
+    checkCudaErrors(cudaMalloc(&d_sumOfOddEvenElems, sizeof(int) * 2));
+
+    // JP: `cudaMemcpyAsync`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpyAsync(d_inputArr, h_inputArr, sizeof(int) * arrSize, cudaMemcpyHostToDevice, stream));
+    checkCudaErrors(cudaMemsetAsync(d_numOfOdds, 0, sizeof(int), stream));
+    checkCudaErrors(cudaMemsetAsync(d_sumOfOddEvenElems, 0, 2 * sizeof(int), stream));
+
+    // Launch the kernel
+    int threadsPerBlock = 0;
+    int blocksPerGrid   = 0;
+    checkCudaErrors(cudaOccupancyMaxPotentialBlockSize(&blocksPerGrid, &threadsPerBlock, oddEvenCountAndSumCG, 0, 0));
+
+    printf("\nLaunching %d blocks with %d threads...\n\n", blocksPerGrid, threadsPerBlock);
+
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    oddEvenCountAndSumCG<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(
+        d_inputArr, d_numOfOdds, d_sumOfOddEvenElems, arrSize);
+
+    checkCudaErrors(cudaMemcpyAsync(h_numOfOdds, d_numOfOdds, sizeof(int), cudaMemcpyDeviceToHost, stream));
+    checkCudaErrors(
+        cudaMemcpyAsync(h_sumOfOddEvenElems, d_sumOfOddEvenElems, 2 * sizeof(int), cudaMemcpyDeviceToHost, stream));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
+    checkCudaErrors(cudaStreamSynchronize(stream));
+
+    printf("Array size = %d Num of Odds = %d Sum of Odds = %d Sum of Evens %d\n",
+           arrSize,
+           h_numOfOdds[0],
+           h_sumOfOddEvenElems[0],
+           h_sumOfOddEvenElems[1]);
+    printf("\n...Done.\n\n");
+
+    // JP: `cudaFreeHost`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaFreeHost(h_inputArr));
+    checkCudaErrors(cudaFreeHost(h_numOfOdds));
+    checkCudaErrors(cudaFreeHost(h_sumOfOddEvenElems));
+
+    checkCudaErrors(cudaFree(d_inputArr));
+    checkCudaErrors(cudaFree(d_numOfOdds));
+    checkCudaErrors(cudaFree(d_sumOfOddEvenElems));
+
+    return EXIT_SUCCESS;
+}
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/binaryPartitionCG/binaryPartitionCG.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

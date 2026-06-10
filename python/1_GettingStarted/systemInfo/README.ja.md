@@ -82,6 +82,64 @@ English anchor: read `systemInfo` as a focused example of the CUDA concepts used
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `systemInfo.py`
+
+Source: python/1_GettingStarted/systemInfo/systemInfo.py:2-20
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `python/1_GettingStarted/systemInfo/systemInfo.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/1_GettingStarted/systemInfo/systemInfo.py:169-188
+```python
+                f"topology={level_name}, p2p_read={read_name}, p2p_write={write_name}"
+            )
+
+
+def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Print CUDA system / NVML information via cuda.core.system"
+    )
+    parser.add_argument(
+        "--no-topology",
+        action="store_true",
+        help="Skip cross-device topology/P2P queries",
+    )
+    args = parser.parse_args()
+
+    print_driver_info()
+
+    num_devices = system.get_num_devices()
+```
+
+> JP: この抜粋は `python/1_GettingStarted/systemInfo/systemInfo.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

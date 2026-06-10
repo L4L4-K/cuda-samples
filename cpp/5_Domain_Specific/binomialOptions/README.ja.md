@@ -90,6 +90,290 @@ English anchor: read `binomialOptions` as a focused example of the CUDA concepts
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/5_Domain_Specific/binomialOptions/CMakeLists.txt:1-41
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(binomialOptions LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for binomialOptions
+add_executable(binomialOptions binomialOptions.cpp binomialOptions_gold.cpp binomialOptions_kernel.cu)
+
+target_compile_options(binomialOptions PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(binomialOptions PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(binomialOptions PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_include_directories(binomialOptions PUBLIC
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/binomialOptions/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `binomialOptions.cpp`
+
+Source: cpp/5_Domain_Specific/binomialOptions/binomialOptions.cpp:35-53
+```cpp
+#include <cuda_runtime.h>
+#include <helper_cuda.h>
+#include <helper_functions.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "binomialOptions_common.h"
+#include "realtype.h"
+
+////////////////////////////////////////////////////////////////////////////////
+// Black-Scholes formula for binomial tree results validation
+////////////////////////////////////////////////////////////////////////////////
+extern "C" void BlackScholesCall(real &callResult, TOptionData optionData);
+
+////////////////////////////////////////////////////////////////////////////////
+// Process single option on CPU
+// Note that CPU code is for correctness testing only and not for benchmarking.
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/binomialOptions/binomialOptions.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/binomialOptions/binomialOptions.cpp:70-89
+```cpp
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Main program
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    printf("[%s] - Starting...\n", argv[0]);
+
+    int devID = findCudaDevice(argc, (const char **)argv);
+
+    const int OPT_N = MAX_OPTIONS;
+
+    TOptionData optionData[MAX_OPTIONS];
+    real        callValueBS[MAX_OPTIONS], callValueGPU[MAX_OPTIONS], callValueCPU[MAX_OPTIONS];
+
+    real sumDelta, sumRef, gpuTime, errorVal;
+
+    StopWatchInterface *hTimer = NULL;
+    int                 i;
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/binomialOptions/binomialOptions.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/binomialOptions/binomialOptions.cpp:102-121
+```cpp
+        optionData[i].V = 0.10f;
+        BlackScholesCall(callValueBS[i], optionData[i]);
+    }
+
+    printf("Running GPU binomial tree...\n");
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    checkCudaErrors(cudaDeviceSynchronize());
+    sdkResetTimer(&hTimer);
+    sdkStartTimer(&hTimer);
+
+    binomialOptionsGPU(callValueGPU, optionData, OPT_N);
+
+    checkCudaErrors(cudaDeviceSynchronize());
+    sdkStopTimer(&hTimer);
+    gpuTime = sdkGetTimerValue(&hTimer);
+    printf("Options count            : %i     \n", OPT_N);
+    printf("Time steps               : %i     \n", NUM_STEPS);
+    printf("binomialOptionsGPU() time: %f msec\n", gpuTime);
+    printf("Options per second       : %f     \n", OPT_N / (gpuTime * 0.001));
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/binomialOptions/binomialOptions.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `binomialOptions_common.h`
+
+Source: cpp/5_Domain_Specific/binomialOptions/binomialOptions_common.h:29-54
+```cpp
+#ifndef BINOMIALOPTIONS_COMMON_H
+#define BINOMIALOPTIONS_COMMON_H
+
+#include "realtype.h"
+
+////////////////////////////////////////////////////////////////////////////////
+// Global types
+////////////////////////////////////////////////////////////////////////////////
+typedef struct
+{
+    real S;
+    real X;
+    real T;
+    real R;
+    real V;
+} TOptionData;
+
+////////////////////////////////////////////////////////////////////////////////
+// Global parameters
+////////////////////////////////////////////////////////////////////////////////
+// Number of time steps
+#define NUM_STEPS 2048
+// Max option batch size
+#define MAX_OPTIONS 1024
+
+#endif
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/binomialOptions/binomialOptions_common.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `binomialOptions_gold.cpp`
+
+Source: cpp/5_Domain_Specific/binomialOptions/binomialOptions_gold.cpp:29-47
+```cpp
+#include <math.h>
+#include <stdio.h>
+
+#include "binomialOptions_common.h"
+#include "realtype.h"
+
+///////////////////////////////////////////////////////////////////////////////
+// Polynomial approximation of cumulative normal distribution function
+///////////////////////////////////////////////////////////////////////////////
+static real CND(real d)
+{
+    const real A1       = (real)0.31938153;
+    const real A2       = (real)-0.356563782;
+    const real A3       = (real)1.781477937;
+    const real A4       = (real)-1.821255978;
+    const real A5       = (real)1.330274429;
+    const real RSQRT2PI = (real)0.39894228040143267793994605993438;
+
+    real K = (real)(1.0 / (1.0 + 0.2316419 * (real)fabs(d)));
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/binomialOptions/binomialOptions_gold.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `binomialOptions_kernel.cu`
+
+Source: cpp/5_Domain_Specific/binomialOptions/binomialOptions_kernel.cu:32-50
+```cuda
+#include <cooperative_groups.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+namespace cg = cooperative_groups;
+
+#include <helper_cuda.h>
+
+#include "binomialOptions_common.h"
+#include "realtype.h"
+
+// Preprocessed input option data
+typedef struct
+{
+    real S;
+    real X;
+    real vDt;
+    real puByDf;
+    real pdByDf;
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/binomialOptions/binomialOptions_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/binomialOptions/binomialOptions_kernel.cu:81-100
+```cuda
+__global__ void binomialOptionsKernel()
+{
+    // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    cg::thread_block cta = cg::this_thread_block();
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    __shared__ real  call_exchange[THREADBLOCK_SIZE + 1];
+
+    const int  tid    = threadIdx.x;
+    const real S      = d_OptionData[blockIdx.x].S;
+    const real X      = d_OptionData[blockIdx.x].X;
+    const real vDt    = d_OptionData[blockIdx.x].vDt;
+    const real puByDf = d_OptionData[blockIdx.x].puByDf;
+    const real pdByDf = d_OptionData[blockIdx.x].pdByDf;
+
+    real call[ELEMS_PER_THREAD + 1];
+#pragma unroll
+    for (int i = 0; i < ELEMS_PER_THREAD; ++i)
+        call[i] = expiryCallValue(S, X, vDt, tid * ELEMS_PER_THREAD + i);
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/binomialOptions/binomialOptions_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/binomialOptions/binomialOptions_kernel.cu:155-165
+```cuda
+        h_OptionData[i].vDt    = (real)vDt;
+        h_OptionData[i].puByDf = (real)puByDf;
+        h_OptionData[i].pdByDf = (real)pdByDf;
+    }
+
+    checkCudaErrors(cudaMemcpyToSymbol(d_OptionData, h_OptionData, optN * sizeof(__TOptionData)));
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    binomialOptionsKernel<<<optN, THREADBLOCK_SIZE>>>();
+    getLastCudaError("binomialOptionsKernel() execution failed.\n");
+    checkCudaErrors(cudaMemcpyFromSymbol(callValue, d_CallValue, optN * sizeof(real)));
+}
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/binomialOptions/binomialOptions_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `realtype.h`
+
+Source: cpp/5_Domain_Specific/binomialOptions/realtype.h:29-40
+```cpp
+#ifndef REALTYPE_H
+#define REALTYPE_H
+
+// #define DOUBLE_PRECISION
+
+#ifndef DOUBLE_PRECISION
+typedef float real;
+#else
+typedef double real;
+#endif
+
+#endif
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/binomialOptions/realtype.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

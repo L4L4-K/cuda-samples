@@ -82,6 +82,111 @@ English anchor: read `deviceQueryDrv` as a focused example of the CUDA concepts 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/1_Utilities/deviceQueryDrv/CMakeLists.txt:1-44
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(deviceQueryDrv LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for deviceQueryDrv
+add_executable(deviceQueryDrv deviceQueryDrv.cpp)
+
+target_compile_options(deviceQueryDrv PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(deviceQueryDrv PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(deviceQueryDrv PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+target_include_directories(deviceQueryDrv PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+target_link_libraries(deviceQueryDrv PUBLIC
+    CUDA::cuda_driver
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/1_Utilities/deviceQueryDrv/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `deviceQueryDrv.cpp`
+
+Source: cpp/1_Utilities/deviceQueryDrv/deviceQueryDrv.cpp:34-57
+```cpp
+#include <cuda.h>
+#include <helper_cuda_drvapi.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
+    CUdevice dev;
+    int      major = 0, minor = 0;
+    int      deviceCount = 0;
+    char     deviceName[256];
+
+    printf("%s Starting...\n\n", argv[0]);
+
+    // note your project will need to link with cuda.lib files on windows
+    printf("CUDA Device Query (Driver API) statically linked version \n");
+
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
+    checkCudaErrors(cuInit(0));
+```
+
+> JP: この抜粋は `cpp/1_Utilities/deviceQueryDrv/deviceQueryDrv.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/1_Utilities/deviceQueryDrv/deviceQueryDrv.cpp:323-332
+```cpp
+                }
+            }
+        }
+    }
+
+    // JP: validation: device query API が最後まで成功したことを PASS として表示します。GPU 計算結果の CPU/reference 比較ではありません。
+    printf("Result = PASS\n");
+
+    exit(EXIT_SUCCESS);
+}
+```
+
+> JP: この抜粋は `cpp/1_Utilities/deviceQueryDrv/deviceQueryDrv.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
@@ -97,9 +202,9 @@ English anchor: read `deviceQueryDrv` as a focused example of the CUDA concepts 
 | `cuDriverGetVersion` | Driver API の handle 境界です。context/module/function と error code を追います。 |
 | `cuDeviceTotalMem` | Driver API の handle 境界です。context/module/function と error code を追います。 |
 | `cuDeviceCanAccessPeer` | Driver API の handle 境界です。context/module/function と error code を追います。 |
+| `CUdevice` | Driver API の handle 境界です。context/module/function と error code を追います。 |
 | `CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR` | Driver API の handle 境界です。context/module/function と error code を追います。 |
 | `CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR` | Driver API の handle 境界です。context/module/function と error code を追います。 |
-| `CU_DEVICE_ATTRIBUTE_TCC_DRIVER` | Driver API の handle 境界です。context/module/function と error code を追います。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。

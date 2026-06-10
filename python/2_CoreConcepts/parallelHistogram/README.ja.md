@@ -74,13 +74,113 @@ English anchor: read `parallelHistogram` as a focused example of the CUDA concep
 
 ## Concrete Reading Path
 
-- `parallelHistogram.py`: focus on `launch`, `atomics`, `Program`, `blockDim`, `CUDA`.
+- `parallelHistogram.py`: focus on `launch`, `CUDA`, `atomics`, `Program`, `blockDim`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `parallelHistogram.py`
+
+Source: python/2_CoreConcepts/parallelHistogram/parallelHistogram.py:2-20
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/parallelHistogram/parallelHistogram.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/parallelHistogram/parallelHistogram.py:65-126
+```python
+# CUDA C source code for both histogram kernels
+HISTOGRAM_KERNELS = r"""
+// Global Atomics - simple but high contention on popular bins
+extern "C" __global__
+void histogram_global(const unsigned char* data, unsigned int* histogram, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
+
+    for (int i = idx; i < n; i += stride) {
+        atomicAdd(&histogram[data[i]], 1);
+    }
+}
+
+// Privatized - uses shared memory to reduce global atomic contention
+extern "C" __global__
+void histogram_privatized(const unsigned char* data, unsigned int* histogram, int n) {
+    __shared__ unsigned int local_hist[256];
+
+    int tid = threadIdx.x;
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
+
+    // Initialize shared memory
+    for (int i = tid; i < 256; i += blockDim.x)
+        local_hist[i] = 0;
+    __syncthreads();
+
+    // Accumulate into shared memory (fast)
+    for (int i = idx; i < n; i += stride)
+        atomicAdd(&local_hist[data[i]], 1);
+    __syncthreads();
+
+    // Merge to global (fewer atomics)
+    for (int i = tid; i < 256; i += blockDim.x)
+        if (local_hist[i] > 0)
+            atomicAdd(&histogram[i], local_hist[i]);
+}
+"""
+
+
+def main():
+    print("=" * 60)
+    print("Parallel Histogram with Atomics (cuda.core)")
+    print("=" * 60)
+
+    # Initialize device using cuda.core
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
+    device = Device(0)
+    device.set_current()
+    print(f"\nDevice: {device.name}")
+    print(f"Compute Capability: {device.compute_capability}")
+
+    # Create stream using cuda.core
+    stream = device.create_stream()
+
+    # Make CuPy use the same stream for correct ordering (avoids null-stream sync)
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
+    cp.cuda.Stream.from_external(stream).use()
+
+    try:
+        _run_histogram(device, stream)
+    finally:
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/parallelHistogram/parallelHistogram.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

@@ -73,13 +73,123 @@ English anchor: read `greenContext` as a focused example of the CUDA concepts us
 
 ## Concrete Reading Path
 
-- `greenContext.py`: focus on `launch`, `Device`, `CUDA`, `LaunchConfig`, `Program`.
+- `greenContext.py`: focus on `launch`, `CUDA`, `Device`, `LaunchConfig`, `Program`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `greenContext.py`
+
+Source: python/2_CoreConcepts/greenContext/greenContext.py:2-20
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/greenContext/greenContext.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/greenContext/greenContext.py:47-66
+```python
+Note: Parallel execution on the GPU is never guaranteed. Green
+contexts remove one common source of contention (shared SMs) but
+they are not a hard scheduling promise.
+"""
+
+import argparse
+import sys
+import time
+from dataclasses import dataclass
+from typing import List, Optional, Tuple
+
+import numpy as np
+# JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
+from cuda.core import (
+    ContextOptions,
+    Device,
+    EventOptions,
+    LaunchConfig,
+    Program,
+    ProgramOptions,
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/greenContext/greenContext.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/greenContext/greenContext.py:79-98
+```python
+    while ((unsigned long long)(clock64() - start) < cycles) { }
+}
+
+extern "C" __global__ void critical_kernel(float *out, int n, int iters)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) {
+        // Two dependent accumulators so the compiler cannot collapse the
+        // loop into a closed-form expression. `iters` is a runtime argument
+        // for the same reason.
+        float v = (float)i * 1e-6f + 1.0f;
+        float u = (float)i * 1e-7f + 0.5f;
+        for (int k = 0; k < iters; ++k) {
+            v = v * 1.000001f + u;
+            u = u * 0.999999f + v * 1e-7f;
+        }
+        out[i] = v + u;
+    }
+}
+"""
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/greenContext/greenContext.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/greenContext/greenContext.py:212-231
+```python
+    return f"--split {long_count},{critical_count}"
+
+
+def parse_split(arg: Optional[str], device: Device) -> Tuple[int, int]:
+    """
+    Parse the --split "A,B" CLI argument and validate it against the device.
+
+    Returns (long_count, critical_count).
+    """
+    sm = device.resources.sm
+    total = sm.sm_count
+    min_part = sm.min_partition_size
+
+    if arg is None:
+        # Auto: reserve a small aligned slice for the critical kernel and
+        # hand the rest (also aligned) to the long-running kernel. We
+        # can't trust `min_partition_size` alone: on some GPUs (e.g.
+        # 188-SM Blackwell) the driver requires stricter alignment than
+        # it reports. Escalate the granularity until the driver accepts
+        # a pair.
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/greenContext/greenContext.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

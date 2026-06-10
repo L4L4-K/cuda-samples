@@ -75,13 +75,182 @@ English anchor: read `conjugateGradientCudaGraphs` as a focused example of the C
 
 ## Concrete Reading Path
 
-- `conjugateGradientCudaGraphs.cu`: focus on `cublasHandle`, `cudaMalloc`, `cusparseHandle`, `cudaMemcpyAsync`, `CUDA_R_32F`.
+- `conjugateGradientCudaGraphs.cu`: focus on `cublasHandle`, `CUDA`, `cudaMalloc`, `launch`, `cusparseHandle`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/conjugateGradientCudaGraphs/CMakeLists.txt:1-48
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(conjugateGradientCudaGraphs LANGUAGES CUDA CXX)
+
+# Disable response file for libraries on QNX as qcc does not support lib paths with double quotes
+if(CMAKE_SYSTEM_NAME STREQUAL "QNX")
+    set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_LIBRARIES OFF)
+endif()
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for conjugateGradientCudaGraphs
+add_executable(conjugateGradientCudaGraphs conjugateGradientCudaGraphs.cu)
+
+target_compile_options(conjugateGradientCudaGraphs PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(conjugateGradientCudaGraphs PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(conjugateGradientCudaGraphs PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_link_libraries(conjugateGradientCudaGraphs PRIVATE
+    # JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    CUDA::cublas
+    CUDA::cusparse
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/conjugateGradientCudaGraphs/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `conjugateGradientCudaGraphs.cu`
+
+Source: cpp/4_CUDA_Libraries/conjugateGradientCudaGraphs/conjugateGradientCudaGraphs.cu:36-57
+```cuda
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* Using updated (v2) interfaces to cublas */
+#include <cublas_v2.h>
+#include <cuda_runtime.h>
+#include <cusparse.h>
+
+// Utilities and system includes
+#include <helper_cuda.h>      // helper function CUDA error checking and initialization
+#include <helper_functions.h> // helper for shared functions common to CUDA Samples
+
+const char *sSDKname = "conjugateGradientCudaGraphs";
+
+#ifndef WITH_GRAPH
+#define WITH_GRAPH 1
+#endif
+
+/* genTridiag: generate a random tridiagonal symmetric matrix */
+void genTridiag(int *I, int *J, float *val, int N, int nz)
+{
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/conjugateGradientCudaGraphs/conjugateGradientCudaGraphs.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/conjugateGradientCudaGraphs/conjugateGradientCudaGraphs.cu:87-106
+```cuda
+    I[N] = nz;
+}
+
+__global__ void initVectors(float *rhs, float *x, int N)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    size_t gid = blockIdx.x * blockDim.x + threadIdx.x;
+
+    for (size_t i = gid; i < N; i += gridDim.x * blockDim.x) {
+        rhs[i] = 1.0;
+        x[i]   = 0.0;
+    }
+}
+
+__global__ void r1_div_x(float *r1, float *r0, float *b)
+{
+    int gid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (gid == 0) {
+        b[0] = r1[0] / r0[0];
+    }
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/conjugateGradientCudaGraphs/conjugateGradientCudaGraphs.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/conjugateGradientCudaGraphs/conjugateGradientCudaGraphs.cu:151-170
+```cuda
+           deviceProp.minor);
+
+    /* Generate a random tridiagonal symmetric matrix in CSR format */
+    N  = 1048576;
+    nz = (N - 2) * 3 + 4;
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
+    checkCudaErrors(cudaMallocHost(&I, sizeof(int) * (N + 1)));
+    checkCudaErrors(cudaMallocHost(&J, sizeof(int) * nz));
+    checkCudaErrors(cudaMallocHost(&val, sizeof(float) * nz));
+    genTridiag(I, J, val, N, nz);
+
+    checkCudaErrors(cudaMallocHost(&x, sizeof(float) * N));
+    rhs = (float *)malloc(sizeof(float) * N);
+
+    for (int i = 0; i < N; i++) {
+        rhs[i] = 1.0;
+        x[i]   = 0.0;
+    }
+
+    /* Get handle to the CUBLAS context */
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/conjugateGradientCudaGraphs/conjugateGradientCudaGraphs.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/conjugateGradientCudaGraphs/conjugateGradientCudaGraphs.cu:247-266
+```cuda
+    checkCudaErrors(cusparseSetMatIndexBase(descr, CUSPARSE_INDEX_BASE_ZERO));
+
+    int numBlocks = 0, blockSize = 0;
+    checkCudaErrors(cudaOccupancyMaxPotentialBlockSize(&numBlocks, &blockSize, initVectors));
+
+    // JP: `cudaMemcpyAsync`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpyAsync(d_col, J, nz * sizeof(int), cudaMemcpyHostToDevice, stream1));
+    checkCudaErrors(cudaMemcpyAsync(d_row, I, (N + 1) * sizeof(int), cudaMemcpyHostToDevice, stream1));
+    checkCudaErrors(cudaMemcpyAsync(d_val, val, nz * sizeof(float), cudaMemcpyHostToDevice, stream1));
+
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    initVectors<<<numBlocks, blockSize, 0, stream1>>>(d_r, d_x, N);
+
+    alpha   = 1.0;
+    alpham1 = -1.0;
+    beta    = 0.0;
+
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+    checkCudaErrors(cusparseSetStream(cusparseHandle, stream1));
+    checkCudaErrors(cusparseSpMV(cusparseHandle,
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/conjugateGradientCudaGraphs/conjugateGradientCudaGraphs.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 
@@ -90,6 +259,7 @@ English anchor: read `conjugateGradientCudaGraphs` as a focused example of the C
 | `cublasHandle` | Driver API の handle 境界です。context/module/function と error code を追います。 |
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
 | `cudaMemcpyAsync` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cusparseHandle` | Driver API の handle 境界です。context/module/function と error code を追います。 |
 | `CUDA_R_32F` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cublasSaxpy` | Driver API の handle 境界です。context/module/function と error code を追います。 |
@@ -100,7 +270,6 @@ English anchor: read `conjugateGradientCudaGraphs` as a focused example of the C
 | `cudaMallocHost` | pinned host memory を作り、async copy や DMA の前提を作る API です。 |
 | `cublasSetPointerMode` | Driver API の handle 境界です。context/module/function と error code を追います。 |
 | `cublasSdot` | Driver API の handle 境界です。context/module/function と error code を追います。 |
-| `cudaFreeHost` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。

@@ -74,13 +74,196 @@ English anchor: read `streamOrderedAllocationIPC` as a focused example of the CU
 
 ## Concrete Reading Path
 
-- `streamOrderedAllocationIPC.cu`: focus on `Device`, `cudaSetDevice`, `cudaStreamSynchronize`, `cudaMemPoolPtrExportData`, `CUDA`.
+- `streamOrderedAllocationIPC.cu`: focus on `Device`, `cudaSetDevice`, `cudaStreamSynchronize`, `CUDA`, `cudaMemPoolPtrExportData`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/2_Concepts_and_Techniques/streamOrderedAllocationIPC/CMakeLists.txt:1-49
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(streamOrderedAllocationIPC LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+# Source file
+# Add target for streamOrderedAllocationIPC
+    if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
+        message(STATUS "Will not build sample streamOrderedAllocationIPC - not supported on aarch64")
+    else()
+        add_executable(streamOrderedAllocationIPC streamOrderedAllocationIPC.cu ../../../Common/helper_multiprocess.cpp)
+
+        target_compile_options(streamOrderedAllocationIPC PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+        target_compile_features(streamOrderedAllocationIPC PRIVATE cxx_std_17 cuda_std_17)
+
+        set_target_properties(streamOrderedAllocationIPC PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+        target_link_libraries(streamOrderedAllocationIPC PUBLIC
+            CUDA::cuda_driver
+        )
+    endif()
+else()
+    message(STATUS "Will not build sample streamOrderedAllocationIPC - requires Linux OS")
+endif()
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/streamOrderedAllocationIPC/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `streamOrderedAllocationIPC.cu`
+
+Source: cpp/2_Concepts_and_Techniques/streamOrderedAllocationIPC/streamOrderedAllocationIPC.cu:34-52
+```cuda
+#include <cuda.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <vector>
+#define CUDA_DRIVER_API 1
+#include "helper_cuda.h"
+#include "helper_cuda_drvapi.h"
+#include "helper_multiprocess.h"
+
+static const char shmName[] = "streamOrderedAllocationIPCshm";
+static const char ipcName[] = "streamOrderedAllocationIPC_pipe";
+// For direct NVLINK and PCI-E peers, at max 8 simultaneous peers are allowed
+// For NVSWITCH connected peers like DGX-2, simultaneous peers are not limited
+// in the same way.
+#define MAX_DEVICES (32)
+#define DATA_SIZE   (64ULL << 20ULL) // 64MB
+
+#if defined(__linux__)
+#define cpu_atomic_add32(a, x) __sync_add_and_fetch(a, x)
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/streamOrderedAllocationIPC/streamOrderedAllocationIPC.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/streamOrderedAllocationIPC/streamOrderedAllocationIPC.cu:66-85
+```cuda
+    cudaMemPoolPtrExportData    exportPtrData[MAX_DEVICES];
+} shmStruct;
+
+__global__ void simpleKernel(char *ptr, int sz, char val)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    for (; idx < sz; idx += (gridDim.x * blockDim.x)) {
+        ptr[idx] = val;
+    }
+}
+
+static void barrierWait(volatile int *barrier, volatile int *sense, unsigned int n)
+{
+    int count;
+
+    // Check-in
+    count = cpu_atomic_add32(barrier, 1);
+    if (count == n) // Last one in
+        *sense = 1;
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/streamOrderedAllocationIPC/streamOrderedAllocationIPC.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/streamOrderedAllocationIPC/streamOrderedAllocationIPC.cu:133-154
+```cuda
+
+    // Receive all allocation handles shared by Parent.
+    std::vector<ShareableHandle> shHandle(shm->nprocesses);
+    checkIpcErrors(ipcRecvShareableHandles(ipcChildHandle, shHandle));
+
+    checkCudaErrors(cudaSetDevice(shm->devices[id]));
+    checkCudaErrors(cudaGetDeviceProperties(&prop, shm->devices[id]));
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    checkCudaErrors(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+    checkCudaErrors(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks, simpleKernel, threads, 0));
+    blocks *= prop.multiProcessorCount;
+
+    std::vector<cudaMemPool_t> pools(shm->nprocesses);
+
+    cudaMemAllocationHandleType handleType = shm->handleType;
+
+    // Import mem pools from all the devices created in the master
+    // process using shareable handles received via socket
+    // and import the pointer to the allocated buffer using
+    // exportData filled in shared memory by the master process.
+    for (i = 0; i < procCount; i++) {
+        checkCudaErrors(cudaMemPoolImportFromShareableHandle(&pools[i], (void *)shHandle[i], handleType, 0));
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/streamOrderedAllocationIPC/streamOrderedAllocationIPC.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/streamOrderedAllocationIPC/streamOrderedAllocationIPC.cu:206-239
+```cuda
+
+        // Push a simple kernel on it
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+        simpleKernel<<<blocks, threads, 0, stream>>>((char *)ptrs[bufferId], DATA_SIZE, id);
+        checkCudaErrors(cudaGetLastError());
+        // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+        checkCudaErrors(cudaStreamSynchronize(stream));
+
+        // Wait for all my sibling processes to push this stage of their work
+        // before proceeding to the next. This prevents siblings from racing
+        // ahead and clobbering the recorded event or waiting on the wrong
+        // recorded event.
+        barrierWait(&shm->barrier, &shm->sense, (unsigned int)procCount);
+        if (id == 0) {
+            printf("Step %lld done\n", (unsigned long long)i);
+        }
+    }
+
+    // Now wait for my buffer to be ready so I can copy it locally and verify it
+    // JP: `cudaMemcpyAsync`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpyAsync(&verification_buffer[0], ptrs[id], DATA_SIZE, cudaMemcpyDeviceToHost, stream));
+
+    // And wait for all the queued up work to complete
+    checkCudaErrors(cudaStreamSynchronize(stream));
+
+    printf("Process %d: verifying...\n", id);
+
+    // The contents should have the id of the sibling just after me
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+    char compareId = (char)((id + 1) % procCount);
+    for (unsigned long long j = 0; j < DATA_SIZE; j++) {
+        if (verification_buffer[j] != compareId) {
+            printf("Process %d: Verification mismatch at %lld: %d != %d\n",
+                   id,
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/streamOrderedAllocationIPC/streamOrderedAllocationIPC.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

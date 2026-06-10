@@ -74,13 +74,216 @@ English anchor: read `conjugateGradientPrecond` as a focused example of the CUDA
 
 ## Concrete Reading Path
 
-- `main.cpp`: focus on `cublasHandle`, `CUDA_R_32F`, `cudaMalloc`, `cudaFree`, `cusparseHandle`.
+- `main.cpp`: focus on `cublasHandle`, `CUDA`, `CUDA_R_32F`, `cudaMalloc`, `cudaFree`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/conjugateGradientPrecond/CMakeLists.txt:1-48
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(conjugateGradientPrecond LANGUAGES CXX)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for conjugateGradientPrecond
+add_executable(conjugateGradientPrecond main.cpp)
+
+target_compile_options(conjugateGradientPrecond PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(conjugateGradientPrecond PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(conjugateGradientPrecond PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_include_directories(conjugateGradientPrecond PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+target_link_libraries(conjugateGradientPrecond PRIVATE
+    CUDA::cudart
+    # JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    CUDA::cublas
+    CUDA::cusparse
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/conjugateGradientPrecond/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `main.cpp`
+
+Source: cpp/4_CUDA_Libraries/conjugateGradientPrecond/main.cpp:48-87
+```cpp
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// CUDA Runtime
+#include <cuda_runtime.h>
+
+// Using updated (v2) interfaces for CUBLAS and CUSPARSE
+#include <cublas_v2.h>
+#include <cusparse.h>
+
+// Utilities and system includes
+#include <helper_cuda.h>      // CUDA error checking
+#include <helper_functions.h> // shared functions common to CUDA Samples
+
+const char *sSDKname = "conjugateGradientPrecond";
+
+/*
+ * Generate a matrix representing a second order regular Laplacian operator
+ * on a 2D domain in Compressed Sparse Row format.
+ */
+void genLaplace(int *row_ptr, int *col_ind, float *val, int M, int N, int nz, float *rhs)
+{
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+    assert(M == N);
+    int n = (int)sqrt((double)N);
+    assert(n * n == N);
+    printf("laplace dimension = %d\n", n);
+    int idx = 0;
+
+    // loop over degrees of freedom
+    for (int i = 0; i < N; i++) {
+        int ix = i % n;
+        int iy = i / n;
+
+        row_ptr[i] = idx;
+
+        // up
+        if (iy > 0) {
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/conjugateGradientPrecond/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/conjugateGradientPrecond/main.cpp:186-221
+```cpp
+           deviceProp.minor);
+
+    /* Generate a Laplace matrix in CSR (Compressed Sparse Row) format */
+    M = N = 16384;
+    nz    = 5 * N - 4 * (int)sqrt((double)N);
+    I     = (int *)malloc(sizeof(int) * (N + 1)); // csr row pointers for matrix A
+    J     = (int *)malloc(sizeof(int) * nz);      // csr column indices for matrix A
+    val   = (float *)malloc(sizeof(float) * nz);  // csr values for matrix A
+    x     = (float *)malloc(sizeof(float) * N);
+    rhs   = (float *)malloc(sizeof(float) * N);
+
+    for (int i = 0; i < N; i++) {
+        rhs[i] = 0.0; // Initialize RHS
+        x[i]   = 0.0; // Initial solution approximation
+    }
+
+    genLaplace(I, J, val, M, N, nz, rhs);
+
+    /* Create CUBLAS context */
+    // JP: `cublasHandle_t`, `cublasHandle`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    cublasHandle_t cublasHandle = NULL;
+    checkCudaErrors(cublasCreate(&cublasHandle));
+
+    /* Create CUSPARSE context */
+    cusparseHandle_t cusparseHandle = NULL;
+    checkCudaErrors(cusparseCreate(&cusparseHandle));
+
+    /* Description of the A matrix */
+    cusparseMatDescr_t descr = 0;
+    checkCudaErrors(cusparseCreateMatDescr(&descr));
+    checkCudaErrors(cusparseSetMatType(descr, CUSPARSE_MATRIX_TYPE_GENERAL));
+    checkCudaErrors(cusparseSetMatIndexBase(descr, CUSPARSE_INDEX_BASE_ZERO));
+
+    /* Allocate required memory */
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc((void **)&d_col, nz * sizeof(int)));
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/conjugateGradientPrecond/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/conjugateGradientPrecond/main.cpp:241-260
+```cpp
+    checkCudaErrors(cusparseCreateDnVec(&vecZM1, N, d_zm1, CUDA_R_32F));
+    cusparseDnVecDescr_t vecomega = NULL;
+    checkCudaErrors(cusparseCreateDnVec(&vecomega, N, d_omega, CUDA_R_32F));
+
+    /* Initialize problem data */
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpy(d_col, J, nz * sizeof(int), cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(d_row, I, (N + 1) * sizeof(int), cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(d_val, val, nz * sizeof(float), cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(d_val, val, nz * sizeof(float), cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(d_x, x, N * sizeof(float), cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(d_r, rhs, N * sizeof(float), cudaMemcpyHostToDevice));
+
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+    cusparseSpMatDescr_t matA = NULL;
+    cusparseSpMatDescr_t matM_lower, matM_upper;
+    cusparseFillMode_t   fill_lower    = CUSPARSE_FILL_MODE_LOWER;
+    cusparseDiagType_t   diag_unit     = CUSPARSE_DIAG_TYPE_UNIT;
+    cusparseFillMode_t   fill_upper    = CUSPARSE_FILL_MODE_UPPER;
+    cusparseDiagType_t   diag_non_unit = CUSPARSE_DIAG_TYPE_NON_UNIT;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/conjugateGradientPrecond/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/conjugateGradientPrecond/main.cpp:596-615
+```cpp
+
+    printf("  Convergence Test: %s \n", (k <= max_iter) ? "OK" : "FAIL");
+    nErrors += (k > max_iter) ? 1 : 0;
+    qaerr2 = err;
+
+    /* Destroy descriptors */
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+    checkCudaErrors(cusparseDestroyCsrilu02Info(infoILU));
+    checkCudaErrors(cusparseDestroyMatDescr(matLU));
+    checkCudaErrors(cusparseSpSV_destroyDescr(spsvDescrL));
+    checkCudaErrors(cusparseSpSV_destroyDescr(spsvDescrU));
+    checkCudaErrors(cusparseDestroySpMat(matM_lower));
+    checkCudaErrors(cusparseDestroySpMat(matM_upper));
+    checkCudaErrors(cusparseDestroySpMat(matA));
+    checkCudaErrors(cusparseDestroyDnVec(vecp));
+    checkCudaErrors(cusparseDestroyDnVec(vecomega));
+    checkCudaErrors(cusparseDestroyDnVec(vecR));
+    checkCudaErrors(cusparseDestroyDnVec(vecX));
+    checkCudaErrors(cusparseDestroyDnVec(vecY));
+    checkCudaErrors(cusparseDestroyDnVec(vecZM1));
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/conjugateGradientPrecond/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

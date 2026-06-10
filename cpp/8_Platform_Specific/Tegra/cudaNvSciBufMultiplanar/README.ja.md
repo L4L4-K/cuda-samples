@@ -88,6 +88,346 @@ English anchor: read `cudaNvSciBufMultiplanar` as a focused example of the CUDA 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/8_Platform_Specific/Tegra/cudaNvSciBufMultiplanar/CMakeLists.txt:1-67
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../../cmake/Modules")
+
+project(cudaNvSciBufMultiplanar LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 87 110)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../../Common)
+
+find_package(NVSCI)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    if(NVSCI_FOUND)
+        # Source file
+        # Add target for cudaNvSciBufMultiplanar
+        add_executable(cudaNvSciBufMultiplanar imageKernels.cu cudaNvSciBufMultiplanar.cpp main.cpp)
+
+        target_compile_options(cudaNvSciBufMultiplanar PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+        target_compile_features(cudaNvSciBufMultiplanar PRIVATE cxx_std_17 cuda_std_17)
+
+        set_target_properties(cudaNvSciBufMultiplanar PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+        target_include_directories(cudaNvSciBufMultiplanar PUBLIC
+            ${CUDAToolkit_INCLUDE_DIRS}
+            ${NVSCI_INCLUDE_DIRS}
+        )
+
+        target_link_libraries(cudaNvSciBufMultiplanar
+            CUDA::cuda_driver
+            ${NVSCI_LIBRARIES}
+        )
+        # Copy yuv_planar_img1.yuv to the output directory
+        add_custom_command(TARGET cudaNvSciBufMultiplanar POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_CURRENT_SOURCE_DIR}/yuv_planar_img1.yuv ${CMAKE_CURRENT_BINARY_DIR}/yuv_planar_img1.yuv
+        )
+        # Specify additional clean files
+        set_target_properties(cudaNvSciBufMultiplanar PROPERTIES
+            ADDITIONAL_CLEAN_FILES "image_out.yuv"
+        )
+    else()
+        message(STATUS "NvSCI not found - will not build sample 'cudaNvSciBufMultiplanar'")
+    endif()
+else()
+    message(STATUS "Will not build sample cudaNvSciBufMultiplanar - requires Linux OS")
+endif()
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/cudaNvSciBufMultiplanar/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `cudaNvSciBufMultiplanar.cpp`
+
+Source: cpp/8_Platform_Specific/Tegra/cudaNvSciBufMultiplanar/cudaNvSciBufMultiplanar.cpp:29-47
+```cpp
+#include "cudaNvSciBufMultiplanar.h"
+
+NvSciBufModule module;
+NvSciBufObj    buffObj;
+CUuuid         uuid;
+
+void flipBits(uint8_t *pBuff, uint32_t size)
+{
+    for (uint32_t i = 0; i < size; i++) {
+        pBuff[i] = (~pBuff[i]);
+    }
+}
+
+// Compare input and generated image files
+// JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+void compareFiles(std::string &path1, std::string &path2)
+{
+    bool  result = true;
+    FILE *fp1, *fp2;
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/cudaNvSciBufMultiplanar/cudaNvSciBufMultiplanar.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/cudaNvSciBufMultiplanar/cudaNvSciBufMultiplanar.cpp:92-111
+```cpp
+}
+
+void Caller::deinit()
+{
+    NvSciBufAttrListFree(attrList);
+    // JP: `cudaDestroyExternalMemory`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaDestroyExternalMemory(extMem));
+}
+
+// Set NvSciBufImage attribute values in the attribute list
+void Caller::setAttrListImageMultiPlanes(int imageWidth, int imageHeight)
+{
+    NvSciBufType                   bufType       = NvSciBufType_Image;
+    NvSciBufAttrValImageLayoutType layout        = NvSciBufImage_BlockLinearType;
+    bool                           cpuAccessFlag = false;
+    NvSciBufAttrValAccessPerm      perm          = NvSciBufAccessPerm_ReadWrite;
+    NvSciRmGpuId                   gpuid;
+    bool                           vpr        = false;
+    int32_t                        planeCount = PLANAR_NUM_PLANES;
+    int                            drvVersion;
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/cudaNvSciBufMultiplanar/cudaNvSciBufMultiplanar.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/cudaNvSciBufMultiplanar/cudaNvSciBufMultiplanar.cpp:156-175
+```cpp
+void cudaNvSciBufMultiplanar::initCuda(int devId)
+{
+    int          major = 0, minor = 0, drvVersion;
+    NvSciRmGpuId gpuid;
+
+    checkCudaErrors(cudaSetDevice(mCudaDeviceId));
+    checkCudaErrors(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, mCudaDeviceId));
+    checkCudaErrors(cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, mCudaDeviceId));
+    printf("[cudaNvSciBufMultiplanar] GPU Device %d: \"%s\" with compute capability "
+           "%d.%d\n\n",
+           mCudaDeviceId,
+           _ConvertSMVer2ArchName(major, minor),
+           major,
+           minor);
+
+    // JP: `cuDriverGetVersion`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
+    checkCudaDrvErrors(cuDriverGetVersion(&drvVersion));
+
+    if (drvVersion <= 11030) {
+        checkCudaDrvErrors(cuDeviceGetUuid(&uuid, devId));
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/cudaNvSciBufMultiplanar/cudaNvSciBufMultiplanar.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/cudaNvSciBufMultiplanar/cudaNvSciBufMultiplanar.cpp:371-390
+```cpp
+    copyWidthInBytes[2] = width / PLANAR_CHROMA_WIDTH_ORDER;
+    uvOffset[1]         = width * height;
+    uvOffset[2]         = uvOffset[1] + (width / PLANAR_CHROMA_WIDTH_ORDER) * (height / PLANAR_CHROMA_HEIGHT_ORDER);
+    for (int i = 0; i < numPlanes; i++) {
+        checkCudaDrvErrors(cuCtxSynchronize());
+        checkCudaErrors(cudaMemcpy2DToArray(cudaArr[i],
+                                            0,
+                                            0,
+                                            (void *)(pBuff + uvOffset[i]),
+                                            copyWidthInBytes[i],
+                                            copyWidthInBytes[i],
+                                            copyHeight[i],
+                                            // JP: `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+                                            cudaMemcpyHostToDevice));
+    }
+
+    if (fp) {
+        fclose(fp);
+        fp = NULL;
+    }
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/cudaNvSciBufMultiplanar/cudaNvSciBufMultiplanar.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `cudaNvSciBufMultiplanar.h`
+
+Source: cpp/8_Platform_Specific/Tegra/cudaNvSciBufMultiplanar/cudaNvSciBufMultiplanar.h:29-47
+```cpp
+#ifndef CUDA_NVSCIBUF_MULTIPLANAR_H
+#define CUDA_NVSCIBUF_MULTIPLANAR_H
+
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <helper_cuda.h>
+#include <nvscibuf.h>
+#include <vector>
+
+#define PLANAR_NUM_PLANES          3
+#define PLANAR_CHROMA_WIDTH_ORDER  2
+#define PLANAR_CHROMA_HEIGHT_ORDER 2
+
+#define ATTR_SIZE   20
+#define DEFAULT_GPU 0
+
+#define checkNvSciErrors(call)                                   \
+    do {                                                         \
+        NvSciError _status = call;                               \
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/cudaNvSciBufMultiplanar/cudaNvSciBufMultiplanar.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/8_Platform_Specific/Tegra/cudaNvSciBufMultiplanar/cudaNvSciBufMultiplanar.h:60-79
+```cpp
+#define checkCudaDrvErrors(call)                           \
+    do {                                                   \
+        CUresult err = call;                               \
+        if (CUDA_SUCCESS != err) {                         \
+            const char *errorStr = NULL;                   \
+            cuGetErrorString(err, &errorStr);              \
+            printf("checkCudaDrvErrors() Driver API error" \
+                   " = %04d \"%s\" from file <%s>, "       \
+                   "line %i.\n",                           \
+                   err,                                    \
+                   errorStr,                               \
+                   __FILE__,                               \
+                   __LINE__);                              \
+            exit(EXIT_FAILURE);                            \
+        }                                                  \
+    } while (0)
+
+extern void launchFlipSurfaceBitsKernel(cudaArray_t *levelArray,
+                                        int32_t     *multiPlanarWidth,
+                                        int32_t     *multiPlanarHeight,
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/cudaNvSciBufMultiplanar/cudaNvSciBufMultiplanar.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `imageKernels.cu`
+
+Source: cpp/8_Platform_Specific/Tegra/cudaNvSciBufMultiplanar/imageKernels.cu:29-68
+```cuda
+#include <cuda.h>
+#include <helper_cuda.h>
+
+static __global__ void flipSurfaceBits(cudaSurfaceObject_t surfObj, int width, int height)
+{
+    char         data;
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x < width && y < height) {
+        // Read from input surface
+        surf2Dread(&data, surfObj, x, y);
+        // Write to output surface
+        data = ~data;
+        surf2Dwrite(data, surfObj, x, y);
+    }
+}
+
+// Copy cudaArray to surface memory and launch the CUDA kernel
+void launchFlipSurfaceBitsKernel(cudaArray_t *levelArray,
+                                 int32_t     *multiPlanarWidth,
+                                 int32_t     *multiPlanarHeight,
+                                 int          numPlanes)
+{
+
+    cudaSurfaceObject_t surfObject[numPlanes] = {0};
+    cudaResourceDesc    resDesc;
+
+    for (int i = 0; i < numPlanes; i++) {
+        memset(&resDesc, 0, sizeof(resDesc));
+        resDesc.resType         = cudaResourceTypeArray;
+        resDesc.res.array.array = levelArray[i];
+        checkCudaErrors(cudaCreateSurfaceObject(&surfObject[i], &resDesc));
+        dim3 threadsperBlock(16, 16);
+        dim3 numBlocks((multiPlanarWidth[i] + threadsperBlock.x - 1) / threadsperBlock.x,
+                       (multiPlanarHeight[i] + threadsperBlock.y - 1) / threadsperBlock.y);
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+        flipSurfaceBits<<<numBlocks, threadsperBlock>>>(surfObject[i], multiPlanarWidth[i], multiPlanarHeight[i]);
+    }
+}
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/cudaNvSciBufMultiplanar/imageKernels.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `main.cpp`
+
+Source: cpp/8_Platform_Specific/Tegra/cudaNvSciBufMultiplanar/main.cpp:29-74
+```cpp
+#include <cuda.h>
+#include <helper_image.h>
+#include <vector>
+
+#include "cudaNvSciBufMultiplanar.h"
+
+#define MAX_FILE_SIZE 100
+
+int main(int argc, const char **argv)
+{
+    int              numOfGPUs = 0;
+    std::vector<int> deviceIds;
+    (cudaGetDeviceCount(&numOfGPUs));
+
+    printf("%d GPUs found\n", numOfGPUs);
+    if (!numOfGPUs) {
+        exit(EXIT_WAIVED);
+    }
+    else {
+        for (int devID = 0; devID < numOfGPUs; devID++) {
+            int major = 0, minor = 0;
+            (cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, devID));
+            (cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, devID));
+            if (major >= 6) {
+                deviceIds.push_back(devID);
+            }
+        }
+        if (deviceIds.size() == 0) {
+            printf("cudaNvSciBufMultiplanar requires one or more GPUs of Pascal(SM 6.0) or higher "
+                   "archs\nWaiving..\n");
+            exit(EXIT_WAIVED);
+        }
+    }
+
+    std::string image_filename     = sdkFindFilePath("yuv_planar_img1.yuv", argv[0]);
+    std::string image_filename_out = "image_out.yuv";
+    uint32_t    imageWidth         = 720;
+    uint32_t    imageHeight        = 480;
+
+    printf("input image %s , width = %d, height = %d\n", image_filename.c_str(), imageWidth, imageHeight);
+
+    cudaNvSciBufMultiplanar cudaNvSciBufMultiplanarApp(imageWidth, imageHeight, deviceIds);
+    cudaNvSciBufMultiplanarApp.runCudaNvSciBufPlanar(image_filename, image_filename_out);
+
+    return EXIT_SUCCESS;
+}
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/cudaNvSciBufMultiplanar/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

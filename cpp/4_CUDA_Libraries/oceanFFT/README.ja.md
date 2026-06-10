@@ -92,6 +92,295 @@ English anchor: read `oceanFFT` as a focused example of the CUDA concepts used i
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/oceanFFT/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(oceanFFT LANGUAGES CUDA CXX)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/oceanFFT/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/oceanFFT/CMakeLists.txt:56-75
+```cmake
+        )
+
+        target_link_libraries(oceanFFT
+            ${OPENGL_LIBRARIES}
+            ${GLUT_LIBRARIES}
+            # JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+            CUDA::cufft
+        )
+
+        # Copy data files to the output directory
+        add_custom_command(TARGET oceanFFT POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/data
+            ${CMAKE_CURRENT_BINARY_DIR}/data
+        )
+
+        if(WIN32)
+            target_link_libraries(oceanFFT
+                ${PC_GLUT_LIBRARY_DIRS}/freeglut.lib
+                ${PC_GLUT_LIBRARY_DIRS}/${GLEW_LIB_NAME}.lib
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/oceanFFT/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `data/ocean.frag`
+
+Source: cpp/4_CUDA_Libraries/oceanFFT/data/ocean.frag:2-19
+```glsl
+varying vec3 eyeSpacePos;
+varying vec3 worldSpaceNormal;
+varying vec3 eyeSpaceNormal;
+
+uniform vec4 deepColor;
+uniform vec4 shallowColor;
+uniform vec4 skyColor;
+uniform vec3 lightDir;
+
+void main()
+{
+    vec3 eyeVector              = normalize(eyeSpacePos);
+    vec3 eyeSpaceNormalVector   = normalize(eyeSpaceNormal);
+    vec3 worldSpaceNormalVector = normalize(worldSpaceNormal);
+
+    float facing    = max(0.0, dot(eyeSpaceNormalVector, -eyeVector));
+    float fresnel   = pow(1.0 - facing, 5.0); // Fresnel approximation
+    float diffuse   = max(0.0, dot(worldSpaceNormalVector, lightDir));
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/oceanFFT/data/ocean.frag` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `data/ocean.vert`
+
+Source: cpp/4_CUDA_Libraries/oceanFFT/data/ocean.vert:2-20
+```glsl
+varying vec3 eyeSpacePos;
+varying vec3 worldSpaceNormal;
+varying vec3 eyeSpaceNormal;
+uniform float heightScale; // = 0.5;
+uniform float chopiness;   // = 1.0;
+uniform vec2  size;        // = vec2(256.0, 256.0);
+
+void main()
+{
+    float height     = gl_MultiTexCoord0.x;
+    vec2  slope      = gl_MultiTexCoord1.xy;
+
+    // calculate surface normal from slope for shading
+	vec3 normal      = normalize(cross( vec3(0.0, slope.y*heightScale, 2.0 / size.x), vec3(2.0 / size.y, slope.x*heightScale, 0.0)));
+    worldSpaceNormal = normal;
+
+    // calculate position and transform to homogeneous clip space
+    vec4 pos         = vec4(gl_Vertex.x, height * heightScale, gl_Vertex.z, 1.0);
+    gl_Position      = gl_ModelViewProjectionMatrix * pos;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/oceanFFT/data/ocean.vert` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `oceanFFT.cpp`
+
+Source: cpp/4_CUDA_Libraries/oceanFFT/oceanFFT.cpp:28-48
+```cpp
+
+/*
+  FFT-based Ocean simulation
+  based on original code by Yury Uralsky and Calvin Lin
+
+  // JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+  This sample demonstrates how to use CUFFT to synthesize and
+  render an ocean surface in real-time.
+
+  See Jerry Tessendorf's Siggraph course notes for more details:
+  http://tessendorf.org/reports.html
+
+  It also serves as an example of how to generate multiple vertex
+  buffer streams from CUDA and render them using GLSL shaders.
+*/
+
+#if defined(WIN32) || defined(_WIN32) || defined(WIN64) || defined(_WIN64)
+#define WINDOWS_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/oceanFFT/oceanFFT.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/oceanFFT/oceanFFT.cpp:185-204
+```cpp
+void generate_h0(float2 *h0);
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    printf("NOTE: The CUDA Samples are not meant for performance measurements. "
+           "Results may vary when GPU Boost is enabled.\n\n");
+
+    // check for command line arguments
+    if (checkCmdLineFlag(argc, (const char **)argv, "qatest")) {
+        animate  = false;
+        fpsLimit = frameCheckNumber;
+        runAutoTest(argc, argv);
+    }
+    else {
+        printf("[%s]\n\n"
+               "Left mouse button          - rotate\n"
+               "Middle mouse button        - pan\n"
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/oceanFFT/oceanFFT.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/oceanFFT/oceanFFT.cpp:234-267
+```cpp
+    int spectrumSize = spectrumW * spectrumH * sizeof(float2);
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc((void **)&d_h0, spectrumSize));
+    h_h0 = (float2 *)malloc(spectrumSize);
+    generate_h0(h_h0);
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpy(d_h0, h_h0, spectrumSize, cudaMemcpyHostToDevice));
+
+    int outputSize = meshSize * meshSize * sizeof(float2);
+    checkCudaErrors(cudaMalloc((void **)&d_ht, outputSize));
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
+    checkCudaErrors(cudaMalloc((void **)&d_slope, outputSize));
+
+    sdkCreateTimer(&timer);
+    sdkStartTimer(&timer);
+    prevTime = sdkGetTimerValue(&timer);
+
+    runCudaTest(argv[0]);
+
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaFree(d_ht));
+    checkCudaErrors(cudaFree(d_slope));
+    checkCudaErrors(cudaFree(d_h0));
+    checkCudaErrors(cufftDestroy(fftPlan));
+    free(h_h0);
+
+    exit(g_TotalErrors == 0 ? EXIT_SUCCESS : EXIT_FAILURE);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//! Run test
+////////////////////////////////////////////////////////////////////////////////
+void runGraphicsTest(int argc, char **argv)
+{
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/oceanFFT/oceanFFT.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/oceanFFT/oceanFFT.cpp:429-448
+```cpp
+    // generate wave spectrum in frequency domain
+    cudaGenerateSpectrumKernel(d_h0, d_ht, spectrumW, meshSize, meshSize, animTime, patchSize);
+
+    // execute inverse FFT to convert to spatial domain
+    // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+    checkCudaErrors(cufftExecC2C(fftPlan, d_ht, d_ht, CUFFT_INVERSE));
+
+    // update heightmap values in vertex buffer
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+    checkCudaErrors(cudaGraphicsMapResources(1, &cuda_heightVB_resource, 0));
+    checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&g_hptr, &num_bytes, cuda_heightVB_resource));
+
+    cudaUpdateHeightmapKernel(g_hptr, d_ht, meshSize, meshSize, false);
+
+    // calculate slope for shading
+    checkCudaErrors(cudaGraphicsMapResources(1, &cuda_slopeVB_resource, 0));
+    checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&g_sptr, &num_bytes, cuda_slopeVB_resource));
+
+    cudaCalculateSlopeKernel(g_hptr, g_sptr, meshSize, meshSize);
+
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/oceanFFT/oceanFFT.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `oceanFFT_kernel.cu`
+
+Source: cpp/4_CUDA_Libraries/oceanFFT/oceanFFT_kernel.cu:30-48
+```cuda
+#include <cufft.h>
+#include <math_constants.h>
+
+// Round a / b to nearest higher integer value
+int cuda_iDivUp(int a, int b) { return (a + (b - 1)) / b; }
+
+// complex math functions
+__device__ float2 conjugate(float2 arg) { return make_float2(arg.x, -arg.y); }
+
+__device__ float2 complex_exp(float arg) { return make_float2(cosf(arg), sinf(arg)); }
+
+__device__ float2 complex_add(float2 a, float2 b) { return make_float2(a.x + b.x, a.y + b.y); }
+
+__device__ float2 complex_mult(float2 ab, float2 cd)
+{
+    return make_float2(ab.x * cd.x - ab.y * cd.y, ab.x * cd.y + ab.y * cd.x);
+}
+
+// generate wave heightfield at time t based on initial heightfield and
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/oceanFFT/oceanFFT_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/oceanFFT/oceanFFT_kernel.cu:53-72
+```cuda
+                                       unsigned int out_width,
+                                       unsigned int out_height,
+                                       float        t,
+                                       float        patchSize)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    unsigned int x         = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int y         = blockIdx.y * blockDim.y + threadIdx.y;
+    unsigned int in_index  = y * in_width + x;
+    unsigned int in_mindex = (out_height - y) * in_width + (out_width - x); // mirrored
+    unsigned int out_index = y * out_width + x;
+
+    // calculate wave vector
+    float2 k;
+    k.x = (-(int)out_width / 2.0f + x) * (2.0f * CUDART_PI_F / patchSize);
+    k.y = (-(int)out_width / 2.0f + y) * (2.0f * CUDART_PI_F / patchSize);
+
+    // calculate dispersion w(k)
+    float k_len = sqrtf(k.x * k.x + k.y * k.y);
+    float w     = sqrtf(9.81f * k_len);
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/oceanFFT/oceanFFT_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
@@ -107,9 +396,9 @@ English anchor: read `oceanFFT` as a focused example of the CUDA concepts used i
 | `cudaGenerateSpectrumKernel` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaUpdateHeightmapKernel` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaCalculateSlopeKernel` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cufft` | Driver API の handle 境界です。context/module/function と error code を追います。 |
 | `cudaGraphicsGLRegisterBuffer` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
-| `cudaGraphicsMapResources` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。

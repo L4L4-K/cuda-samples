@@ -85,7 +85,7 @@ English anchor: read `binomialOptions_nvrtc` as a focused example of the CUDA co
 - `binomialOptions_common.h`: focus on control flow and helper functions.
 - `binomialOptions_gold.cpp`: focus on control flow and helper functions.
 - `binomialOptions_gpu.cpp`: focus on `cudaBlockSize`, `cudaGridSize`, `CUdeviceptr`, `cuModuleGetGlobal`, `cuMemcpyHtoD`.
-- `binomialOptions_kernel.cu`: focus on `blockIdx`, `__syncthreads`, `__shared__`, `threadIdx`, `launch`.
+- `binomialOptions_kernel.cu`: focus on `blockIdx`, `__shared__`, `threadIdx`, `__syncthreads`, `launch`.
 - `common_gpu_header.h`: focus on control flow and helper functions.
 - `realtype.h`: focus on control flow and helper functions.
 
@@ -94,6 +94,383 @@ English anchor: read `binomialOptions_nvrtc` as a focused example of the CUDA co
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/5_Domain_Specific/binomialOptions_nvrtc/CMakeLists.txt:1-67
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(binomialOptions_nvrtc LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for binomialOptions_nvrtc
+add_executable(binomialOptions_nvrtc binomialOptions.cpp binomialOptions_gold.cpp binomialOptions_gpu.cpp)
+
+target_compile_options(binomialOptions_nvrtc PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(binomialOptions_nvrtc PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(binomialOptions_nvrtc PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_link_libraries(binomialOptions_nvrtc PRIVATE
+    # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
+    CUDA::nvrtc
+    CUDA::cuda_driver
+)
+
+# Copy kernel to the output directory
+add_custom_command(TARGET binomialOptions_nvrtc POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_CURRENT_SOURCE_DIR}/binomialOptions_kernel.cu ${CMAKE_CURRENT_BINARY_DIR}
+)
+
+# Copy header to the output directory
+add_custom_command(TARGET binomialOptions_nvrtc POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_CURRENT_SOURCE_DIR}/common_gpu_header.h ${CMAKE_CURRENT_BINARY_DIR}
+)
+
+# Copy header to the output directory
+add_custom_command(TARGET binomialOptions_nvrtc POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_CURRENT_SOURCE_DIR}/binomialOptions_common.h ${CMAKE_CURRENT_BINARY_DIR}
+)
+
+# Copy header to the output directory
+add_custom_command(TARGET binomialOptions_nvrtc POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_CURRENT_SOURCE_DIR}/realtype.h ${CMAKE_CURRENT_BINARY_DIR}
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/binomialOptions_nvrtc/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `binomialOptions.cpp`
+
+Source: cpp/5_Domain_Specific/binomialOptions_nvrtc/binomialOptions.cpp:35-53
+```cpp
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <helper_functions.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "binomialOptions_common.h"
+#include "realtype.h"
+
+////////////////////////////////////////////////////////////////////////////////
+// Black-Scholes formula for binomial tree results validation
+////////////////////////////////////////////////////////////////////////////////
+
+extern "C" void BlackScholesCall(real &callResult, TOptionData optionData);
+
+////////////////////////////////////////////////////////////////////////////////
+// Process single option on CPU
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/binomialOptions_nvrtc/binomialOptions.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/binomialOptions_nvrtc/binomialOptions.cpp:75-94
+```cpp
+
+////////////////////////////////////////////////////////////////////////////////
+// Main program
+////////////////////////////////////////////////////////////////////////////////
+
+int main(int argc, char **argv)
+{
+    printf("[%s] - Starting...\n", argv[0]);
+
+    const int OPT_N = MAX_OPTIONS;
+
+    TOptionData optionData[MAX_OPTIONS];
+    real        callValueBS[MAX_OPTIONS], callValueGPU[MAX_OPTIONS], callValueCPU[MAX_OPTIONS];
+
+    real sumDelta, sumRef, gpuTime, errorVal;
+
+    StopWatchInterface *hTimer = NULL;
+
+    int i;
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/binomialOptions_nvrtc/binomialOptions.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `binomialOptions_common.h`
+
+Source: cpp/5_Domain_Specific/binomialOptions_nvrtc/binomialOptions_common.h:29-55
+```cpp
+#ifndef BINOMIALOPTIONS_COMMON_H
+#define BINOMIALOPTIONS_COMMON_H
+
+////////////////////////////////////////////////////////////////////////////////
+// Global types
+////////////////////////////////////////////////////////////////////////////////
+
+typedef struct
+{
+    float S;
+    float X;
+    float T;
+    float R;
+    float V;
+} TOptionData;
+
+////////////////////////////////////////////////////////////////////////////////
+// Global parameters
+////////////////////////////////////////////////////////////////////////////////
+
+// Number of time steps
+#define NUM_STEPS 2048
+
+// Max option batch size
+#define MAX_OPTIONS 1024
+
+#endif
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/binomialOptions_nvrtc/binomialOptions_common.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `binomialOptions_gold.cpp`
+
+Source: cpp/5_Domain_Specific/binomialOptions_nvrtc/binomialOptions_gold.cpp:29-47
+```cpp
+#include <math.h>
+#include <stdio.h>
+
+#include "binomialOptions_common.h"
+
+///////////////////////////////////////////////////////////////////////////////
+// Polynomial approximation of cumulative normal distribution function
+///////////////////////////////////////////////////////////////////////////////
+
+static double CND(double d)
+{
+    const double A1       = 0.31938153;
+    const double A2       = -0.356563782;
+    const double A3       = 1.781477937;
+    const double A4       = -1.821255978;
+    const double A5       = 1.330274429;
+    const double RSQRT2PI = 0.39894228040143267793994605993438;
+
+    double K = 1.0 / (1.0 + 0.2316419 * fabs(d));
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/binomialOptions_nvrtc/binomialOptions_gold.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `binomialOptions_gpu.cpp`
+
+Source: cpp/5_Domain_Specific/binomialOptions_nvrtc/binomialOptions_gpu.cpp:33-51
+```cpp
+#include <cmath>
+#include <stdio.h>
+#include <stdlib.h>
+
+// Other helpers
+#include <helper_cuda.h>
+#include <nvrtc_helper.h>
+
+// CUDA runtime
+#include <cuda_runtime.h>
+
+#include "binomialOptions_common.h"
+#include "common_gpu_header.h"
+#include "realtype.h"
+
+
+// Preprocessed input option data
+typedef struct
+{
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/binomialOptions_nvrtc/binomialOptions_gpu.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/binomialOptions_nvrtc/binomialOptions_gpu.cpp:114-133
+```cpp
+    checkCudaErrors(cuMemcpyHtoD(d_OptionData, h_OptionData, optN * sizeof(__TOptionData)));
+
+    dim3 cudaBlockSize(128, 1, 1);
+    dim3 cudaGridSize(optN, 1, 1);
+
+    // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    checkCudaErrors(cuLaunchKernel(kernel_addr,
+                                   cudaGridSize.x,
+                                   cudaGridSize.y,
+                                   cudaGridSize.z, /* grid dim */
+                                   cudaBlockSize.x,
+                                   cudaBlockSize.y,
+                                   cudaBlockSize.z, /* block dim */
+                                   0,
+                                   0,    /* shared mem, stream */
+                                   NULL, /* arguments */
+                                   0));
+
+    checkCudaErrors(cuCtxSynchronize());
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/binomialOptions_nvrtc/binomialOptions_gpu.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `binomialOptions_kernel.cu`
+
+Source: cpp/5_Domain_Specific/binomialOptions_nvrtc/binomialOptions_kernel.cu:29-47
+```cuda
+#include "binomialOptions_common.h"
+#include "common_gpu_header.h"
+#include "realtype.h"
+
+// Preprocessed input option data
+typedef struct
+{
+    real S;
+    real X;
+    real vDt;
+    real puByDf;
+    real pdByDf;
+} __TOptionData;
+static __constant__ __TOptionData d_OptionData[MAX_OPTIONS];
+__device__ real                   d_CallValue[MAX_OPTIONS];
+
+#define THREADBLOCK_SIZE 128
+#define ELEMS_PER_THREAD (NUM_STEPS / THREADBLOCK_SIZE)
+#if NUM_STEPS % THREADBLOCK_SIZE
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/binomialOptions_nvrtc/binomialOptions_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/binomialOptions_nvrtc/binomialOptions_kernel.cu:70-89
+```cuda
+////////////////////////////////////////////////////////////////////////////////
+// GPU kernel
+////////////////////////////////////////////////////////////////////////////////
+extern "C" __global__ void binomialOptionsKernel()
+{
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    __shared__ real call_exchange[THREADBLOCK_SIZE + 1];
+
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    const int  tid    = threadIdx.x;
+    const real S      = d_OptionData[blockIdx.x].S;
+    const real X      = d_OptionData[blockIdx.x].X;
+    const real vDt    = d_OptionData[blockIdx.x].vDt;
+    const real puByDf = d_OptionData[blockIdx.x].puByDf;
+    const real pdByDf = d_OptionData[blockIdx.x].pdByDf;
+
+    real call[ELEMS_PER_THREAD + 1];
+#pragma unroll
+    for (int i = 0; i < ELEMS_PER_THREAD; ++i)
+        call[i] = expiryCallValue(S, X, vDt, tid * ELEMS_PER_THREAD + i);
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/binomialOptions_nvrtc/binomialOptions_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/binomialOptions_nvrtc/binomialOptions_kernel.cu:95-114
+```cuda
+
+#pragma unroll 16
+    for (int i = NUM_STEPS; i > 0; --i) {
+        call_exchange[tid] = call[0];
+        // JP: この連続する anchor 群では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
+        __syncthreads();
+        call[ELEMS_PER_THREAD] = call_exchange[tid + 1];
+        __syncthreads();
+
+        if (i > final_it) {
+#pragma unroll
+            for (int j = 0; j < ELEMS_PER_THREAD; ++j)
+                call[j] = puByDf * call[j + 1] + pdByDf * call[j];
+        }
+    }
+
+    if (tid == 0) {
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+        d_CallValue[blockIdx.x] = call[0];
+    }
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/binomialOptions_nvrtc/binomialOptions_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `common_gpu_header.h`
+
+Source: cpp/5_Domain_Specific/binomialOptions_nvrtc/common_gpu_header.h:13-32
+```cpp
+#if !defined(__COMMON_GPU_HEADER_H)
+#define __COMMON_GPU_HEADER_H
+
+////////////////////////////////////////////////////////////////////////////////
+// Internal GPU-side constants and data structures
+////////////////////////////////////////////////////////////////////////////////
+
+#define TIME_STEPS 16
+
+#define CACHE_DELTA (2 * TIME_STEPS)
+
+#define CACHE_SIZE (256)
+
+#define CACHE_STEP (CACHE_SIZE - CACHE_DELTA)
+
+#if NUM_STEPS % CACHE_DELTA
+#error Bad constants
+#endif
+
+#endif
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/binomialOptions_nvrtc/common_gpu_header.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `realtype.h`
+
+Source: cpp/5_Domain_Specific/binomialOptions_nvrtc/realtype.h:29-42
+```cpp
+#ifndef REALTYPE_H
+#define REALTYPE_H
+
+// To use double precision uncomment the macro DOUBLE_PRECISION below, default
+// is single precision.
+// #define DOUBLE_PRECISION
+
+#ifndef DOUBLE_PRECISION
+typedef float real;
+#else
+typedef double real;
+#endif
+
+#endif
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/binomialOptions_nvrtc/realtype.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 
@@ -108,11 +485,11 @@ English anchor: read `binomialOptions_nvrtc` as a focused example of the CUDA co
 | `cuModuleGetFunction` | Driver API の handle 境界です。context/module/function と error code を追います。 |
 | `cuCtxSynchronize` | Driver API の handle 境界です。context/module/function と error code を追います。 |
 | `cuMemcpyDtoH` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
-| `__syncthreads` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |
 | `CUdeviceptr` | Driver API の handle 境界です。context/module/function と error code を追います。 |
 | `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `__shared__` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |
 | `threadIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
+| `__syncthreads` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。

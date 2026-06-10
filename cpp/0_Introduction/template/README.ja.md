@@ -73,7 +73,7 @@ English anchor: read `template` as a focused example of the CUDA concepts used i
 
 ## Concrete Reading Path
 
-- `template.cu`: focus on `CUDA`, `__syncthreads`, `cudaMalloc`, `cudaMemcpy`, `launch`.
+- `template.cu`: focus on `CUDA`, `cudaMalloc`, `cudaMemcpy`, `launch`, `__shared__`.
 - `template_cpu.cpp`: focus on control flow and helper functions.
 
 > **日本語**
@@ -82,6 +82,198 @@ English anchor: read `template` as a focused example of the CUDA concepts used i
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/template/CMakeLists.txt:1-38
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(template LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for template
+add_executable(template template.cu template_cpu.cpp)
+
+target_compile_options(template PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(template PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(template PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/template/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `template.cu`
+
+Source: cpp/0_Introduction/template/template.cu:35-53
+```cuda
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// includes CUDA
+#include <cuda_runtime.h>
+
+// includes, project
+#include <helper_cuda.h>
+#include <helper_functions.h> // helper functions for SDK examples
+
+////////////////////////////////////////////////////////////////////////////////
+// declaration, forward
+void runTest(int argc, char **argv);
+
+extern "C" void computeGold(float *reference, float *idata, const unsigned int len);
+
+////////////////////////////////////////////////////////////////////////////////
+```
+
+> JP: この抜粋は `cpp/0_Introduction/template/template.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/template/template.cu:57-101
+```cuda
+////////////////////////////////////////////////////////////////////////////////
+__global__ void testKernel(float *g_idata, float *g_odata)
+{
+    // shared memory
+    // the size is determined by the host application
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    extern __shared__ float sdata[];
+
+    // access thread id
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    const unsigned int tid = threadIdx.x;
+    // access number of threads in this block
+    const unsigned int num_threads = blockDim.x;
+
+    // read in input data from global memory
+    sdata[tid] = g_idata[tid];
+    // JP: この連続する anchor 群では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
+    __syncthreads();
+
+    // perform some computations
+    sdata[tid] = (float)num_threads * sdata[tid];
+    __syncthreads();
+
+    // write data to global memory
+    g_odata[tid] = sdata[tid];
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv) { runTest(argc, argv); }
+
+////////////////////////////////////////////////////////////////////////////////
+//! Run a simple test for CUDA
+////////////////////////////////////////////////////////////////////////////////
+void runTest(int argc, char **argv)
+{
+    bool bTestResult = true;
+
+    printf("%s Starting...\n\n", argv[0]);
+
+    // use command-line specified CUDA device, otherwise use device with highest
+    // Gflops/s
+    int devID = findCudaDevice(argc, (const char **)argv);
+
+```
+
+> JP: この抜粋は `cpp/0_Introduction/template/template.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/template/template.cu:105-136
+```cuda
+
+    unsigned int num_threads = 32;
+    unsigned int mem_size    = sizeof(float) * num_threads;
+
+    // allocate host memory
+    float *h_idata = (float *)malloc(mem_size);
+
+    // initalize the memory
+    for (unsigned int i = 0; i < num_threads; ++i) {
+        h_idata[i] = (float)i;
+    }
+
+    // allocate device memory
+    float *d_idata;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc((void **)&d_idata, mem_size));
+    // copy host memory to device
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpy(d_idata, h_idata, mem_size, cudaMemcpyHostToDevice));
+
+    // allocate device memory for result
+    float *d_odata;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
+    checkCudaErrors(cudaMalloc((void **)&d_odata, mem_size));
+
+    // setup execution parameters
+    dim3 grid(1, 1, 1);
+    dim3 threads(num_threads, 1, 1);
+
+    // execute the kernel
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    testKernel<<<grid, threads, mem_size>>>(d_idata, d_odata);
+```
+
+> JP: この抜粋は `cpp/0_Introduction/template/template.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `template_cpu.cpp`
+
+Source: cpp/0_Introduction/template/template_cpu.cpp:30-46
+```cpp
+extern "C" void computeGold(float *reference, float *idata, const unsigned int len);
+
+////////////////////////////////////////////////////////////////////////////////
+//! Compute reference data set
+//! Each element is multiplied with the number of threads / array length
+//! @param reference  reference data, computed but preallocated
+//! @param idata      input data as provided to device
+//! @param len        number of elements in reference / idata
+////////////////////////////////////////////////////////////////////////////////
+void computeGold(float *reference, float *idata, const unsigned int len)
+{
+    const float f_len = static_cast<float>(len);
+
+    for (unsigned int i = 0; i < len; ++i) {
+        reference[i] = idata[i] * f_len;
+    }
+}
+```
+
+> JP: この抜粋は `cpp/0_Introduction/template/template_cpu.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
@@ -89,10 +281,10 @@ English anchor: read `template` as a focused example of the CUDA concepts used i
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
 | `cudaMemcpy` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
-| `__syncthreads` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |
 | `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `__shared__` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |
 | `threadIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
+| `__syncthreads` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |
 | `cudaMemcpyHostToDevice` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `Device` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `blockDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |

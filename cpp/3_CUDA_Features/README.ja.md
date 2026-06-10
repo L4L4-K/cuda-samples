@@ -216,10 +216,10 @@ English anchor: read `3_CUDA_Features` as a focused example of the CUDA concepts
 - `StreamPriorities/StreamPriorities.cu`: focus on `cudaMalloc`, `cudaMemcpy`, `cudaEvent_t`, `cudaEventCreate`, `cudaEventRecord`.
 - `bf16TensorCoreGemm/bf16TensorCoreGemm.cu`: focus on `__syncthreads`, `blockDim`, `threadIdx`, `gridDim`, `cudaMemcpy`.
 - `binaryPartitionCG/binaryPartitionCG.cu`: focus on `cudaMallocHost`, `cudaMalloc`, `cudaMemcpyAsync`, `cudaFreeHost`, `atomicAdd`.
-- `bindlessTexture/bindlessTexture.cpp`: focus on `CUDA`, `cudaTextureObjects`, `cudaExtent`, `cudaGraphicsResource`, `cudaMalloc`.
+- `bindlessTexture/bindlessTexture.cpp`: focus on `CUDA`, `launch`, `cudaTextureObjects`, `cudaExtent`, `cudaGraphicsResource`.
 - `bindlessTexture/bindlessTexture.h`: focus on `CUDA`, `cudaExtent`, `cudaResourceType`, `cudaArray_t`, `cudaMipmappedArray_t`.
 - `bindlessTexture/bindlessTexture_kernel.cu`: focus on `cudaAddressModeClamp`, `cudaTextureObject_t`, `cudaResourceDesc`, `cudaTextureDesc`, `blockIdx`.
-- `cdpAdvancedQuicksort/cdpAdvancedQuicksort.cu`: focus on `atomicData`, `launch`, `atomicDataStack`, `atomicAdd`, `atomic`.
+- `cdpAdvancedQuicksort/cdpAdvancedQuicksort.cu`: focus on `launch`, `atomicData`, `atomicDataStack`, `atomicAdd`, `atomic`.
 - `cdpAdvancedQuicksort/cdpBitonicSort.cu`: focus on `threadIdx`, `blockDim`, `__shared__`, `launch`.
 - `cdpAdvancedQuicksort/cdpQuicksort.h`: focus on `atomic`, `launch`, `atomicData`.
 - `cdpBezierTessellation/BezierLineCDP.cu`: focus on `threadIdx`, `blockDim`, `blockIdx`, `cudaMalloc`, `cudaFree`.
@@ -231,15 +231,54 @@ English anchor: read `3_CUDA_Features` as a focused example of the CUDA concepts
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/3_CUDA_Features/CMakeLists.txt:1-26
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+add_subdirectory(StreamPriorities)
+add_subdirectory(bf16TensorCoreGemm)
+add_subdirectory(binaryPartitionCG)
+add_subdirectory(bindlessTexture)
+add_subdirectory(cdpAdvancedQuicksort)
+add_subdirectory(cdpBezierTessellation)
+add_subdirectory(cdpQuadtree)
+add_subdirectory(cdpSimplePrint)
+add_subdirectory(cdpSimpleQuicksort)
+add_subdirectory(cudaCompressibleMemory)
+add_subdirectory(cudaTensorCoreGemm)
+add_subdirectory(dmmaTensorCoreGemm)
+add_subdirectory(globalToShmemAsyncCopy)
+add_subdirectory(graphConditionalNodes)
+add_subdirectory(graphMemoryFootprint)
+add_subdirectory(graphMemoryNodes)
+add_subdirectory(immaTensorCoreGemm)
+add_subdirectory(jacobiCudaGraphs)
+add_subdirectory(memMapIPCDrv)
+add_subdirectory(newdelete)
+add_subdirectory(ptxjit)
+add_subdirectory(simpleCudaGraphs)
+add_subdirectory(tf32TensorCoreGemm)
+add_subdirectory(warpAggregatedAtomicsCG)
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
 | - | - |
 | `threadIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `blockDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `blockIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
-| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
 | `cudaMemcpy` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `__syncthreads` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |

@@ -79,6 +79,215 @@ English anchor: read `StreamPriorities` as a focused example of the CUDA concept
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/3_CUDA_Features/StreamPriorities/CMakeLists.txt:1-45
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(StreamPriorities LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Source file
+    # Add target for StreamPriorities
+    if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
+        message(STATUS "Will not build sample streamPriorities - not supported on aarch64")
+    else()
+        add_executable(StreamPriorities StreamPriorities.cu)
+
+        target_compile_options(StreamPriorities PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+        target_compile_features(StreamPriorities PRIVATE cxx_std_17 cuda_std_17)
+
+        set_target_properties(StreamPriorities PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+    endif()
+else()
+    message(STATUS "Will not build sample StreamPriorities - requires Linux OS")
+endif()
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/StreamPriorities/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `StreamPriorities.cu`
+
+Source: cpp/3_CUDA_Features/StreamPriorities/StreamPriorities.cu:30-48
+```cuda
+#include <cstdio>
+
+// CUDA-C includes
+#include <cuda_runtime.h>
+#include <helper_cuda.h>
+
+#define TOTAL_SIZE 256 * 1024 * 1024
+#define EACH_SIZE  128 * 1024 * 1024
+
+// # threadblocks
+#define TBLOCKS 1024
+#define THREADS 512
+
+// throw error on equality
+#define ERR_EQ(X, Y)                                                                 \
+    do {                                                                             \
+        if ((X) == (Y)) {                                                            \
+            fprintf(stderr, "Error in %s at %s:%d\n", __func__, __FILE__, __LINE__); \
+            exit(-1);                                                                \
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/StreamPriorities/StreamPriorities.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/StreamPriorities/StreamPriorities.cu:61-95
+```cuda
+// copy from source -> destination arrays
+__global__ void memcpy_kernel(int *dst, int *src, size_t n)
+{
+    // JP: `gridDim`, `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int num = gridDim.x * blockDim.x;
+    int id  = blockDim.x * blockIdx.x + threadIdx.x;
+
+    for (int i = id; i < n / sizeof(int); i += num) {
+        dst[i] = src[i];
+    }
+}
+
+// initialise memory
+void mem_init(int *buf, size_t n)
+{
+    for (int i = 0; i < n / sizeof(int); i++) {
+        buf[i] = i;
+    }
+}
+
+int main(int argc, char **argv)
+{
+    cudaDeviceProp device_prop;
+    int            dev_id;
+
+    printf("Starting [%s]...\n", argv[0]);
+
+    // set device
+    dev_id = findCudaDevice(argc, (const char **)argv);
+    checkCudaErrors(cudaGetDeviceProperties(&device_prop, dev_id));
+
+    if ((device_prop.major << 4) + device_prop.minor < 0x35) {
+        fprintf(stderr,
+                "%s requires Compute Capability of SM 3.5 or higher to "
+                "run.\nexiting...\n",
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/StreamPriorities/StreamPriorities.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/StreamPriorities/StreamPriorities.cu:116-166
+```cuda
+    size = TOTAL_SIZE;
+
+    // initialise host data
+    int *h_src_low;
+    int *h_src_hi;
+    ERR_EQ(h_src_low = (int *)malloc(size), NULL);
+    ERR_EQ(h_src_hi = (int *)malloc(size), NULL);
+    mem_init(h_src_low, size);
+    mem_init(h_src_hi, size);
+
+    // initialise device data
+    int *h_dst_low;
+    int *h_dst_hi;
+    ERR_EQ(h_dst_low = (int *)malloc(size), NULL);
+    ERR_EQ(h_dst_hi = (int *)malloc(size), NULL);
+    memset(h_dst_low, 0, size);
+    memset(h_dst_hi, 0, size);
+
+    // copy source data -> device
+    int *d_src_low;
+    int *d_src_hi;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc(&d_src_low, size));
+    checkCudaErrors(cudaMalloc(&d_src_hi, size));
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpy(d_src_low, h_src_low, size, cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(d_src_hi, h_src_hi, size, cudaMemcpyHostToDevice));
+
+    // allocate memory for memcopy destination
+    int *d_dst_low;
+    int *d_dst_hi;
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
+    checkCudaErrors(cudaMalloc(&d_dst_low, size));
+    checkCudaErrors(cudaMalloc(&d_dst_hi, size));
+
+    // create some events
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    cudaEvent_t ev_start_low;
+    cudaEvent_t ev_start_hi;
+    cudaEvent_t ev_end_low;
+    cudaEvent_t ev_end_hi;
+    checkCudaErrors(cudaEventCreate(&ev_start_low));
+    checkCudaErrors(cudaEventCreate(&ev_start_hi));
+    checkCudaErrors(cudaEventCreate(&ev_end_low));
+    checkCudaErrors(cudaEventCreate(&ev_end_hi));
+
+    /* */
+
+    // call pair of kernels repeatedly (with different priority streams)
+    checkCudaErrors(cudaEventRecord(ev_start_low, st_low));
+    checkCudaErrors(cudaEventRecord(ev_start_hi, st_hi));
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/StreamPriorities/StreamPriorities.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/StreamPriorities/StreamPriorities.cu:174-193
+```cuda
+
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    checkCudaErrors(cudaEventRecord(ev_end_low, st_low));
+    checkCudaErrors(cudaEventRecord(ev_end_hi, st_hi));
+
+    // JP: `cudaEventSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    checkCudaErrors(cudaEventSynchronize(ev_end_low));
+    checkCudaErrors(cudaEventSynchronize(ev_end_hi));
+
+    /* */
+
+    size = TOTAL_SIZE;
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
+    checkCudaErrors(cudaMemcpy(h_dst_low, d_dst_low, size, cudaMemcpyDeviceToHost));
+    checkCudaErrors(cudaMemcpy(h_dst_hi, d_dst_hi, size, cudaMemcpyDeviceToHost));
+
+    // check results of kernels
+    ERR_NE(memcmp(h_dst_low, h_src_low, size), 0);
+    ERR_NE(memcmp(h_dst_hi, h_src_hi, size), 0);
+
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/StreamPriorities/StreamPriorities.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

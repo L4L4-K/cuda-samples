@@ -549,16 +549,67 @@ English anchor: read `5_Domain_Specific` as a focused example of the CUDA concep
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/5_Domain_Specific/CMakeLists.txt:1-38
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+add_subdirectory(BlackScholes)
+add_subdirectory(BlackScholes_nvrtc)
+add_subdirectory(FDTD3d)
+add_subdirectory(HSOpticalFlow)
+add_subdirectory(Mandelbrot)
+add_subdirectory(MonteCarloMultiGPU)
+add_subdirectory(NV12toBGRandResize)
+add_subdirectory(SobelFilter)
+add_subdirectory(SobolQRNG)
+add_subdirectory(bicubicTexture)
+add_subdirectory(bilateralFilter)
+add_subdirectory(binomialOptions)
+add_subdirectory(binomialOptions_nvrtc)
+add_subdirectory(convolutionFFT2D)
+add_subdirectory(dwtHaar1D)
+add_subdirectory(dxtc)
+add_subdirectory(fastWalshTransform)
+add_subdirectory(fluidsGL)
+add_subdirectory(marchingCubes)
+add_subdirectory(nbody)
+add_subdirectory(p2pBandwidthLatencyTest)
+add_subdirectory(postProcessGL)
+add_subdirectory(quasirandomGenerator)
+add_subdirectory(quasirandomGenerator_nvrtc)
+add_subdirectory(recursiveGaussian)
+add_subdirectory(simpleD3D11)
+add_subdirectory(simpleD3D11Texture)
+add_subdirectory(simpleD3D12)
+add_subdirectory(simpleGL)
+add_subdirectory(simpleVulkan)
+add_subdirectory(simpleVulkanMMAP)
+add_subdirectory(smokeParticles)
+add_subdirectory(stereoDisparity)
+add_subdirectory(volumeFiltering)
+add_subdirectory(volumeRender)
+add_subdirectory(vulkanImageCUDA)
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
 | - | - |
 | `threadIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `blockIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `blockDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
-| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaTextureObject_t` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaMemcpy` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaCheckError` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |

@@ -87,6 +87,241 @@ English anchor: read `matrixMul_nvrtc` as a focused example of the CUDA concepts
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/matrixMul_nvrtc/CMakeLists.txt:1-65
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(matrixMul_nvrtc LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add sample target executable
+add_executable(matrixMul_nvrtc matrixMul.cpp)
+
+target_compile_options(matrixMul_nvrtc PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(matrixMul_nvrtc PRIVATE cxx_std_17 cuda_std_17)
+
+target_link_libraries(matrixMul_nvrtc PRIVATE
+    # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
+    CUDA::nvrtc
+    CUDA::cuda_driver
+)
+
+# The primary directory of CUDAToolkit_INCLUDE_DIRS is the CUDA Toolkit's include directory for finding the header files.
+list(GET CUDAToolkit_INCLUDE_DIRS 0 CUDA_INCLUDE_DIR)
+
+# Copy clock_kernel.cu to the output directory
+add_custom_command(TARGET matrixMul_nvrtc POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_CURRENT_SOURCE_DIR}/matrixMul_kernel.cu ${CUDA_INCLUDE_DIR}/cooperative_groups.h ${CMAKE_CURRENT_BINARY_DIR}
+)
+
+add_custom_command(TARGET matrixMul_nvrtc POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CUDA_INCLUDE_DIR}/cooperative_groups ${CMAKE_CURRENT_BINARY_DIR}/cooperative_groups
+)
+
+add_custom_command(TARGET matrixMul_nvrtc POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CUDA_INCLUDE_DIR}/cccl/nv ${CMAKE_CURRENT_BINARY_DIR}/nv
+)
+
+add_custom_command(TARGET matrixMul_nvrtc POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CUDA_INCLUDE_DIR}/cccl/cuda ${CMAKE_CURRENT_BINARY_DIR}/cuda
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMul_nvrtc/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `matrixMul.cpp`
+
+Source: cpp/0_Introduction/matrixMul_nvrtc/matrixMul.cpp:41-86
+```cpp
+ * in Proc. 2008 ACM/IEEE Conf. on Supercomputing (SC '08),
+ * Piscataway, NJ: IEEE Press, 2008, pp. Art. 31:1-11.
+ */
+
+// System includes
+#include <assert.h>
+#include <stdio.h>
+
+// CUDA runtime
+#include <cuda_runtime.h>
+
+#include "nvrtc_helper.h"
+
+// Helper functions and utilities to work with CUDA
+#include <helper_functions.h>
+
+void constantInit(float *data, int size, float val)
+{
+    for (int i = 0; i < size; ++i) {
+        data[i] = val;
+    }
+}
+
+/**
+ * Run a simple test of matrix multiplication using CUDA
+ */
+int matrixMultiply(int argc, char **argv, int block_size, dim3 &dimsA, dim3 &dimsB)
+{
+    // Allocate host memory for matrices A and B
+    unsigned int size_A     = dimsA.x * dimsA.y;
+    unsigned int mem_size_A = sizeof(float) * size_A;
+    float       *h_A        = (float *)malloc(mem_size_A);
+    unsigned int size_B     = dimsB.x * dimsB.y;
+    unsigned int mem_size_B = sizeof(float) * size_B;
+    float       *h_B        = (float *)malloc(mem_size_B);
+
+    // Initialize host memory
+    const float valB = 0.01f;
+    constantInit(h_A, size_A, 1.0f);
+    constantInit(h_B, size_B, valB);
+
+    // Allocate device memory
+    CUdeviceptr d_A, d_B, d_C;
+
+    char  *cubin, *kernel_file;
+    size_t cubinSize;
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMul_nvrtc/matrixMul.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/matrixMul_nvrtc/matrixMul.cpp:131-150
+```cpp
+
+    // Execute the kernel
+    int nIter = 300;
+
+    for (int j = 0; j < nIter; j++) {
+        // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+        checkCudaErrors(cuLaunchKernel(kernel_addr,
+                                       grid.x,
+                                       grid.y,
+                                       grid.z, /* grid dim */
+                                       threads.x,
+                                       threads.y,
+                                       threads.z, /* block dim */
+                                       0,
+                                       0,       /* shared mem, stream */
+                                       &arr[0], /* arguments */
+                                       0));
+
+        checkCudaErrors(cuCtxSynchronize());
+    }
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMul_nvrtc/matrixMul.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/matrixMul_nvrtc/matrixMul.cpp:180-220
+```cpp
+    printf("\nNOTE: The CUDA Samples are not meant for performance measurements. "
+           "Results may vary when GPU Boost is enabled.\n");
+
+    // Clean up memory
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    free(h_A);
+    free(h_B);
+    free(h_C);
+
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
+    checkCudaErrors(cuMemFree(d_A));
+    checkCudaErrors(cuMemFree(d_B));
+    checkCudaErrors(cuMemFree(d_C));
+
+    if (correct) {
+        return EXIT_SUCCESS;
+    }
+    else {
+        return EXIT_FAILURE;
+    }
+}
+
+/**
+ * Program main
+ */
+
+int main(int argc, char **argv)
+{
+    printf("[Matrix Multiply Using CUDA] - Starting...\n");
+
+    if (checkCmdLineFlag(argc, (const char **)argv, "help") || checkCmdLineFlag(argc, (const char **)argv, "?")) {
+        printf("Usage -device=n (n >= 0 for deviceID)\n");
+        printf("      -wA=WidthA -hA=HeightA (Width x Height of Matrix A)\n");
+        printf("      -wB=WidthB -hB=HeightB (Width x Height of Matrix B)\n");
+        printf("  Note: Outer matrix dimensions of A & B matrices must be equal.\n");
+
+        exit(EXIT_SUCCESS);
+    }
+
+    int block_size = 32;
+
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMul_nvrtc/matrixMul.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `matrixMul_kernel.cu`
+
+Source: cpp/0_Introduction/matrixMul_nvrtc/matrixMul_kernel.cu:50-71
+```cuda
+#include <cooperative_groups.h>
+
+template <int BLOCK_SIZE> __device__ void matrixMulCUDA(float *C, float *A, float *B, int wA, int wB)
+{
+    // Handle to thread block group
+    cooperative_groups::thread_block cta = cooperative_groups::this_thread_block();
+    // Block index
+    // JP: `blockIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int bx = blockIdx.x;
+    int by = blockIdx.y;
+
+    // Thread index
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+
+    // Index of the first sub-matrix of A processed by the block
+    int aBegin = wA * BLOCK_SIZE * by;
+
+    // Index of the last sub-matrix of A processed by the block
+    int aEnd = aBegin + wA - 1;
+
+    // Step size used to iterate through the sub-matrices of A
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMul_nvrtc/matrixMul_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

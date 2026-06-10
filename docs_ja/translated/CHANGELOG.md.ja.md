@@ -1951,3 +1951,69 @@ English anchor: related Japanese study material for this repository.
 > 関連する sample ごとの `README.ja.md`、`docs_ja/themes/`、`docs_ja/glossary/`、source 内の `JP:` コメントを合わせて読むと、本文の build/run 手順と CUDA concept を接続できます。
 > **学習メモ**
 > この file は文書の伴走資料です。behavior、build graph、test output を変える目的の変更ではありません。
+
+## Verified Source Snippets
+
+
+
+??????? source/build/script file ???????????????????
+
+
+
+Source: CMakeLists.txt:2-24
+```cmake
+
+cmake_minimum_required(VERSION 3.20)
+
+project(cuda-samples LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+set(CMAKE_CUDA_STANDARD 17)
+set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+```
+
+> JP: ?? CMake ????repository ??? CUDA ??????Toolkit ???architecture/debug flag ?????????build/run ??????????????? sample target ?????????????
+
+
+
+Source: run_tests.py:53-73
+```python
+
+def load_args_config(config_file):
+    """Load arguments configuration from JSON file"""
+    if not config_file or not os.path.exists(config_file):
+        return {}
+
+    try:
+        with open(config_file, 'r') as f:
+            config = json.load(f)
+
+        # Validate the config format
+        if not isinstance(config, dict):
+            print("Warning: Config file must contain a dictionary/object")
+            return {}
+
+        return config
+    except json.JSONDecodeError:
+        print("Warning: Failed to parse config file as JSON")
+        return {}
+    except Exception as e:
+        print(f"Warning: Error reading config file: {str(e)}")
+```
+
+> JP: ?? Python ????test_args.json ??????? workflow ??????run/test ????? companion ????? file?error path????????????????????

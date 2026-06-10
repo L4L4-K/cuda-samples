@@ -81,6 +81,181 @@ English anchor: read `globalToShmemAsyncCopy` as a focused example of the CUDA c
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/3_CUDA_Features/globalToShmemAsyncCopy/CMakeLists.txt:1-44
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(globalToShmemAsyncCopy LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# This sample is not supported on QNX
+if(CMAKE_SYSTEM_NAME STREQUAL "QNX")
+    message(STATUS "Will not build sample ${PROJECT_NAME} - not supported on QNX")
+    return()
+endif()
+
+# Source file
+# Add target for globalToShmemAsyncCopy
+add_executable(globalToShmemAsyncCopy globalToShmemAsyncCopy.cu)
+
+target_compile_options(globalToShmemAsyncCopy PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(globalToShmemAsyncCopy PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(globalToShmemAsyncCopy PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/globalToShmemAsyncCopy/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `globalToShmemAsyncCopy.cu`
+
+Source: cpp/3_CUDA_Features/globalToShmemAsyncCopy/globalToShmemAsyncCopy.cu:38-61
+```cuda
+ * CUDA programming principles, not with the goal of providing the most
+ * performant generic kernel for matrix multiplication.
+ */
+
+// System includes
+#include <assert.h>
+#include <stdio.h>
+
+// CUDA runtime
+#include <cuda/pipeline>
+#include <cuda_runtime.h>
+
+#if __CUDA_ARCH__ >= 700
+#include <cuda/barrier>
+#endif
+#include <cooperative_groups.h>
+
+namespace cg = cooperative_groups;
+
+// Helper functions and utilities to work with CUDA
+#include <helper_cuda.h>
+#include <helper_functions.h>
+
+enum kernels {
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/globalToShmemAsyncCopy/globalToShmemAsyncCopy.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/globalToShmemAsyncCopy/globalToShmemAsyncCopy.cu:93-112
+```cuda
+    // Multi-stage pipeline version
+    constexpr size_t maxPipelineStages = 4;
+
+    // Declaration of the shared memory array As used to
+    // store the sub-matrix of A for each stage
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    __shared__ alignas(alignof(float4)) float As[maxPipelineStages][BLOCK_SIZE][BLOCK_SIZE];
+
+    // Declaration of the shared memory array Bs used to
+    // store the sub-matrix of B for each stage
+    __shared__ alignas(alignof(float4)) float Bs[maxPipelineStages][BLOCK_SIZE][BLOCK_SIZE];
+
+    float Csub = 0.0;
+
+    // Index of the first sub-matrix of A processed by the block
+    // JP: `blockIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    const int aBegin = wA * (BLOCK_SIZE)*blockIdx.y;
+
+    // Index of the last sub-matrix of A processed by the block
+    const int aEnd = aBegin + wA - 1;
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/globalToShmemAsyncCopy/globalToShmemAsyncCopy.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/globalToShmemAsyncCopy/globalToShmemAsyncCopy.cu:809-828
+```cuda
+{
+    // Allocate host memory for matrices A and B
+    unsigned int size_A     = dimsA.x * dimsA.y;
+    unsigned int mem_size_A = sizeof(float) * size_A;
+    float       *h_A;
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
+    checkCudaErrors(cudaMallocHost(&h_A, mem_size_A));
+    unsigned int size_B     = dimsB.x * dimsB.y;
+    unsigned int mem_size_B = sizeof(float) * size_B;
+    float       *h_B;
+    checkCudaErrors(cudaMallocHost(&h_B, mem_size_B));
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+    cudaStream_t stream;
+
+    // Initialize host memory
+    const float valB = 2.10f;
+    ConstantInit(h_A, size_A, 1.0f);
+    ConstantInit(h_B, size_B, valB);
+
+    // Allocate device memory
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/globalToShmemAsyncCopy/globalToShmemAsyncCopy.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/globalToShmemAsyncCopy/globalToShmemAsyncCopy.cu:843-870
+```cuda
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&d_A), mem_size_A));
+    checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&d_B), mem_size_B));
+    checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&d_C), mem_size_C));
+    // Allocate CUDA events that we'll use for timing
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    cudaEvent_t start, stop;
+    checkCudaErrors(cudaEventCreate(&start));
+    checkCudaErrors(cudaEventCreate(&stop));
+
+    checkCudaErrors(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+
+    // copy host memory to device
+    // JP: `cudaMemcpyAsync`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpyAsync(d_A, h_A, mem_size_A, cudaMemcpyHostToDevice, stream));
+    checkCudaErrors(cudaMemcpyAsync(d_B, h_B, mem_size_B, cudaMemcpyHostToDevice, stream));
+    checkCudaErrors(cudaMemsetAsync(d_C, 0, mem_size_C, stream));
+
+    // Setup execution parameters
+    dim3 threads(blockSize, blockSize);
+    dim3 grid(dimsB.x / threads.x, dimsA.y / threads.y);
+
+    // Here the block size is 16x18, where first 16 rows are consumer thread group
+    // and last 2 rows (1 warp) is producer thread group
+    dim3 threadsSharedStateKernel(blockSize, blockSize + 2, 1);
+    dim3 gridSharedStateKernel(dimsB.x / threadsSharedStateKernel.x, dimsA.y / threadsSharedStateKernel.x);
+
+    printf("Running kernel = %d - %s\n", kernel_number, kernelNames[kernel_number]);
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/globalToShmemAsyncCopy/globalToShmemAsyncCopy.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
@@ -98,7 +273,7 @@ English anchor: read `globalToShmemAsyncCopy` as a focused example of the CUDA c
 | `cudaStreamSynchronize` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
 | `cudaEventRecord` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
 | `cudaEventDestroy` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
-| `blockDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。

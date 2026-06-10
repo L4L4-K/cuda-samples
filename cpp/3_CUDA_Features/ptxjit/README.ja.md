@@ -84,6 +84,218 @@ English anchor: read `ptxjit` as a focused example of the CUDA concepts used in 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/3_CUDA_Features/ptxjit/CMakeLists.txt:1-71
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(ptxjit LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for ptxjit
+add_executable(ptxjit ptxjit.cpp)
+
+target_compile_options(ptxjit PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(ptxjit PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(ptxjit PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_include_directories(ptxjit PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+target_link_libraries(ptxjit PUBLIC
+    CUDA::cuda_driver
+    CUDA::cudart
+)
+
+set(CUDA_PTX_FILE "${CMAKE_CURRENT_BINARY_DIR}/ptxjit_kernel64.ptx")
+set(CUDA_KERNEL_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/ptxjit_kernel.cu")
+
+if(CMAKE_SYSTEM_NAME STREQUAL "QNX")
+    set(INCLUDES_LIST)
+    foreach(dir ${CUDAToolkit_INCLUDE_DIRS})
+        list(APPEND INCLUDES_LIST "-I${dir}")
+    endforeach()
+    string(JOIN " " INCLUDES "${INCLUDES_LIST}")
+endif()
+
+add_custom_command(
+    OUTPUT ${CUDA_PTX_FILE}
+    COMMAND ${CMAKE_CUDA_COMPILER} ${INCLUDES} ${ALL_CCFLAGS} -Wno-deprecated-gpu-targets -o ${CUDA_PTX_FILE} -ptx ${CUDA_KERNEL_SOURCE}
+    DEPENDS ${CUDA_KERNEL_SOURCE}
+    COMMENT "Building CUDA PTX: ${CUDA_PTX_FILE}"
+)
+
+
+# Create a dummy target for fatbin generation
+add_custom_target(generate_ptxjit_ptx ALL DEPENDS ${CUDA_PTX_FILE})
+
+# Ensure ptxjit depends on the fatbin
+add_dependencies(ptxjit generate_ptxjit_ptx)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/ptxjit/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `ptxjit.cpp`
+
+Source: cpp/3_CUDA_Features/ptxjit/ptxjit.cpp:38-56
+```cpp
+#include <iostream>
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
+
+// CUDA driver & runtime
+#include <cuda.h>
+#include <cuda_runtime.h>
+
+// helper functions and utilities to work with CUDA
+#define CUDA_DRIVER_API
+#include <helper_cuda.h>
+#include <helper_cuda_drvapi.h>
+#include <helper_functions.h> // helper for shared that are common to CUDA Samples
+
+#if defined(_WIN64) || defined(__LP64__)
+#define PTX_FILE "ptxjit_kernel64.ptx"
+#else
+#define PTX_FILE "ptxjit_kernel32.ptx"
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/ptxjit/ptxjit.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/ptxjit/ptxjit.cpp:79-98
+```cpp
+
+        if (module_path.rfind(".ptx") != std::string::npos) {
+            FILE *fp = fopen(module_path.c_str(), "rb");
+            fseek(fp, 0, SEEK_END);
+            int   file_size = ftell(fp);
+            char *buf       = new char[file_size + 1];
+            fseek(fp, 0, SEEK_SET);
+            fread(buf, sizeof(char), file_size, fp);
+            fclose(fp);
+            buf[file_size] = '\0';
+            ptx_source     = buf;
+            delete[] buf;
+        }
+
+        return true;
+    }
+}
+
+// JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
+void ptxJIT(int argc, char **argv, CUmodule *phModule, CUfunction *phKernel, CUlinkState *lState)
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/ptxjit/ptxjit.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/ptxjit/ptxjit.cpp:162-185
+```cpp
+    checkCudaErrors(cuModuleLoadData(phModule, cuOut));
+
+    // Locate the kernel entry poin
+    checkCudaErrors(cuModuleGetFunction(phKernel, *phModule, "myKernel"));
+
+    // Destroy the linker invocation
+    checkCudaErrors(cuLinkDestroy(*lState));
+}
+
+int main(int argc, char **argv)
+{
+    const unsigned int nThreads = 256;
+    const unsigned int nBlocks  = 64;
+    const size_t       memSize  = nThreads * nBlocks * sizeof(int);
+
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
+    CUmodule    hModule = 0;
+    CUfunction  hKernel = 0;
+    CUlinkState lState;
+    int        *d_data = 0;
+    int        *h_data = 0;
+
+    int cuda_device = 0;
+
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/ptxjit/ptxjit.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/ptxjit/ptxjit.cpp:216-240
+```cpp
+    dim3 grid(nBlocks, 1, 1);
+
+    void *args[1] = {&d_data};
+
+    // Launch the kernel (Driver API_)
+    // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    checkCudaErrors(cuLaunchKernel(hKernel, grid.x, grid.y, grid.z, block.x, block.y, block.z, 0, NULL, args, NULL));
+    std::cout << "CUDA kernel launched" << std::endl;
+
+    // Copy the result back to the host
+    // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpy(h_data, d_data, memSize, cudaMemcpyDeviceToHost));
+
+    // Check the result
+    bool dataGood = true;
+
+    for (unsigned int i = 0; dataGood && i < nBlocks * nThreads; i++) {
+        if (h_data[i] != (int)i) {
+            std::cerr << "Error at " << i << std::endl;
+            dataGood = false;
+        }
+    }
+
+    // Cleanup
+    if (d_data) {
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/ptxjit/ptxjit.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `ptxjit_kernel.cu`
+
+Source: cpp/3_CUDA_Features/ptxjit/ptxjit_kernel.cu:33-38
+```cuda
+extern "C" __global__ void myKernel(int *data)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int tid   = blockIdx.x * blockDim.x + threadIdx.x;
+    data[tid] = tid;
+}
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/ptxjit/ptxjit_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

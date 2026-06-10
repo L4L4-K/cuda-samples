@@ -80,7 +80,7 @@ English anchor: read `bicubicTexture` as a focused example of the CUDA concepts 
 
 ## Concrete Reading Path
 
-- `bicubicTexture.cpp`: focus on `CUDA`, `cudaDeviceSynchronize`, `cudaGraphicsResource`, `cudaGraphicsMapResources`, `cudaGraphicsResourceGetMappedPointer`.
+- `bicubicTexture.cpp`: focus on `CUDA`, `launch`, `cudaDeviceSynchronize`, `cudaGraphicsResource`, `cudaGraphicsMapResources`.
 - `bicubicTexture_cuda.cu`: focus on `cudaAddressModeClamp`, `cudaTextureDesc`, `launch`, `cudaMallocArray`, `cudaMemcpyHostToDevice`.
 - `bicubicTexture_kernel.cuh`: focus on `cudaTextureObject_t`, `blockIdx`, `blockDim`, `threadIdx`, `launch`.
 
@@ -90,11 +90,289 @@ English anchor: read `bicubicTexture` as a focused example of the CUDA concepts 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/5_Domain_Specific/bicubicTexture/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(bicubicTexture LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/bicubicTexture/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `bicubicTexture.cpp`
+
+Source: cpp/5_Domain_Specific/bicubicTexture/bicubicTexture.cpp:30-48
+```cpp
+    Bicubic texture filtering sample
+    sgreen 6/2008
+
+    This sample demonstrates how to efficiently implement bicubic texture
+    filtering in CUDA.
+
+    Bicubic filtering is a higher order interpolation method that produces
+    smoother results than bilinear interpolation:
+    http://en.wikipedia.org/wiki/Bicubic
+
+    It requires reading a 4 x 4 pixel neighbourhood rather than the
+    2 x 2 area required by bilinear filtering.
+
+    Current graphics hardware doesn't support bicubic filtering natively,
+    but it is possible to compose a bicubic filter using just 4 bilinear
+    lookups by offsetting the sample position within each texel and weighting
+    the samples correctly. The only disadvantage to this method is that the
+    hardware only maintains 9-bits of filtering precision within each texel.
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/bicubicTexture/bicubicTexture.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/bicubicTexture/bicubicTexture.cpp:215-234
+```cpp
+    sdkStartTimer(&timer);
+
+    // map PBO to get CUDA device pointer
+    uchar4 *d_output;
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+    checkCudaErrors(cudaGraphicsMapResources(1, &cuda_pbo_resource, 0));
+    size_t num_bytes;
+    checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&d_output, &num_bytes, cuda_pbo_resource));
+    render(imageWidth, imageHeight, tx, ty, scale, cx, cy, blockSize, gridSize, g_FilterMode, d_output);
+
+    checkCudaErrors(cudaGraphicsUnmapResources(1, &cuda_pbo_resource, 0));
+
+    // Common display path
+    {
+        // display results
+        glClear(GL_COLOR_BUFFER_BIT);
+
+#if USE_BUFFER_TEX
+        // display using buffer texture
+        glBindTexture(GL_TEXTURE_BUFFER_EXT, bufferTex);
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/bicubicTexture/bicubicTexture.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/bicubicTexture/bicubicTexture.cpp:487-506
+```cpp
+    glTexParameteri(GL_TEXTURE_TYPE, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_TYPE, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glBindTexture(GL_TEXTURE_TYPE, 0);
+#endif
+
+    // calculate new grid size
+    gridSize = dim3(iDivUp(width, blockSize.x), iDivUp(height, blockSize.y));
+}
+
+void mainMenu(int i) { keyboard(i, 0, 0); }
+
+void initMenus()
+{
+    glutCreateMenu(mainMenu);
+    glutAddMenuEntry("Nearest      [1]", '1');
+    glutAddMenuEntry("Bilinear     [2]", '2');
+    glutAddMenuEntry("Bicubic      [3]", '3');
+    glutAddMenuEntry("Fast Bicubic [4]", '4');
+    glutAddMenuEntry("Catmull-Rom  [5]", '5');
+    glutAddMenuEntry("Zoom in      [=]", '=');
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/bicubicTexture/bicubicTexture.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/bicubicTexture/bicubicTexture.cpp:527-546
+```cpp
+
+    for (int i = 0; i < iterations; ++i) {
+        render(imageWidth, imageHeight, tx, ty, scale, cx, cy, blockSize, gridSize, g_FilterMode, d_output);
+    }
+
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    cudaDeviceSynchronize();
+    sdkStopTimer(&timer);
+    float time = sdkGetTimerValue(&timer) / (float)iterations;
+
+    // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+    checkCudaErrors(cudaGraphicsUnmapResources(1, &cuda_pbo_resource, 0));
+
+    printf("time: %0.3f ms, %f Mpixels/sec\n", time, (width * height / (time * 0.001f)) / 1e6);
+}
+
+void runAutoTest(int argc, char **argv, const char *dump_filename, eFilterMode filter_mode)
+{
+    cudaDeviceProp deviceProps;
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/bicubicTexture/bicubicTexture.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `bicubicTexture_cuda.cu`
+
+Source: cpp/5_Domain_Specific/bicubicTexture/bicubicTexture_cuda.cu:29-77
+```cuda
+#ifndef _BICUBICTEXTURE_CU_
+#define _BICUBICTEXTURE_CU_
+
+#include <helper_math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// includes, cuda
+#include <helper_cuda.h>
+
+typedef unsigned int  uint;
+typedef unsigned char uchar;
+
+#include "bicubicTexture_kernel.cuh"
+
+cudaArray *d_imageArray = 0;
+
+extern "C" void initTexture(int imageWidth, int imageHeight, uchar *h_data)
+{
+    // allocate array and copy image data
+    cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc(8, 0, 0, 0, cudaChannelFormatKindUnsigned);
+    // JP: `cudaMallocArray`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMallocArray(&d_imageArray, &channelDesc, imageWidth, imageHeight));
+    checkCudaErrors(cudaMemcpy2DToArray(d_imageArray,
+                                        0,
+                                        0,
+                                        h_data,
+                                        imageWidth * sizeof(uchar),
+                                        imageWidth * sizeof(uchar),
+                                        imageHeight,
+                                        // JP: `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+                                        cudaMemcpyHostToDevice));
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    free(h_data);
+
+    cudaResourceDesc texRes;
+    memset(&texRes, 0, sizeof(cudaResourceDesc));
+
+    texRes.resType         = cudaResourceTypeArray;
+    texRes.res.array.array = d_imageArray;
+
+    cudaTextureDesc texDescr;
+    memset(&texDescr, 0, sizeof(cudaTextureDesc));
+
+    texDescr.normalizedCoords = false;
+    texDescr.filterMode       = cudaFilterModeLinear;
+    texDescr.addressMode[0]   = cudaAddressModeClamp;
+    texDescr.addressMode[1]   = cudaAddressModeClamp;
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/bicubicTexture/bicubicTexture_cuda.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/bicubicTexture/bicubicTexture_cuda.cu:112-131
+```cuda
+{
+    // call CUDA kernel, writing results to PBO memory
+    switch (filter_mode) {
+    case MODE_NEAREST:
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+        d_render<<<gridSize, blockSize>>>(output, width, height, tx, ty, scale, cx, cy, texObjPoint);
+        break;
+
+    case MODE_BILINEAR:
+        d_render<<<gridSize, blockSize>>>(output, width, height, tx, ty, scale, cx, cy, texObjLinear);
+        break;
+
+    case MODE_BICUBIC:
+        d_renderBicubic<<<gridSize, blockSize>>>(output, width, height, tx, ty, scale, cx, cy, texObjPoint);
+        break;
+
+    case MODE_FAST_BICUBIC:
+        d_renderFastBicubic<<<gridSize, blockSize>>>(output, width, height, tx, ty, scale, cx, cy, texObjLinear);
+        break;
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/bicubicTexture/bicubicTexture_cuda.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `bicubicTexture_kernel.cuh`
+
+Source: cpp/5_Domain_Specific/bicubicTexture/bicubicTexture_kernel.cuh:30-48
+```cuda
+    Bicubic filtering
+    See GPU Gems 2: "Fast Third-Order Texture Filtering", Sigg & Hadwiger
+    https://developer.nvidia.com/gpugems/gpugems2/part-iii-high-quality-rendering/chapter-20-fast-third-order-texture-filtering
+
+    Reformulation thanks to Keenan Crane
+*/
+
+#ifndef _BICUBICTEXTURE_KERNEL_CUH_
+#define _BICUBICTEXTURE_KERNEL_CUH_
+
+enum Mode { MODE_NEAREST, MODE_BILINEAR, MODE_BICUBIC, MODE_FAST_BICUBIC, MODE_CATROM };
+
+cudaTextureObject_t texObjPoint, texObjLinear;
+
+// w0, w1, w2, and w3 are the four cubic B-spline basis functions
+__host__ __device__ float w0(float a)
+{
+    //    return (1.0f/6.0f)*(-a*a*a + 3.0f*a*a - 3.0f*a + 1.0f);
+    return (1.0f / 6.0f) * (a * (a * (-a + 3.0f) - 3.0f) + 1.0f); // optimized
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/bicubicTexture/bicubicTexture_kernel.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/bicubicTexture/bicubicTexture_kernel.cuh:276-295
+```cuda
+                         float               scale,
+                         float               cx,
+                         float               cy,
+                         cudaTextureObject_t texObj)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    uint x = __umul24(blockIdx.x, blockDim.x) + threadIdx.x;
+    uint y = __umul24(blockIdx.y, blockDim.y) + threadIdx.y;
+    uint i = __umul24(y, width) + x;
+
+    float u = (x - cx) * scale + cx + tx;
+    float v = (y - cy) * scale + cy + ty;
+
+    if ((x < width) && (y < height)) {
+        // write output color
+        float c = tex2D<float>(texObj, u, v);
+        // float c = tex2DBilinear<uchar, float>(tex, u, v);
+        // float c = tex2DBilinearGather<uchar, uchar4>(tex2, u, v, 0) / 255.0f;
+        d_output[i] = make_uchar4(c * 0xff, c * 0xff, c * 0xff, 0);
+    }
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/bicubicTexture/bicubicTexture_kernel.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
 | - | - |
 | `cudaTextureObject_t` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `blockIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `blockDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `threadIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
@@ -107,7 +385,6 @@ English anchor: read `bicubicTexture` as a focused example of the CUDA concepts 
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
 | `cudaMemcpy` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
-| `cudaMallocArray` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。

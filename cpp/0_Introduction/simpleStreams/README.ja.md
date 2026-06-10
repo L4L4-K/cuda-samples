@@ -71,7 +71,7 @@ English anchor: read `simpleStreams` as a focused example of the CUDA concepts u
 
 ## Concrete Reading Path
 
-- `simpleStreams.cu`: focus on `CUDA`, `cudaEventRecord`, `cudaMallocHost`, `launch`, `cudaEventSynchronize`.
+- `simpleStreams.cu`: focus on `CUDA`, `cudaEventRecord`, `launch`, `cudaMallocHost`, `cudaEventSynchronize`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
@@ -79,15 +79,199 @@ English anchor: read `simpleStreams` as a focused example of the CUDA concepts u
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/simpleStreams/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleStreams LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simpleStreams
+add_executable(simpleStreams simpleStreams.cu)
+
+target_compile_options(simpleStreams PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleStreams PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simpleStreams PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleStreams/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleStreams.cu`
+
+Source: cpp/0_Introduction/simpleStreams/simpleStreams.cu:50-97
+```cuda
+const char *sSDKsample = "simpleStreams";
+
+// JP: `cudaEventDefault`, `cudaEventBlockingSync`, `cudaEventDisableTiming`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+const char *sEventSyncMethod[] = {"cudaEventDefault", "cudaEventBlockingSync", "cudaEventDisableTiming", NULL};
+
+const char *sDeviceSyncMethod[] = {"cudaDeviceScheduleAuto",
+                                   "cudaDeviceScheduleSpin",
+                                   "cudaDeviceScheduleYield",
+                                   "INVALID",
+                                   "cudaDeviceScheduleBlockingSync",
+                                   NULL};
+
+// System includes
+#include <assert.h>
+#include <stdio.h>
+
+// CUDA runtime
+#include <cuda_runtime.h>
+
+// helper functions and utilities to work with CUDA
+#include <helper_cuda.h>
+#include <helper_functions.h>
+
+#ifndef WIN32
+#include <sys/mman.h> // for mmap() / munmap()
+#endif
+
+// Macro to aligned up to the memory size in question
+#define MEMORY_ALIGNMENT  4096
+#define ALIGN_UP(x, size) (((size_t)x + (size - 1)) & (~(size - 1)))
+
+__global__ void init_array(int *g_data, int *factor, int num_iterations)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    for (int i = 0; i < num_iterations; i++) {
+        g_data[idx] += *factor; // non-coalesced on purpose, to burn time
+    }
+}
+
+bool correct_data(int *a, const int n, const int c)
+{
+    for (int i = 0; i < n; i++) {
+        if (a[i] != c) {
+            printf("%d: %d %d\n", i, a[i], c);
+            return false;
+        }
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleStreams/simpleStreams.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleStreams/simpleStreams.cu:130-149
+```cuda
+    }
+    else
+#endif
+#endif
+    {
+        printf("> cudaMallocHost() allocating %4.2f Mbytes of system memory\n", (float)nbytes / 1048576.0f);
+        // allocate host memory (pinned is required for achieve asynchronicity)
+        checkCudaErrors(cudaMallocHost((void **)pp_a, nbytes));
+        *ppAligned_a = *pp_a;
+    }
+}
+
+inline void FreeHostMemory(bool bPinGenericMemory, int **pp_a, int **ppAligned_a, int nbytes)
+{
+#if CUDART_VERSION >= 4000
+#if !defined(__arm__) && !defined(__aarch64__)
+    // CUDA 4.0 support pinning of generic host memory
+    if (bPinGenericMemory) {
+        // unpin and delete host memory
+        // JP: この anchor では pinned host memory の登録/確保/解放です。async transfer や overlap の条件と lifetime を確認します。
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleStreams/simpleStreams.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleStreams/simpleStreams.cu:156-175
+```cuda
+    }
+    else
+#endif
+#endif
+    {
+        // JP: `cudaFreeHost`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        cudaFreeHost(*pp_a);
+    }
+}
+
+static const char *sSyncMethod[] = {"0 (Automatic Blocking)",
+                                    "1 (Spin Blocking)",
+                                    "2 (Yield Blocking)",
+                                    "3 (Undefined Blocking Method)",
+                                    "4 (Blocking Sync Event) = low CPU utilization",
+                                    NULL};
+
+void printHelp()
+{
+    printf("Usage: %s [options below]\n", sSDKsample);
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleStreams/simpleStreams.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleStreams/simpleStreams.cu:188-207
+```cuda
+#define DEFAULT_PINNED_GENERIC_MEMORY false
+#else
+#define DEFAULT_PINNED_GENERIC_MEMORY true
+#endif
+
+int main(int argc, char **argv)
+{
+    int   cuda_device = 0;
+    int   nstreams    = 4;                        // number of streams for CUDA calls
+    int   nreps       = 10;                       // number of times each experiment is repeated
+    int   n           = 16 * 1024 * 1024;         // number of ints in the data set
+    int   nbytes      = n * sizeof(int);          // number of data bytes
+    dim3  threads, blocks;                        // kernel launch configuration
+    float elapsed_time, time_memcpy, time_kernel; // timing variables
+    float scale_factor = 1.0f;
+
+    // allocate generic memory and pin it laster instead of using cudaHostAlloc()
+
+    bool bPinGenericMemory  = DEFAULT_PINNED_GENERIC_MEMORY; // we want this to be the default behavior
+    int  device_sync_method = cudaDeviceBlockingSync;        // by default we use BlockingSync
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleStreams/simpleStreams.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
 | - | - |
 | `cudaEventRecord` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
 | `cudaMallocHost` | pinned host memory を作り、async copy や DMA の前提を作る API です。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaEventSynchronize` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
 | `cudaEventElapsedTime` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
-| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaHostRegister` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
 | `cudaMemset` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |

@@ -81,7 +81,7 @@ English anchor: read `bindlessTexture` as a focused example of the CUDA concepts
 
 ## Concrete Reading Path
 
-- `bindlessTexture.cpp`: focus on `CUDA`, `cudaTextureObjects`, `cudaExtent`, `cudaGraphicsResource`, `cudaMalloc`.
+- `bindlessTexture.cpp`: focus on `CUDA`, `launch`, `cudaTextureObjects`, `cudaExtent`, `cudaGraphicsResource`.
 - `bindlessTexture.h`: focus on `CUDA`, `cudaExtent`, `cudaResourceType`, `cudaArray_t`, `cudaMipmappedArray_t`.
 - `bindlessTexture_kernel.cu`: focus on `cudaAddressModeClamp`, `cudaTextureObject_t`, `cudaResourceDesc`, `cudaTextureDesc`, `blockIdx`.
 
@@ -90,6 +90,302 @@ English anchor: read `bindlessTexture` as a focused example of the CUDA concepts
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/3_CUDA_Features/bindlessTexture/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(bindlessTexture LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/bindlessTexture/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `bindlessTexture.cpp`
+
+Source: cpp/3_CUDA_Features/bindlessTexture/bindlessTexture.cpp:30-48
+```cpp
+  Bindless Texture/Surface
+
+  This sample generates a few 2D textures and uses cudaTextureObjects to
+  perform pseudo virtual texturing for display. One 2D texture stores
+  references to other textures.
+  Furthermore use of mip mapping is shown using both cudaTextureObjects
+  and cudaSurfaceObjects.
+
+  Look into the bindlessTexture_kernel.cu file for most relevant code.
+*/
+
+#include <helper_gl.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <vector>
+#if defined(__APPLE__) || defined(MACOSX)
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/bindlessTexture/bindlessTexture.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/bindlessTexture/bindlessTexture.cpp:124-143
+```cpp
+// render image using CUDA
+void render()
+{
+    // map PBO to get CUDA device pointer
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+    checkCudaErrors(cudaGraphicsMapResources(1, &cuda_pbo_resource, 0));
+    size_t num_bytes;
+    checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&d_output, &num_bytes, cuda_pbo_resource));
+
+    // call CUDA kernel, writing results to PBO
+    renderAtlasImage(windowGridSize, windowBlockSize, d_output, windowSize.x, windowSize.y, lod);
+
+    getLastCudaError("render_kernel failed");
+
+    checkCudaErrors(cudaGraphicsUnmapResources(1, &cuda_pbo_resource, 0));
+}
+
+// display results using OpenGL (called by GLUT)
+void display()
+{
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/bindlessTexture/bindlessTexture.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/bindlessTexture/bindlessTexture.cpp:260-279
+```cpp
+    if (!fp) {
+        fprintf(stderr, "Error opening file '%s'\n", filename);
+        return 0;
+    }
+
+    uchar *data = (uchar *)malloc(size);
+    size_t read = fread(data, 1, size, fp);
+    fclose(fp);
+
+    printf("Read '%s', %zu bytes\n", filename, read);
+
+    return data;
+}
+
+void initGL(int *argc, char **argv)
+{
+    // initialize GLUT callback functions
+    glutInit(argc, argv);
+    glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE);
+    glutInitWindowSize(windowSize.x, windowSize.y);
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/bindlessTexture/bindlessTexture.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/bindlessTexture/bindlessTexture.cpp:297-333
+```cpp
+    checkCudaErrors(cudaMalloc((void **)&d_output, windowBytes));
+
+    // render the volumeData
+    renderAtlasImage(windowGridSize, windowBlockSize, d_output, windowSize.x, windowSize.y, lod);
+
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    checkCudaErrors(cudaDeviceSynchronize());
+    getLastCudaError("render_kernel failed");
+
+    void *h_output = malloc(windowBytes);
+    // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpy(h_output, d_output, windowBytes, cudaMemcpyDeviceToHost));
+    sdkDumpBin(h_output, (unsigned int)windowBytes, "bindlessTexture.bin");
+
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+    bool bTestResult = sdkCompareBin2BinFloat("bindlessTexture.bin",
+                                              sdkFindFilePath(ref_file, exec_path),
+                                              windowSize.x * windowSize.y,
+                                              MAX_EPSILON_ERROR,
+                                              THRESHOLD,
+                                              exec_path);
+
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaFree(d_output));
+    free(h_output);
+    deinitAtlasAndImages();
+
+    sdkStopTimer(&timer);
+    sdkDeleteTimer(&timer);
+
+    exit(bTestResult ? EXIT_SUCCESS : EXIT_FAILURE);
+}
+
+void loadImageData(const char *exe_path)
+{
+    std::vector<Image> images;
+
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/bindlessTexture/bindlessTexture.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `bindlessTexture.h`
+
+Source: cpp/3_CUDA_Features/bindlessTexture/bindlessTexture.h:29-67
+```cpp
+#ifndef _BINDLESSTEXTURE_CU_
+#define _BINDLESSTEXTURE_CU_
+
+// includes, cuda
+#include <cuda_runtime.h>
+#include <vector_types.h>
+
+// CUDA utilities and system includes
+#include <helper_cuda.h>
+#include <vector_types.h>
+
+typedef unsigned int  uint;
+typedef unsigned char uchar;
+
+#pragma pack(push, 4)
+struct Image
+{
+    void                *h_data;
+    cudaExtent           size;
+    cudaResourceType     type;
+    cudaArray_t          dataArray;
+    cudaMipmappedArray_t mipmapArray;
+    cudaTextureObject_t  textureObject;
+
+    Image() { memset(this, 0, sizeof(Image)); }
+};
+#pragma pack(pop)
+
+inline void _checkHost(bool test, const char *condition, const char *file, int line, const char *func)
+{
+    if (!test) {
+        fprintf(stderr, "HOST error at %s:%d (%s) \"%s\" \n", file, line, condition, func);
+        exit(EXIT_FAILURE);
+    }
+}
+
+#define checkHost(condition) _checkHost(condition, #condition, __FILE__, __LINE__, __FUNCTION__)
+
+#endif
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/bindlessTexture/bindlessTexture.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `bindlessTexture_kernel.cu`
+
+Source: cpp/3_CUDA_Features/bindlessTexture/bindlessTexture_kernel.cu:30-49
+```cuda
+  This sample has two kernels, one doing the rendering every frame, and
+  another one used to generate the mip map levels at startup.
+
+  For rendering we use a "virtual" texturing approach, where one 2d texture
+  stores pointers to the actual textures used. This can be achieved by the
+  new cudaTextureObject introduced in CUDA 5.0 and requiring sm3+ hardware.
+
+  The mipmap generation kernel uses cudaSurfaceObject and cudaTextureObject
+  passed as kernel arguments to compute the higher mip map level based on
+  the lower.
+*/
+
+#ifndef _BINDLESSTEXTURE_KERNEL_CU_
+#define _BINDLESSTEXTURE_KERNEL_CU_
+
+#include <helper_cuda.h>
+#include <helper_math.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/bindlessTexture/bindlessTexture_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/bindlessTexture/bindlessTexture_kernel.cu:90-109
+```cuda
+// the atlas texture stores the 64 bit cudaTextureObjects
+// we use it for "virtual" texturing
+
+__global__ void d_render(uchar4 *d_output, uint imageW, uint imageH, float lod, cudaTextureObject_t atlasTexture)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    uint x = blockIdx.x * blockDim.x + threadIdx.x;
+    uint y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    float u = x / (float)imageW;
+    float v = y / (float)imageH;
+
+    if ((x < imageW) && (y < imageH)) {
+        // read from 2D atlas texture and decode texture object
+        uint2               texCoded = tex2D<uint2>(atlasTexture, u, v);
+        cudaTextureObject_t tex      = decodeTextureObject(texCoded);
+
+        // read from cuda texture object, use template to specify what data will be
+        // returned. tex2DLod allows us to pass the lod (mip map level) directly.
+        // There is other functions with CUDA 5, e.g. tex2DGrad, that allow you
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/bindlessTexture/bindlessTexture_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/bindlessTexture/bindlessTexture_kernel.cu:233-263
+```cuda
+        dim3 blockSize(16, 16, 1);
+        dim3 gridSize(((uint)width + blockSize.x - 1) / blockSize.x, ((uint)height + blockSize.y - 1) / blockSize.y, 1);
+
+        d_mipmap<<<gridSize, blockSize>>>(surfOutput, texInput, (uint)width, (uint)height);
+
+        // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+        checkCudaErrors(cudaDeviceSynchronize());
+        checkCudaErrors(cudaGetLastError());
+
+        // JP: `cudaDestroySurfaceObject`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        checkCudaErrors(cudaDestroySurfaceObject(surfOutput));
+
+        checkCudaErrors(cudaDestroyTextureObject(texInput));
+
+#ifdef SHOW_MIPMAPS
+        // we blit the current mipmap back into first level
+        cudaMemcpy3DParms copyParams = {0};
+        copyParams.dstArray          = levelFirst;
+        copyParams.srcArray          = levelTo;
+        copyParams.extent            = make_cudaExtent(width, height, 1);
+        copyParams.kind              = cudaMemcpyDeviceToDevice;
+        // JP: `cudaMemcpy3D`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+        checkCudaErrors(cudaMemcpy3D(&copyParams));
+#endif
+
+        level++;
+    }
+}
+
+uint getMipMapLevels(cudaExtent size)
+{
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/bindlessTexture/bindlessTexture_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 
@@ -102,13 +398,13 @@ English anchor: read `bindlessTexture` as a focused example of the CUDA concepts
 | `cudaDeviceSynchronize` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaGetMipmappedArrayLevel` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaTextureDesc` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaArray_t` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `blockIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `blockDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `threadIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `cudaCreateTextureObject` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaDestroyTextureObject` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
-| `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。

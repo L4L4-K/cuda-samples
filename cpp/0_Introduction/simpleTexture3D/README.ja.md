@@ -78,7 +78,7 @@ English anchor: read `simpleTexture3D` as a focused example of the CUDA concepts
 
 ## Concrete Reading Path
 
-- `simpleTexture3D.cpp`: focus on `CUDA`, `cudaExtent`, `cudaGraphicsResource`, `cudaGraphicsUnmapResources`, `cudaMalloc`.
+- `simpleTexture3D.cpp`: focus on `CUDA`, `launch`, `cudaExtent`, `cudaGraphicsResource`, `cudaGraphicsUnmapResources`.
 - `simpleTexture3D_kernel.cu`: focus on `cudaAddressModeWrap`, `cudaResourceDesc`, `cudaTextureDesc`, `blockIdx`, `blockDim`.
 
 > **日本語**
@@ -87,10 +87,258 @@ English anchor: read `simpleTexture3D` as a focused example of the CUDA concepts
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/simpleTexture3D/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleTexture3D LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleTexture3D/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleTexture3D.cpp`
+
+Source: cpp/0_Introduction/simpleTexture3D/simpleTexture3D.cpp:30-48
+```cpp
+  3D texture sample
+
+  This sample loads a 3D volume from disk and displays slices through it
+  using 3D texture lookups.
+*/
+
+#include <helper_gl.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#if defined(__APPLE__) || defined(MACOSX)
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#include <GLUT/glut.h>
+#ifndef glutCloseFunc
+#define glutCloseFunc glutWMCloseFunc
+#endif
+#else
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleTexture3D/simpleTexture3D.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleTexture3D/simpleTexture3D.cpp:133-152
+```cpp
+void render()
+{
+    // map PBO to get CUDA device pointer
+    g_GraphicsMapFlag++;
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+    checkCudaErrors(cudaGraphicsMapResources(1, &cuda_pbo_resource, 0));
+    size_t num_bytes;
+    checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&d_output, &num_bytes, cuda_pbo_resource));
+    // printf("CUDA mapped PBO: May access %ld bytes\n", num_bytes);
+
+    // call CUDA kernel, writing results to PBO
+    render_kernel(gridSize, blockSize, d_output, width, height, w);
+
+    getLastCudaError("render_kernel failed");
+
+    if (g_GraphicsMapFlag) {
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+        checkCudaErrors(cudaGraphicsUnmapResources(1, &cuda_pbo_resource, 0));
+        g_GraphicsMapFlag--;
+    }
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleTexture3D/simpleTexture3D.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleTexture3D/simpleTexture3D.cpp:272-291
+```cpp
+    if (!fp) {
+        fprintf(stderr, "Error opening file '%s'\n", filename);
+        return 0;
+    }
+
+    uchar *data = (uchar *)malloc(size);
+    size_t read = fread(data, 1, size, fp);
+    fclose(fp);
+
+    printf("Read '%s', %zu bytes\n", filename, read);
+
+    return data;
+}
+
+void initGL(int *argc, char **argv)
+{
+    // initialize GLUT callback functions
+    glutInit(argc, argv);
+    glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE);
+    glutInitWindowSize(width, height);
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleTexture3D/simpleTexture3D.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleTexture3D/simpleTexture3D.cpp:307-343
+```cpp
+    checkCudaErrors(cudaMalloc((void **)&d_output, width * height * sizeof(GLubyte) * 4));
+
+    // render the volumeData
+    render_kernel(gridSize, blockSize, d_output, width, height, w);
+
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    checkCudaErrors(cudaDeviceSynchronize());
+    getLastCudaError("render_kernel failed");
+
+    void *h_output = malloc(width * height * sizeof(GLubyte) * 4);
+    // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpy(h_output, d_output, width * height * sizeof(GLubyte) * 4, cudaMemcpyDeviceToHost));
+    sdkDumpBin(h_output, width * height * sizeof(GLubyte) * 4, "simpleTexture3D.bin");
+
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+    bool bTestResult = sdkCompareBin2BinFloat("simpleTexture3D.bin",
+                                              sdkFindFilePath(ref_file, exec_path),
+                                              width * height,
+                                              MAX_EPSILON_ERROR,
+                                              THRESHOLD,
+                                              exec_path);
+
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaFree(d_output));
+    free(h_output);
+
+    sdkStopTimer(&timer);
+    sdkDeleteTimer(&timer);
+
+    exit(bTestResult ? EXIT_SUCCESS : EXIT_FAILURE);
+}
+
+void loadVolumeData(char *exec_path)
+{
+    // load volume data
+    const char *path = sdkFindFilePath(volumeFilename, exec_path);
+
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleTexture3D/simpleTexture3D.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleTexture3D_kernel.cu`
+
+Source: cpp/0_Introduction/simpleTexture3D/simpleTexture3D_kernel.cu:29-80
+```cuda
+#ifndef _SIMPLETEXTURE3D_KERNEL_CU_
+#define _SIMPLETEXTURE3D_KERNEL_CU_
+
+#include <helper_cuda.h>
+#include <helper_math.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef unsigned int  uint;
+typedef unsigned char uchar;
+
+cudaArray          *d_volumeArray = 0;
+cudaTextureObject_t tex; // 3D texture
+
+__global__ void d_render(uint *d_output, uint imageW, uint imageH, float w, cudaTextureObject_t texObj)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    uint x = __umul24(blockIdx.x, blockDim.x) + threadIdx.x;
+    uint y = __umul24(blockIdx.y, blockDim.y) + threadIdx.y;
+
+    float u = x / (float)imageW;
+    float v = y / (float)imageH;
+    // read from 3D texture
+    float voxel = tex3D<float>(texObj, u, v, w);
+
+    if ((x < imageW) && (y < imageH)) {
+        // write output color
+        uint i      = __umul24(y, imageW) + x;
+        d_output[i] = voxel * 255;
+    }
+}
+
+extern "C" void setTextureFilterMode(bool bLinearFilter)
+{
+    if (tex) {
+        // JP: `cudaDestroyTextureObject`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        checkCudaErrors(cudaDestroyTextureObject(tex));
+    }
+    cudaResourceDesc texRes;
+    memset(&texRes, 0, sizeof(cudaResourceDesc));
+
+    texRes.resType         = cudaResourceTypeArray;
+    texRes.res.array.array = d_volumeArray;
+
+    cudaTextureDesc texDescr;
+    memset(&texDescr, 0, sizeof(cudaTextureDesc));
+
+    texDescr.normalizedCoords = true;
+    texDescr.filterMode       = bLinearFilter ? cudaFilterModeLinear : cudaFilterModePoint;
+    ;
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleTexture3D/simpleTexture3D_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleTexture3D/simpleTexture3D_kernel.cu:88-110
+```cuda
+
+extern "C" void initCuda(const uchar *h_volume, cudaExtent volumeSize)
+{
+    // create 3D array
+    cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc<uchar>();
+    checkCudaErrors(cudaMalloc3DArray(&d_volumeArray, &channelDesc, volumeSize));
+
+    // copy data to 3D array
+    cudaMemcpy3DParms copyParams = {0};
+    copyParams.srcPtr =
+        make_cudaPitchedPtr((void *)h_volume, volumeSize.width * sizeof(uchar), volumeSize.width, volumeSize.height);
+    copyParams.dstArray = d_volumeArray;
+    copyParams.extent   = volumeSize;
+    // JP: `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    copyParams.kind     = cudaMemcpyHostToDevice;
+    checkCudaErrors(cudaMemcpy3D(&copyParams));
+
+    cudaResourceDesc texRes;
+    memset(&texRes, 0, sizeof(cudaResourceDesc));
+
+    texRes.resType         = cudaResourceTypeArray;
+    texRes.res.array.array = d_volumeArray;
+
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleTexture3D/simpleTexture3D_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
 | - | - |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaAddressModeWrap` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaExtent` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaDestroyTextureObject` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
@@ -104,7 +352,6 @@ English anchor: read `simpleTexture3D` as a focused example of the CUDA concepts
 | `cudaCreateTextureObject` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaFreeArray` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
 | `cudaGraphicsMapResources` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
-| `cudaGraphicsResourceGetMappedPointer` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。
@@ -167,7 +414,7 @@ The sample may display a window or produce/validate image-like output; exact vis
 
 ## Exercises
 
-- `cudaAddressModeWrap` の直前と直後で、どの memory/resource が有効になったかをメモする。
+- `launch` の直前と直後で、どの memory/resource が有効になったかをメモする。
 - source file を上から読み、setup、GPU work、sync、validation、cleanup の行番号を抜き出す。
 - problem size や input size を変更した場合に、境界チェックや allocation size が破綻しないか説明する。
 - stream timeline を描き、copy、kernel、event、host wait の位置を分ける。

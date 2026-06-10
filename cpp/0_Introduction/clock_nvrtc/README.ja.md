@@ -77,13 +77,223 @@ English anchor: read `clock_nvrtc` as a focused example of the CUDA concepts use
 ## Concrete Reading Path
 
 - `clock.cpp`: focus on `cudaBlockSize`, `cudaGridSize`, `cuMemAlloc`, `cuMemFree`, `CUDA`.
-- `clock_kernel.cu`: focus on `blockDim`, `__shared__`, `__syncthreads`, `threadIdx`, `launch`.
+- `clock_kernel.cu`: focus on `blockDim`, `__shared__`, `threadIdx`, `__syncthreads`, `launch`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/clock_nvrtc/CMakeLists.txt:1-47
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(clock_nvrtc LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add sample target executable
+add_executable(clock_nvrtc clock.cpp)
+
+target_compile_options(clock_nvrtc PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(clock_nvrtc PRIVATE cxx_std_17 cuda_std_17)
+
+target_link_libraries(clock_nvrtc PRIVATE
+    # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
+    CUDA::nvrtc
+    CUDA::cuda_driver
+)
+
+# Copy clock_kernel.cu to the output directory
+add_custom_command(TARGET clock_nvrtc POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_CURRENT_SOURCE_DIR}/clock_kernel.cu ${CMAKE_CURRENT_BINARY_DIR}
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/clock_nvrtc/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `clock.cpp`
+
+Source: cpp/0_Introduction/clock_nvrtc/clock.cpp:33-56
+```cpp
+ * we measure the clock once for each block. The clock samples are written to
+ * device memory.
+ */
+
+// System includes
+#include <assert.h>
+#include <cuda_runtime.h>
+#include <nvrtc_helper.h>
+#include <stdint.h>
+#include <stdio.h>
+
+// helper functions and utilities to work with CUDA
+#include <helper_functions.h>
+
+#define NUM_BLOCKS 64
+
+#define NUM_THREADS 256
+
+// It's interesting to change the number of blocks and the number of threads to
+// understand how to keep the hardware busy.
+//
+
+// Here are some numbers I get on my G80:
+//    blocks - clocks
+```
+
+> JP: この抜粋は `cpp/0_Introduction/clock_nvrtc/clock.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/clock_nvrtc/clock.cpp:69-88
+```cpp
+// With
+// more than 32 the speed scales linearly.
+
+// Start the main CUDA Sample here
+
+int main(int argc, char **argv)
+{
+    printf("CUDA Clock sample\n");
+
+    typedef long clock_t;
+
+    clock_t timer[NUM_BLOCKS * 2];
+
+    float input[NUM_THREADS * 2];
+
+    for (int i = 0; i < NUM_THREADS * 2; i++) {
+        input[i] = (float)i;
+    }
+
+    char  *cubin, *kernel_file;
+```
+
+> JP: この抜粋は `cpp/0_Introduction/clock_nvrtc/clock.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/clock_nvrtc/clock.cpp:108-142
+```cpp
+    // JP: `cuMemcpyHtoD`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cuMemcpyHtoD(dinput, input, sizeof(float) * NUM_THREADS * 2));
+
+    void *arr[] = {(void *)&dinput, (void *)&doutput, (void *)&dtimer};
+
+    // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    checkCudaErrors(cuLaunchKernel(kernel_addr,
+                                   cudaGridSize.x,
+                                   cudaGridSize.y,
+                                   cudaGridSize.z, /* grid dim */
+                                   cudaBlockSize.x,
+                                   cudaBlockSize.y,
+                                   cudaBlockSize.z, /* block dim */
+                                   sizeof(float) * 2 * NUM_THREADS,
+                                   0,       /* shared mem, stream */
+                                   &arr[0], /* arguments */
+                                   0));
+
+    checkCudaErrors(cuCtxSynchronize());
+    checkCudaErrors(cuMemcpyDtoH(timer, dtimer, sizeof(clock_t) * NUM_BLOCKS * 2));
+    // JP: `cuMemFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cuMemFree(dinput));
+    checkCudaErrors(cuMemFree(doutput));
+    checkCudaErrors(cuMemFree(dtimer));
+
+    long double avgElapsedClocks = 0;
+
+    for (int i = 0; i < NUM_BLOCKS; i++) {
+        avgElapsedClocks += (long double)(timer[i + NUM_BLOCKS] - timer[i]);
+    }
+
+    avgElapsedClocks = avgElapsedClocks / NUM_BLOCKS;
+    printf("Average clocks/block = %Lf\n", avgElapsedClocks);
+
+    return EXIT_SUCCESS;
+```
+
+> JP: この抜粋は `cpp/0_Introduction/clock_nvrtc/clock.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `clock_kernel.cu`
+
+Source: cpp/0_Introduction/clock_nvrtc/clock_kernel.cu:41-83
+```cuda
+extern "C" __global__ void timedReduction(const float *input, float *output, clock_t *timer)
+{
+    // __shared__ float shared[2 * blockDim.x];
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    extern __shared__ float shared[];
+
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    const int tid = threadIdx.x;
+    const int bid = blockIdx.x;
+
+    if (tid == 0)
+        timer[bid] = clock();
+
+    // Copy input.
+    shared[tid]              = input[tid];
+    shared[tid + blockDim.x] = input[tid + blockDim.x];
+
+    // Perform reduction to find minimum.
+    for (int d = blockDim.x; d > 0; d /= 2) {
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
+        __syncthreads();
+
+        if (tid < d) {
+            float f0 = shared[tid];
+            float f1 = shared[tid + d];
+
+            if (f1 < f0) {
+                shared[tid] = f1;
+            }
+        }
+    }
+
+    // Write result.
+    if (tid == 0)
+        output[bid] = shared[0];
+
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
+    __syncthreads();
+
+    if (tid == 0)
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+        timer[bid + gridDim.x] = clock();
+}
+```
+
+> JP: この抜粋は `cpp/0_Introduction/clock_nvrtc/clock_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 
@@ -100,9 +310,9 @@ English anchor: read `clock_nvrtc` as a focused example of the CUDA concepts use
 | `cuCtxSynchronize` | Driver API の handle 境界です。context/module/function と error code を追います。 |
 | `cuMemcpyDtoH` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `__shared__` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |
-| `__syncthreads` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |
 | `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `threadIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
+| `__syncthreads` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。

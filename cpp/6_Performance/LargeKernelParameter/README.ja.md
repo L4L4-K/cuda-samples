@@ -71,7 +71,7 @@ English anchor: read `LargeKernelParameter` as a focused example of the CUDA con
 
 ## Concrete Reading Path
 
-- `LargeKernelParameter.cu`: focus on `cudaDeviceSynchronize`, `cudaFree`, `cudaMemcpyToSymbol`, `cudaMemcpyHostToDevice`, `launch`.
+- `LargeKernelParameter.cu`: focus on `launch`, `cudaDeviceSynchronize`, `cudaFree`, `cudaMemcpyToSymbol`, `cudaMemcpyHostToDevice`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
@@ -79,17 +79,159 @@ English anchor: read `LargeKernelParameter` as a focused example of the CUDA con
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/6_Performance/LargeKernelParameter/CMakeLists.txt:1-38
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(LargeKernelParameter LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for LargeKernelParameter
+add_executable(LargeKernelParameter LargeKernelParameter.cu)
+
+target_compile_options(LargeKernelParameter PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(LargeKernelParameter PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(LargeKernelParameter PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/6_Performance/LargeKernelParameter/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `LargeKernelParameter.cu`
+
+Source: cpp/6_Performance/LargeKernelParameter/LargeKernelParameter.cu:33-51
+```cuda
+#include <cassert>
+#include <chrono>
+#include <iostream>
+
+// Utility includes
+#include <helper_cuda.h>
+
+using namespace std;
+using namespace std::chrono;
+
+#define TEST_ITERATIONS     (1000)
+#define TOTAL_PARAMS        (8000) // ints
+#define KERNEL_PARAM_LIMIT  (1024) // ints
+#define CONST_COPIED_PARAMS (TOTAL_PARAMS - KERNEL_PARAM_LIMIT)
+
+__constant__ int excess_params[CONST_COPIED_PARAMS];
+
+typedef struct
+{
+```
+
+> JP: この抜粋は `cpp/6_Performance/LargeKernelParameter/LargeKernelParameter.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/6_Performance/LargeKernelParameter/LargeKernelParameter.cu:97-125
+```cuda
+}
+
+int main()
+{
+    int rc;
+    // JP: `cudaFree`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。 ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    cudaFree(0);
+
+    param_t       p;
+    param_large_t p_large;
+
+    // pageable host memory that holds excess constants passed via constant memory
+    int *copied_params = (int *)malloc(CONST_COPIED_PARAMS * sizeof(int));
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+    assert(copied_params);
+
+    // storage for computed result
+    int *d_result;
+    int  h_result;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
+    checkCudaErrors(cudaMalloc(&d_result, sizeof(int)));
+
+    int expected_result = 0;
+
+    // fill in data for validation
+    for (int i = 0; i < KERNEL_PARAM_LIMIT; ++i) {
+        p.param[i] = (i & 0xFF);
+    }
+    for (int i = KERNEL_PARAM_LIMIT; i < TOTAL_PARAMS; ++i) {
+```
+
+> JP: この抜粋は `cpp/6_Performance/LargeKernelParameter/LargeKernelParameter.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/6_Performance/LargeKernelParameter/LargeKernelParameter.cu:130-152
+```cuda
+        expected_result += (i & 0xFF);
+    }
+
+    // warmup, verify correctness
+    checkCudaErrors(
+        // JP: `cudaMemcpyToSymbol`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+        cudaMemcpyToSymbol(excess_params, copied_params, CONST_COPIED_PARAMS * sizeof(int), 0, cudaMemcpyHostToDevice));
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    kernelDefault<<<1, 1>>>(p, d_result);
+    checkCudaErrors(cudaMemcpy(&h_result, d_result, sizeof(int), cudaMemcpyDeviceToHost));
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    checkCudaErrors(cudaDeviceSynchronize());
+    if (h_result != expected_result) {
+        std::cout << "Test failed" << std::endl;
+        rc = -1;
+        goto Exit;
+    }
+
+    // JP: この anchor では kernel launch の grid/block/shared-memory/stream 指定です。後続の sync/error check と完了確認を対応させます。
+    kernelLargeParam<<<1, 1>>>(p_large, d_result);
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
+    checkCudaErrors(cudaMemcpy(&h_result, d_result, sizeof(int), cudaMemcpyDeviceToHost));
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
+```
+
+> JP: この抜粋は `cpp/6_Performance/LargeKernelParameter/LargeKernelParameter.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
 | - | - |
 | `cudaDeviceSynchronize` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
 | `cudaMemcpyToSymbol` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaMemcpy` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
 | `cudaMemcpyHostToDevice` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
-| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaMemcpyDeviceToHost` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 
 > **日本語**

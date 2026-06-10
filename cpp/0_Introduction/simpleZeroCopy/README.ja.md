@@ -79,6 +79,143 @@ English anchor: read `simpleZeroCopy` as a focused example of the CUDA concepts 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/simpleZeroCopy/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleZeroCopy LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simpleZeroCopy
+add_executable(simpleZeroCopy simpleZeroCopy.cu)
+
+target_compile_options(simpleZeroCopy PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleZeroCopy PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simpleZeroCopy PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleZeroCopy/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleZeroCopy.cu`
+
+Source: cpp/0_Introduction/simpleZeroCopy/simpleZeroCopy.cu:25-77
+```cuda
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+// JP: この file では memory ownership と host/device transfer、kernel launch と thread indexing、stream/event による非同期実行と同期 を確認します。英語の識別子/API/出力文字列は保持します。
+
+// System includes
+#include <assert.h>
+#include <stdio.h>
+
+// CUDA runtime
+#include <cuda_runtime.h>
+
+// helper functions and utilities to work with CUDA
+#include <helper_cuda.h>
+#include <helper_functions.h>
+
+#ifndef MAX
+#define MAX(a, b) (a > b ? a : b)
+#endif
+
+/* Add two vectors on the GPU */
+__global__ void vectorAddGPU(float *a, float *b, float *c, int N)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (idx < N) {
+        c[idx] = a[idx] + b[idx];
+    }
+}
+
+// Allocate generic memory with malloc() and pin it laster instead of using
+// cudaHostAlloc()
+bool bPinGenericMemory = false;
+
+// Macro to aligned up to the memory size in question
+#define MEMORY_ALIGNMENT  4096
+#define ALIGN_UP(x, size) (((size_t)x + (size - 1)) & (~(size - 1)))
+
+int main(int argc, char **argv)
+{
+    int            n, nelem, deviceCount;
+    int            idev   = 0; // use default device 0
+    char          *device = NULL;
+    unsigned int   flags;
+    size_t         bytes;
+    // JP: pinned_memory: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
+    float         *a, *b, *c;          // Pinned memory allocated on the CPU
+    float         *a_UA, *b_UA, *c_UA; // Non-4K Aligned Pinned memory on the CPU
+    float         *d_a, *d_b, *d_c;    // Device pointers for mapped memory
+    float          errorNorm, refNorm, ref, diff;
+    cudaDeviceProp deviceProp;
+
+    if (checkCmdLineFlag(argc, (const char **)argv, "help")) {
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleZeroCopy/simpleZeroCopy.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleZeroCopy/simpleZeroCopy.cu:238-257
+```cuda
+#if CUDART_VERSION >= 4000
+        checkCudaErrors(cudaHostUnregister(a));
+        checkCudaErrors(cudaHostUnregister(b));
+        checkCudaErrors(cudaHostUnregister(c));
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        free(a_UA);
+        free(b_UA);
+        free(c_UA);
+#endif
+    }
+    else {
+#if CUDART_VERSION >= 2020
+        // JP: この連続する anchor 群では pinned host memory の登録/確保/解放です。async transfer や overlap の条件と lifetime を確認します。
+        checkCudaErrors(cudaFreeHost(a));
+        checkCudaErrors(cudaFreeHost(b));
+        checkCudaErrors(cudaFreeHost(c));
+#endif
+    }
+
+    exit(errorNorm / refNorm < 1.e-6f ? EXIT_SUCCESS : EXIT_FAILURE);
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleZeroCopy/simpleZeroCopy.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

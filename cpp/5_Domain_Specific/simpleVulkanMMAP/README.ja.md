@@ -101,6 +101,508 @@ English anchor: read `simpleVulkanMMAP` as a focused example of the CUDA concept
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/5_Domain_Specific/simpleVulkanMMAP/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleVulkanMMAP LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkanMMAP/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `MonteCarloPi.cu`
+
+Source: cpp/5_Domain_Specific/simpleVulkanMMAP/MonteCarloPi.cu:33-51
+```cuda
+#include <algorithm>
+
+#include "MonteCarloPi.h"
+#define CUDA_DRIVER_API
+#include <helper_cuda.h>
+#include <iostream>
+
+#define ROUND_UP_TO_GRANULARITY(x, n) (((x + n - 1) / n) * n)
+
+// `ipcHandleTypeFlag` specifies the platform specific handle type this sample
+// uses for importing and exporting memory allocation. On Linux this sample
+// specifies the type as CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR meaning that
+// file descriptors will be used. On Windows this sample specifies the type as
+// CU_MEM_HANDLE_TYPE_WIN32 meaning that NT HANDLEs will be used. The
+// ipcHandleTypeFlag variable is a convenience variable and is passed by value
+// to individual requests.
+#if defined(__linux__)
+CUmemAllocationHandleType ipcHandleTypeFlag = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+#else
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkanMMAP/MonteCarloPi.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/simpleVulkanMMAP/MonteCarloPi.cu:85-107
+```cuda
+                                   unsigned int numPoints,
+                                   float        time)
+{
+    // JP: `gridDim`, `blockDim`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    const size_t stride = gridDim.x * blockDim.x;
+    size_t       tid    = blockIdx.x * blockDim.x + threadIdx.x;
+    float        count  = 0.0f;
+
+    // JP: `curandState`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    curandState rgnState;
+    curand_init((unsigned long long)time, tid, 0, &rgnState);
+
+    for (; tid < numPoints; tid += stride) {
+        float x          = curand_uniform(&rgnState);
+        float y          = curand_uniform(&rgnState);
+        x                = (2.0f * x) - 1.0f;
+        y                = (2.0f * y) - 1.0f;
+        xyVector[tid][0] = x;
+        xyVector[tid][1] = y;
+
+        // Compute the distance of this point form the center(0, 0)
+        float dist = sqrtf((x * x) + (y * y));
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkanMMAP/MonteCarloPi.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/simpleVulkanMMAP/MonteCarloPi.cu:123-142
+```cuda
+}
+
+MonteCarloPiSimulation::~MonteCarloPiSimulation()
+{
+    if (m_numPointsInCircle) {
+        // JP: `cudaFree`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。 ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        checkCudaErrors(cudaFree(m_numPointsInCircle));
+        m_numPointsInCircle = nullptr;
+    }
+    if (m_hostNumPointsInCircle) {
+        // JP: `cudaFreeHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
+        checkCudaErrors(cudaFreeHost(m_hostNumPointsInCircle));
+        m_hostNumPointsInCircle = nullptr;
+    }
+
+    cleanupSimulationAllocations();
+}
+
+// JP: `cudaDevice`, `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+void MonteCarloPiSimulation::initSimulation(int cudaDevice, cudaStream_t stream)
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkanMMAP/MonteCarloPi.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/simpleVulkanMMAP/MonteCarloPi.cu:156-175
+```cuda
+    checkCudaErrors(cudaMallocHost((float **)&m_hostNumPointsInCircle, sizeof(*m_hostNumPointsInCircle)));
+}
+
+void MonteCarloPiSimulation::stepSimulation(float time, cudaStream_t stream)
+{
+    // JP: `cudaMemsetAsync`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemsetAsync(m_numPointsInCircle, 0, sizeof(*m_numPointsInCircle), stream));
+
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    monte_carlo_kernel<<<m_blocks, m_threads, 0, stream>>>(
+        m_xyVector, m_pointsInsideCircle, m_numPointsInCircle, m_numPoints, time);
+    getLastCudaError("Failed to launch CUDA simulation");
+
+    // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
+    checkCudaErrors(cudaMemcpyAsync(
+        m_hostNumPointsInCircle, m_numPointsInCircle, sizeof(*m_numPointsInCircle), cudaMemcpyDeviceToHost, stream));
+
+    // Queue up a stream callback to compute and print the PI value.
+    checkCudaErrors(cudaLaunchHostFunc(stream, this->computePiCallback, (void *)this));
+}
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkanMMAP/MonteCarloPi.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `MonteCarloPi.h`
+
+Source: cpp/5_Domain_Specific/simpleVulkanMMAP/MonteCarloPi.h:29-96
+```cpp
+#pragma once
+#ifndef __PISIM_H__
+#define __PISIM_H__
+
+#include <cuda.h>
+#include <cuda_runtime_api.h>
+#include <curand.h>
+#include <curand_kernel.h>
+#include <vector>
+
+#include "helper_multiprocess.h"
+
+typedef float vec2[2];
+
+class MonteCarloPiSimulation
+{
+    size_t m_numPoints;
+
+    // Pointers to Cuda allocated buffers which are imported and used by vulkan as
+    // vertex buffer
+    vec2  *m_xyVector;
+    float *m_pointsInsideCircle;
+
+    // Pointers to device and host allocated memories storing number of points
+    // that are inside the unit circle
+    float *m_numPointsInCircle;
+    float *m_hostNumPointsInCircle;
+
+    int m_blocks, m_threads;
+
+    // Total size of allocations created by cuMemMap Apis. This size is the sum of
+    // sizes of m_xyVector and m_pointsInsideCircle buffers.
+    size_t m_totalAllocationSize;
+
+    // Shareable Handles(a file descriptor on Linux and NT Handle on Windows),
+    // used for sharing cuda
+    // allocated memory with Vulkan
+    ShareableHandle m_posShareableHandle, m_inCircleShareableHandle;
+
+    // Cuda Device corresponding to the Vulkan Physical device
+    int m_cudaDevice;
+
+    // Track and accumulate total points that have been simulated since start of
+    // the sample. The idea is to get a closer approximation to PI with time.
+    size_t m_totalPointsInsideCircle;
+    size_t m_totalPointsSimulated;
+
+    void setupSimulationAllocations();
+    void cleanupSimulationAllocations();
+    void getIdealExecutionConfiguration();
+
+public:
+    MonteCarloPiSimulation(size_t num_points);
+    ~MonteCarloPiSimulation();
+    // JP: `cudaDevice`, `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+    void        initSimulation(int cudaDevice, cudaStream_t stream = 0);
+    void        stepSimulation(float time, cudaStream_t stream = 0);
+    static void computePiCallback(void *args);
+
+    size_t getNumPoints() const { return m_numPoints; }
+
+    float getNumPointsInCircle() const { return *m_hostNumPointsInCircle; }
+
+    ShareableHandle &getPositionShareableHandle() { return m_posShareableHandle; }
+    ShareableHandle &getInCircleShareableHandle() { return m_inCircleShareableHandle; }
+};
+
+#endif // __PISIM_H__
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkanMMAP/MonteCarloPi.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `VulkanBaseApp.cpp`
+
+Source: cpp/5_Domain_Specific/simpleVulkanMMAP/VulkanBaseApp.cpp:35-53
+```cpp
+#include "VulkanBaseApp.h"
+
+#include <algorithm>
+#include <fstream>
+#include <functional>
+#include <iostream>
+#include <limits>
+#include <set>
+#include <stdexcept>
+#include <string.h>
+
+#include "VulkanCudaInterop.h"
+
+#define GLFW_INCLUDE_VULKAN
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#include <GLFW/glfw3.h>
+
+#ifdef _WIN64
+#include <VersionHelpers.h>
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkanMMAP/VulkanBaseApp.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/simpleVulkanMMAP/VulkanBaseApp.cpp:274-293
+```cpp
+
+WindowsSecurityAttributes::WindowsSecurityAttributes()
+{
+    m_winPSecurityDescriptor = (PSECURITY_DESCRIPTOR)calloc(1, SECURITY_DESCRIPTOR_MIN_LENGTH + 2 * sizeof(void **));
+    if (!m_winPSecurityDescriptor) {
+        // JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+        throw std::runtime_error("Failed to allocate memory for security descriptor");
+    }
+
+    PSID *ppSID = (PSID *)((PBYTE)m_winPSecurityDescriptor + SECURITY_DESCRIPTOR_MIN_LENGTH);
+    PACL *ppACL = (PACL *)((PBYTE)ppSID + sizeof(PSID *));
+
+    InitializeSecurityDescriptor(m_winPSecurityDescriptor, SECURITY_DESCRIPTOR_REVISION);
+
+    SID_IDENTIFIER_AUTHORITY sidIdentifierAuthority = SECURITY_WORLD_SID_AUTHORITY;
+    AllocateAndInitializeSid(&sidIdentifierAuthority, 1, SECURITY_WORLD_RID, 0, 0, 0, 0, 0, 0, 0, ppSID);
+
+    EXPLICIT_ACCESS explicitAccess;
+    ZeroMemory(&explicitAccess, sizeof(EXPLICIT_ACCESS));
+    explicitAccess.grfAccessPermissions = STANDARD_RIGHTS_ALL | SPECIFIC_RIGHTS_ALL;
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkanMMAP/VulkanBaseApp.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/simpleVulkanMMAP/VulkanBaseApp.cpp:318-337
+```cpp
+    }
+    if (*ppACL) {
+        LocalFree(*ppACL);
+    }
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    free(m_winPSecurityDescriptor);
+}
+#endif /* _WIN64 */
+
+static VkFormat findSupportedFormat(VkPhysicalDevice             physicalDevice,
+                                    const std::vector<VkFormat> &candidates,
+                                    VkImageTiling                tiling,
+                                    VkFormatFeatureFlags         features)
+{
+    for (VkFormat format : candidates) {
+        VkFormatProperties props;
+        vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &props);
+        if (tiling == VK_IMAGE_TILING_LINEAR && (props.linearTilingFeatures & features) == features) {
+            return format;
+        }
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkanMMAP/VulkanBaseApp.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `VulkanBaseApp.h`
+
+Source: cpp/5_Domain_Specific/simpleVulkanMMAP/VulkanBaseApp.h:29-47
+```cpp
+#pragma once
+#ifndef __VULKANBASEAPP_H__
+#define __VULKANBASEAPP_H__
+
+#include <string>
+#include <vector>
+#include <vulkan/vulkan.h>
+#ifdef _WIN64
+#define NOMINMAX
+// Add windows.h to the include path firstly as dependency for other Windows headers
+#include <windows.h>
+// Add other Windows headers
+#include <vulkan/vulkan_win32.h>
+#endif /* _WIN64 */
+
+struct GLFWwindow;
+
+class VulkanBaseApp
+{
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkanMMAP/VulkanBaseApp.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `VulkanCudaInterop.h`
+
+Source: cpp/5_Domain_Specific/simpleVulkanMMAP/VulkanCudaInterop.h:29-80
+```cpp
+#pragma once
+#ifndef __VKCUDA_H__
+#define __VKCUDA_H__
+
+#include <cuda_runtime_api.h>
+
+#include "cuda.h"
+#define CUDA_DRIVER_API
+#include <helper_cuda.h>
+
+bool isDeviceCompatible(void *Uuid, size_t size)
+{
+    int cudaDevice = cudaInvalidDeviceId;
+    int deviceCount;
+    checkCudaErrors(cudaGetDeviceCount(&deviceCount));
+
+    for (int i = 0; i < deviceCount; ++i) {
+        cudaDeviceProp devProp = {};
+        checkCudaErrors(cudaGetDeviceProperties(&devProp, i));
+        if (!memcmp(&devProp.uuid, Uuid, size)) {
+            cudaDevice = i;
+            break;
+        }
+    }
+    if (cudaDevice == cudaInvalidDeviceId) {
+        return false;
+    }
+
+    int deviceSupportsHandle = 0;
+    int attributeVal         = 0;
+    int deviceComputeMode    = 0;
+
+    // JP: `cuDeviceGetAttribute`, `cudaDevice`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
+    checkCudaErrors(cuDeviceGetAttribute(&deviceComputeMode, CU_DEVICE_ATTRIBUTE_COMPUTE_MODE, cudaDevice));
+    checkCudaErrors(
+        cuDeviceGetAttribute(&attributeVal, CU_DEVICE_ATTRIBUTE_VIRTUAL_ADDRESS_MANAGEMENT_SUPPORTED, cudaDevice));
+
+#if defined(__linux__)
+    checkCudaErrors(cuDeviceGetAttribute(
+        &deviceSupportsHandle, CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR_SUPPORTED, cudaDevice));
+#else
+    checkCudaErrors(cuDeviceGetAttribute(
+        &deviceSupportsHandle, CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_WIN32_HANDLE_SUPPORTED, cudaDevice));
+#endif
+
+    if ((deviceComputeMode != CU_COMPUTEMODE_DEFAULT) || !attributeVal || !deviceSupportsHandle) {
+        return false;
+    }
+    return true;
+}
+
+#endif // __VKCUDA_H__
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkanMMAP/VulkanCudaInterop.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `main.cpp`
+
+Source: cpp/5_Domain_Specific/simpleVulkanMMAP/main.cpp:36-54
+```cpp
+#include <algorithm>
+#include <chrono>
+#include <cuda.h>
+#include <iomanip>
+#include <iostream>
+
+#include "MonteCarloPi.h"
+#include "VulkanBaseApp.h"
+#include "helper_cuda.h"
+#include "helper_multiprocess.h"
+
+// #define DEBUG
+#ifdef NDEBUG
+#define ENABLE_VALIDATION (false)
+#else
+#define ENABLE_VALIDATION (true)
+#endif
+
+#define NUM_SIMULATION_POINTS 50000
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkanMMAP/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/simpleVulkanMMAP/main.cpp:99-120
+```cpp
+
+    ~VulkanCudaPi()
+    {
+        if (m_stream) {
+            // Make sure there's no pending work before we start tearing down
+            // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+            checkCudaErrors(cudaStreamSynchronize(m_stream));
+            // JP: `cudaStreamDestroy`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+            checkCudaErrors(cudaStreamDestroy(m_stream));
+        }
+
+        if (m_vkSignalSemaphore != VK_NULL_HANDLE) {
+            // JP: この連続する anchor 群では CUDA resource lifetime end です。未完了 work が残っていないか確認し、確保/作成/登録と対応する API で閉じます。
+            checkCudaErrors(cudaDestroyExternalSemaphore(m_cudaSignalSemaphore));
+            vkDestroySemaphore(m_device, m_vkSignalSemaphore, nullptr);
+        }
+        if (m_vkWaitSemaphore != VK_NULL_HANDLE) {
+            // JP: wait semaphore 側の CUDA external semaphore も Vulkan semaphore と対で閉じます。signal 側と同じ cleanup pair として lifetime を確認します。
+            checkCudaErrors(cudaDestroyExternalSemaphore(m_cudaWaitSemaphore));
+            vkDestroySemaphore(m_device, m_vkWaitSemaphore, nullptr);
+        }
+        if (m_xyPositionBuffer != VK_NULL_HANDLE) {
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkanMMAP/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/simpleVulkanMMAP/main.cpp:213-232
+```cpp
+        if (cudaDevice == cudaInvalidDeviceId) {
+            throw std::runtime_error("No Suitable device found!");
+        }
+
+        // On the corresponding cuda device, create the cuda stream we'll using
+        checkCudaErrors(cudaSetDevice(cudaDevice));
+        // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+        checkCudaErrors(cudaStreamCreateWithFlags(&m_stream, cudaStreamNonBlocking));
+        m_sim.initSimulation(cudaDevice, m_stream);
+
+        importExternalBuffer((void *)(uintptr_t)m_sim.getPositionShareableHandle(),
+                             getDefaultMemHandleType(),
+                             nVerts * sizeof(vec2),
+                             VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                             m_xyPositionBuffer,
+                             m_xyPositionMemory);
+
+        importExternalBuffer((void *)(uintptr_t)m_sim.getInCircleShareableHandle(),
+                             getDefaultMemHandleType(),
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkanMMAP/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `montecarlo.frag`
+
+Source: cpp/5_Domain_Specific/simpleVulkanMMAP/montecarlo.frag:28-37
+```glsl
+#version 450
+#extension GL_ARB_separate_shader_objects : enable
+
+layout(location = 0) in vec3 fragColor;
+
+layout(location = 0) out vec4 outColor;
+
+void main() {
+    outColor = vec4(fragColor, 1.0);
+}
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkanMMAP/montecarlo.frag` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `montecarlo.vert`
+
+Source: cpp/5_Domain_Specific/simpleVulkanMMAP/montecarlo.vert:28-36
+```glsl
+#version 450
+#extension GL_ARB_separate_shader_objects : enable
+
+layout(binding = 0) uniform UniformBufferObject {
+    float frame;
+} ubo;
+
+layout(location = 0) in float pointInsideCircle;
+layout(location = 1) in vec2 xyPos;
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleVulkanMMAP/montecarlo.vert` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

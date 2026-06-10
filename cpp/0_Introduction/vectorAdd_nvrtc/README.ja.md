@@ -84,6 +84,189 @@ English anchor: read `vectorAdd_nvrtc` as a focused example of the CUDA concepts
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/vectorAdd_nvrtc/CMakeLists.txt:1-47
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(vectorAdd_nvrtc LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add sample target executable
+add_executable(vectorAdd_nvrtc vectorAdd.cpp)
+
+target_compile_options(vectorAdd_nvrtc PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(vectorAdd_nvrtc PRIVATE cxx_std_17 cuda_std_17)
+
+target_link_libraries(vectorAdd_nvrtc PRIVATE
+    # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
+    CUDA::nvrtc
+    CUDA::cuda_driver
+)
+
+# Copy vectorAdd_kernel.cu to the output directory
+add_custom_command(TARGET vectorAdd_nvrtc POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_CURRENT_SOURCE_DIR}/vectorAdd_kernel.cu ${CMAKE_CURRENT_BINARY_DIR}
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/vectorAdd_nvrtc/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `vectorAdd.cpp`
+
+Source: cpp/0_Introduction/vectorAdd_nvrtc/vectorAdd.cpp:37-83
+```cpp
+#include <cmath>
+#include <stdio.h>
+
+// For the CUDA runtime routines (prefixed with "cuda_")
+#include <cuda.h>
+#include <cuda_runtime.h>
+
+// helper functions and utilities to work with CUDA
+#include <helper_functions.h>
+#include <nvrtc_helper.h>
+
+/**
+ * Host main routine
+ */
+int main(int argc, char **argv)
+{
+    char  *cubin, *kernel_file;
+    size_t cubinSize;
+    kernel_file = sdkFindFilePath("vectorAdd_kernel.cu", argv[0]);
+    compileFileToCUBIN(kernel_file, argc, argv, &cubin, &cubinSize, 0);
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
+    CUmodule module = loadCUBIN(cubin, argc, argv);
+
+    CUfunction kernel_addr;
+    checkCudaErrors(cuModuleGetFunction(&kernel_addr, module, "vectorAdd"));
+
+    // Print the vector length to be used, and compute its size
+    int    numElements = 50000;
+    size_t size        = numElements * sizeof(float);
+    printf("[Vector addition of %d elements]\n", numElements);
+
+    // Allocate the host input vector A
+    float *h_A = reinterpret_cast<float *>(malloc(size));
+
+    // Allocate the host input vector B
+    float *h_B = reinterpret_cast<float *>(malloc(size));
+
+    // Allocate the host output vector C
+    float *h_C = reinterpret_cast<float *>(malloc(size));
+
+    // Verify that allocations succeeded
+    if (h_A == NULL || h_B == NULL || h_C == NULL) {
+        fprintf(stderr, "Failed to allocate host vectors!\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Initialize the host input vectors
+```
+
+> JP: この抜粋は `cpp/0_Introduction/vectorAdd_nvrtc/vectorAdd.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/vectorAdd_nvrtc/vectorAdd.cpp:115-134
+```cpp
+
+    void *arr[] = {reinterpret_cast<void *>(&d_A),
+                   reinterpret_cast<void *>(&d_B),
+                   reinterpret_cast<void *>(&d_C),
+                   reinterpret_cast<void *>(&numElements)};
+    // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    checkCudaErrors(cuLaunchKernel(kernel_addr,
+                                   cudaGridSize.x,
+                                   cudaGridSize.y,
+                                   cudaGridSize.z, /* grid dim */
+                                   cudaBlockSize.x,
+                                   cudaBlockSize.y,
+                                   cudaBlockSize.z, /* block dim */
+                                   0,
+                                   0,       /* shared mem, stream */
+                                   &arr[0], /* arguments */
+                                   0));
+    checkCudaErrors(cuCtxSynchronize());
+
+    // Copy the device result vector in device memory to the host result vector
+```
+
+> JP: この抜粋は `cpp/0_Introduction/vectorAdd_nvrtc/vectorAdd.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/vectorAdd_nvrtc/vectorAdd.cpp:146-164
+```cpp
+    }
+
+    printf("Test PASSED\n");
+
+    // Free device global memory
+    // JP: `cuMemFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cuMemFree(d_A));
+    checkCudaErrors(cuMemFree(d_B));
+    checkCudaErrors(cuMemFree(d_C));
+
+    // Free host memory
+    free(h_A);
+    free(h_B);
+    free(h_C);
+
+    printf("Done\n");
+
+    return 0;
+}
+```
+
+> JP: この抜粋は `cpp/0_Introduction/vectorAdd_nvrtc/vectorAdd.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `vectorAdd_kernel.cu`
+
+Source: cpp/0_Introduction/vectorAdd_nvrtc/vectorAdd_kernel.cu:36-44
+```cuda
+extern "C" __global__ void vectorAdd(const float *A, const float *B, float *C, int numElements)
+{
+    // JP: `blockDim`, `blockIdx`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+
+    if (i < numElements) {
+        C[i] = A[i] + B[i];
+    }
+}
+```
+
+> JP: この抜粋は `cpp/0_Introduction/vectorAdd_nvrtc/vectorAdd_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

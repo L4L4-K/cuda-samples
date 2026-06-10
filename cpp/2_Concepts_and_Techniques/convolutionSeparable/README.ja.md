@@ -78,7 +78,7 @@ English anchor: read `convolutionSeparable` as a focused example of the CUDA con
 
 ## Concrete Reading Path
 
-- `convolutionSeparable.cu`: focus on `threadIdx`, `blockIdx`, `__shared__`, `launch`, `cudaMemcpyToSymbol`.
+- `convolutionSeparable.cu`: focus on `threadIdx`, `blockIdx`, `launch`, `__shared__`, `cudaMemcpyToSymbol`.
 - `convolutionSeparable_common.h`: focus on control flow and helper functions.
 - `convolutionSeparable_gold.cpp`: focus on control flow and helper functions.
 - `main.cpp`: focus on `cudaMalloc`, `cudaFree`, `CUDA`, `cudaMemcpy`, `cudaDeviceSynchronize`.
@@ -88,6 +88,322 @@ English anchor: read `convolutionSeparable` as a focused example of the CUDA con
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/2_Concepts_and_Techniques/convolutionSeparable/CMakeLists.txt:1-41
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(convolutionSeparable LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for convolutionSeparable
+add_executable(convolutionSeparable convolutionSeparable.cu convolutionSeparable_gold.cpp main.cpp)
+
+target_compile_options(convolutionSeparable PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(convolutionSeparable PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(convolutionSeparable PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_include_directories(convolutionSeparable PUBLIC
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/convolutionSeparable/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `convolutionSeparable.cu`
+
+Source: cpp/2_Concepts_and_Techniques/convolutionSeparable/convolutionSeparable.cu:24-73
+```cuda
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+// JP: この file では memory ownership と host/device transfer、kernel launch と thread indexing、stream/event による非同期実行と同期 を確認します。英語の識別子/API/出力文字列は保持します。
+
+#include <assert.h>
+#include <cooperative_groups.h>
+#include <helper_cuda.h>
+
+namespace cg = cooperative_groups;
+#include "convolutionSeparable_common.h"
+
+////////////////////////////////////////////////////////////////////////////////
+// Convolution kernel storage
+////////////////////////////////////////////////////////////////////////////////
+__constant__ float c_Kernel[KERNEL_LENGTH];
+
+extern "C" void setConvolutionKernel(float *h_Kernel)
+{
+    cudaMemcpyToSymbol(c_Kernel, h_Kernel, KERNEL_LENGTH * sizeof(float));
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Row convolution filter
+////////////////////////////////////////////////////////////////////////////////
+#define ROWS_BLOCKDIM_X   16
+#define ROWS_BLOCKDIM_Y   4
+#define ROWS_RESULT_STEPS 8
+#define ROWS_HALO_STEPS   1
+
+__global__ void convolutionRowsKernel(float *d_Dst, float *d_Src, int imageW, int imageH, int pitch)
+{
+    // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    cg::thread_block cta = cg::this_thread_block();
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    __shared__ float s_Data[ROWS_BLOCKDIM_Y][(ROWS_RESULT_STEPS + 2 * ROWS_HALO_STEPS) * ROWS_BLOCKDIM_X];
+
+    // Offset to the left halo edge
+    const int baseX = (blockIdx.x * ROWS_RESULT_STEPS - ROWS_HALO_STEPS) * ROWS_BLOCKDIM_X + threadIdx.x;
+    const int baseY = blockIdx.y * ROWS_BLOCKDIM_Y + threadIdx.y;
+
+    d_Src += baseY * pitch + baseX;
+    d_Dst += baseY * pitch + baseX;
+
+// Load main data
+#pragma unroll
+
+    for (int i = ROWS_HALO_STEPS; i < ROWS_HALO_STEPS + ROWS_RESULT_STEPS; i++) {
+        // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/convolutionSeparable/convolutionSeparable.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `convolutionSeparable_common.h`
+
+Source: cpp/2_Concepts_and_Techniques/convolutionSeparable/convolutionSeparable_common.h:29-51
+```cpp
+#ifndef CONVOLUTIONSEPARABLE_COMMON_H
+#define CONVOLUTIONSEPARABLE_COMMON_H
+
+#define KERNEL_RADIUS 8
+#define KERNEL_LENGTH (2 * KERNEL_RADIUS + 1)
+
+////////////////////////////////////////////////////////////////////////////////
+// Reference CPU convolution
+////////////////////////////////////////////////////////////////////////////////
+extern "C" void convolutionRowCPU(float *h_Dst, float *h_Src, float *h_Kernel, int imageW, int imageH, int kernelR);
+
+extern "C" void convolutionColumnCPU(float *h_Dst, float *h_Src, float *h_Kernel, int imageW, int imageH, int kernelR);
+
+////////////////////////////////////////////////////////////////////////////////
+// GPU convolution
+////////////////////////////////////////////////////////////////////////////////
+extern "C" void setConvolutionKernel(float *h_Kernel);
+
+extern "C" void convolutionRowsGPU(float *d_Dst, float *d_Src, int imageW, int imageH);
+
+extern "C" void convolutionColumnsGPU(float *d_Dst, float *d_Src, int imageW, int imageH);
+
+#endif
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/convolutionSeparable/convolutionSeparable_common.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `convolutionSeparable_gold.cpp`
+
+Source: cpp/2_Concepts_and_Techniques/convolutionSeparable/convolutionSeparable_gold.cpp:29-69
+```cpp
+#include "convolutionSeparable_common.h"
+
+////////////////////////////////////////////////////////////////////////////////
+// Reference row convolution filter
+////////////////////////////////////////////////////////////////////////////////
+extern "C" void convolutionRowCPU(float *h_Dst, float *h_Src, float *h_Kernel, int imageW, int imageH, int kernelR)
+{
+    for (int y = 0; y < imageH; y++)
+        for (int x = 0; x < imageW; x++) {
+            float sum = 0;
+
+            for (int k = -kernelR; k <= kernelR; k++) {
+                int d = x + k;
+
+                if (d >= 0 && d < imageW)
+                    sum += h_Src[y * imageW + d] * h_Kernel[kernelR - k];
+            }
+
+            h_Dst[y * imageW + x] = sum;
+        }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Reference column convolution filter
+////////////////////////////////////////////////////////////////////////////////
+extern "C" void convolutionColumnCPU(float *h_Dst, float *h_Src, float *h_Kernel, int imageW, int imageH, int kernelR)
+{
+    for (int y = 0; y < imageH; y++)
+        for (int x = 0; x < imageW; x++) {
+            float sum = 0;
+
+            for (int k = -kernelR; k <= kernelR; k++) {
+                int d = y + k;
+
+                if (d >= 0 && d < imageH)
+                    sum += h_Src[d * imageW + x] * h_Kernel[kernelR - k];
+            }
+
+            h_Dst[y * imageW + x] = sum;
+        }
+}
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/convolutionSeparable/convolutionSeparable_gold.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `main.cpp`
+
+Source: cpp/2_Concepts_and_Techniques/convolutionSeparable/main.cpp:35-68
+```cpp
+#include <cuda_runtime.h>
+
+// Utilities and system includes
+#include <helper_cuda.h>
+#include <helper_functions.h>
+
+#include "convolutionSeparable_common.h"
+
+////////////////////////////////////////////////////////////////////////////////
+// Reference CPU convolution
+////////////////////////////////////////////////////////////////////////////////
+extern "C" void convolutionRowCPU(float *h_Result, float *h_Data, float *h_Kernel, int imageW, int imageH, int kernelR);
+
+extern "C" void
+convolutionColumnCPU(float *h_Result, float *h_Data, float *h_Kernel, int imageW, int imageH, int kernelR);
+
+////////////////////////////////////////////////////////////////////////////////
+// Main program
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    // start logs
+    printf("[%s] - Starting...\n", argv[0]);
+
+    float *h_Kernel, *h_Input, *h_Buffer, *h_OutputCPU, *h_OutputGPU;
+
+    float *d_Input, *d_Output, *d_Buffer;
+
+    const int imageW     = 3072;
+    const int imageH     = 3072;
+    const int iterations = 16;
+
+    StopWatchInterface *hTimer = NULL;
+
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/convolutionSeparable/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/convolutionSeparable/main.cpp:72-121
+```cpp
+
+    sdkCreateTimer(&hTimer);
+
+    printf("Image Width x Height = %i x %i\n\n", imageW, imageH);
+    printf("Allocating and initializing host arrays...\n");
+    h_Kernel    = (float *)malloc(KERNEL_LENGTH * sizeof(float));
+    h_Input     = (float *)malloc(imageW * imageH * sizeof(float));
+    h_Buffer    = (float *)malloc(imageW * imageH * sizeof(float));
+    h_OutputCPU = (float *)malloc(imageW * imageH * sizeof(float));
+    h_OutputGPU = (float *)malloc(imageW * imageH * sizeof(float));
+    srand(200);
+
+    for (unsigned int i = 0; i < KERNEL_LENGTH; i++) {
+        h_Kernel[i] = (float)(rand() % 16);
+    }
+
+    for (unsigned i = 0; i < imageW * imageH; i++) {
+        h_Input[i] = (float)(rand() % 16);
+    }
+
+    printf("Allocating and initializing CUDA arrays...\n");
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc((void **)&d_Input, imageW * imageH * sizeof(float)));
+    checkCudaErrors(cudaMalloc((void **)&d_Output, imageW * imageH * sizeof(float)));
+    checkCudaErrors(cudaMalloc((void **)&d_Buffer, imageW * imageH * sizeof(float)));
+
+    setConvolutionKernel(h_Kernel);
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpy(d_Input, h_Input, imageW * imageH * sizeof(float), cudaMemcpyHostToDevice));
+
+    printf("Running GPU convolution (%u identical iterations)...\n\n", iterations);
+
+    for (int i = -1; i < iterations; i++) {
+        // i == -1 -- warmup iteration
+        if (i == 0) {
+            // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+            checkCudaErrors(cudaDeviceSynchronize());
+            sdkResetTimer(&hTimer);
+            sdkStartTimer(&hTimer);
+        }
+
+        convolutionRowsGPU(d_Buffer, d_Input, imageW, imageH);
+
+        convolutionColumnsGPU(d_Output, d_Buffer, imageW, imageH);
+    }
+
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
+    checkCudaErrors(cudaDeviceSynchronize());
+    sdkStopTimer(&hTimer);
+    double gpuTime = 0.001 * sdkGetTimerValue(&hTimer) / (double)iterations;
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/convolutionSeparable/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/convolutionSeparable/main.cpp:148-167
+```cpp
+
+    double L2norm = sqrt(delta / sum);
+    printf(" ...Relative L2 norm: %E\n\n", L2norm);
+    printf("Shutting down...\n");
+
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaFree(d_Buffer));
+    checkCudaErrors(cudaFree(d_Output));
+    checkCudaErrors(cudaFree(d_Input));
+    free(h_OutputGPU);
+    free(h_OutputCPU);
+    free(h_Buffer);
+    free(h_Input);
+    free(h_Kernel);
+
+    sdkDeleteTimer(&hTimer);
+
+    if (L2norm > 1e-6) {
+        printf("Test failed!\n");
+        exit(EXIT_FAILURE);
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/convolutionSeparable/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 
@@ -99,9 +415,9 @@ English anchor: read `convolutionSeparable` as a focused example of the CUDA con
 | `cudaMemcpy` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaDeviceSynchronize` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `blockIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaMemcpyToSymbol` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `__shared__` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |
-| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaMemcpyHostToDevice` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaMemcpyDeviceToHost` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 

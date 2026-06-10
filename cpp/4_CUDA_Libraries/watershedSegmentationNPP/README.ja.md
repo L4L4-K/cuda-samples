@@ -74,13 +74,215 @@ English anchor: read `watershedSegmentationNPP` as a focused example of the CUDA
 
 ## Concrete Reading Path
 
-- `watershedSegmentationNPP.cpp`: focus on `cudaError`, `nppStreamCtx`, `nppStatus`, `cudaSuccess`, `cudaMemcpy2DAsync`.
+- `watershedSegmentationNPP.cpp`: focus on `cudaError`, `nppStreamCtx`, `CUDA`, `nppStatus`, `cudaSuccess`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/watershedSegmentationNPP/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(watershedSegmentationNPP LANGUAGES CXX)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/watershedSegmentationNPP/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/watershedSegmentationNPP/CMakeLists.txt:40-59
+```cmake
+
+target_include_directories(watershedSegmentationNPP PRIVATE
+        ${CUDAToolkit_INCLUDE_DIRS}
+)
+target_link_libraries(watershedSegmentationNPP PRIVATE
+        # JP: `nppc`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+        CUDA::nppc
+        CUDA::nppisu
+        CUDA::nppif
+        CUDA::cudart
+)
+
+# Copy data files to output directory
+add_custom_command(TARGET watershedSegmentationNPP POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../../Common/data/teapot_512x512_8u_Gray.raw
+    $<TARGET_FILE_DIR:watershedSegmentationNPP>/
+)
+
+# Copy data files to output directory
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/watershedSegmentationNPP/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `watershedSegmentationNPP.cpp`
+
+Source: cpp/4_CUDA_Libraries/watershedSegmentationNPP/watershedSegmentationNPP.cpp:30-83
+```cpp
+#if defined(WIN32) || defined(_WIN32) || defined(WIN64) || defined(_WIN64)
+#define WINDOWS_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#pragma warning(disable : 4819)
+#endif
+
+#include <fstream>
+#include <helper_cuda.h>
+#include <npp.h>
+#include <stdio.h>
+#include <string.h>
+
+// Note:  If you want to view these images we HIGHLY recommend using imagej which is free on the internet and works on
+// most platforms
+//        because it is one of the few image viewing apps that can display 32 bit integer image data.  While it
+//        normalizes the data to floating point values for viewing it still provides a good representation of the
+//        relative brightness of each label value.
+//
+//        The files read and written by this sample app use RAW image format, that is, only the image data itself exists
+//        in the files with no image format information.   When viewing RAW files with imagej just enter the image size
+//        and bit depth values that are part of the file name when requested by imagej.
+//
+
+#define NUMBER_OF_IMAGES 3
+
+// JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+Npp8u  *pInputImageDev[NUMBER_OF_IMAGES];
+Npp8u  *pInputImageHost[NUMBER_OF_IMAGES];
+Npp8u  *pSegmentationScratchBufferDev[NUMBER_OF_IMAGES];
+Npp8u  *pSegmentsDev[NUMBER_OF_IMAGES];
+Npp8u  *pSegmentsHost[NUMBER_OF_IMAGES];
+Npp32u *pSegmentLabelsOutputBufferDev[NUMBER_OF_IMAGES];
+Npp32u *pSegmentLabelsOutputBufferHost[NUMBER_OF_IMAGES];
+
+void tearDown() // Clean up and tear down
+{
+    for (int j = 0; j < NUMBER_OF_IMAGES; j++) {
+        if (pSegmentLabelsOutputBufferDev[j] != 0)
+            // JP: `cudaFree`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。 ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+            cudaFree(pSegmentLabelsOutputBufferDev[j]);
+        if (pSegmentationScratchBufferDev[j] != 0)
+            cudaFree(pSegmentationScratchBufferDev[j]);
+        if (pSegmentsDev[j] != 0)
+            cudaFree(pSegmentsDev[j]);
+        if (pInputImageDev[j] != 0)
+            cudaFree(pInputImageDev[j]);
+        if (pSegmentLabelsOutputBufferHost[j] != 0)
+            free(pSegmentLabelsOutputBufferHost[j]);
+        if (pSegmentsHost[j] != 0)
+            free(pSegmentsHost[j]);
+        if (pInputImageHost[j] != 0)
+            free(pInputImageHost[j]);
+    }
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/watershedSegmentationNPP/watershedSegmentationNPP.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/watershedSegmentationNPP/watershedSegmentationNPP.cpp:163-182
+```cpp
+    printf("Input file load succeeded.\n");
+
+    return 0;
+}
+
+int main(int argc, char **argv)
+{
+
+    size_t aSegmentationScratchBufferSize[NUMBER_OF_IMAGES];
+    int    aSegmentLabelsOutputBufferSize[NUMBER_OF_IMAGES];
+
+    cudaError_t      cudaError;
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+    NppStatus        nppStatus;
+    NppStreamContext nppStreamCtx;
+    FILE            *bmpFile;
+    NppiNorm         eNorm = nppiNormInf; // default to 8 way neighbor search
+
+    for (int j = 0; j < NUMBER_OF_IMAGES; j++) {
+        pInputImageDev[j]                 = 0;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/watershedSegmentationNPP/watershedSegmentationNPP.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/watershedSegmentationNPP/watershedSegmentationNPP.cpp:268-287
+```cpp
+            reinterpret_cast<Npp8u *>(malloc(oSizeROI[nImage].width * sizeof(Npp8u) * oSizeROI[nImage].height));
+        pSegmentsHost[nImage] =
+            reinterpret_cast<Npp8u *>(malloc(oSizeROI[nImage].width * sizeof(Npp32u) * oSizeROI[nImage].height));
+
+        // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+        nppStatus = nppiSegmentWatershedGetBufferSize_8u_C1R(oSizeROI[nImage], &aSegmentationScratchBufferSize[nImage]);
+
+        // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
+        cudaError = cudaMalloc((void **)&pSegmentationScratchBufferDev[nImage], aSegmentationScratchBufferSize[nImage]);
+        if (cudaError != cudaSuccess)
+            return NPP_MEMORY_ALLOCATION_ERR;
+
+        // Output label marker buffers are only needed if you want to same the generated segmentation labels, they ARE
+        // compatible with NPP UF generated labels. Requesting segmentation output may slightly decrease segmentation
+        // function performance.  Regardless of the pitch of the segmentation image the segment labels output buffer
+        // will have a pitch of oSizeROI[nImage].width * sizeof(Npp32u).
+
+        aSegmentLabelsOutputBufferSize[nImage] = oSizeROI[nImage].width * sizeof(Npp32u) * oSizeROI[nImage].height;
+
+        // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/watershedSegmentationNPP/watershedSegmentationNPP.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/watershedSegmentationNPP/watershedSegmentationNPP.cpp:293-312
+```cpp
+            reinterpret_cast<Npp32u *>(malloc(oSizeROI[nImage].width * sizeof(Npp32u) * oSizeROI[nImage].height));
+
+        if (loadRaw8BitImage(
+                pInputImageHost[nImage], oSizeROI[nImage].width * sizeof(Npp8u), oSizeROI[nImage].height, nImage)
+            == 0) {
+            // JP: `cudaError`, `cudaMemcpy2DAsync`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+            cudaError = cudaMemcpy2DAsync(pInputImageDev[nImage],
+                                          oSizeROI[nImage].width * sizeof(Npp8u),
+                                          pInputImageHost[nImage],
+                                          oSizeROI[nImage].width * sizeof(Npp8u),
+                                          oSizeROI[nImage].width * sizeof(Npp8u),
+                                          oSizeROI[nImage].height,
+                                          cudaMemcpyHostToDevice,
+                                          // JP: この anchor では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+                                          nppStreamCtx.hStream);
+
+            // Make a second copy of the unaltered input image since this function works in place and we want to reuse
+            // the input image multiple times.
+            // JP: この連続する anchor 群では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
+            cudaError = cudaMemcpy2DAsync(pSegmentsDev[nImage],
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/watershedSegmentationNPP/watershedSegmentationNPP.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

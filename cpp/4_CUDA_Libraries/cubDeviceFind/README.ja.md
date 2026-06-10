@@ -79,6 +79,163 @@ English anchor: read `cubDeviceFind` as a focused example of the CUDA concepts u
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/cubDeviceFind/CMakeLists.txt:1-65
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(cubDeviceFind LANGUAGES C CXX CUDA)
+
+# Disable response file for libraries on QNX as qcc does not support lib paths with double quotes
+if(CMAKE_SYSTEM_NAME STREQUAL "QNX")
+    set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_LIBRARIES OFF)
+endif()
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Fetch CCCL via CPM.
+# Override with -DCCCL_SOURCE_DIR=/path/to/cccl to use a local checkout
+set(CCCL_SAMPLES_CCCL_TAG "v3.3.3" CACHE STRING
+    "Tag/branch of NVIDIA/cccl to fetch for the CCCL samples")
+
+if(NOT TARGET CCCL::CCCL)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/CPM.cmake")
+    if(DEFINED CCCL_SOURCE_DIR AND NOT CCCL_SOURCE_DIR STREQUAL "")
+        CPMAddPackage(NAME CCCL SOURCE_DIR "${CCCL_SOURCE_DIR}")
+    else()
+        CPMAddPackage(
+            NAME CCCL
+            GIT_REPOSITORY "https://github.com/NVIDIA/cccl"
+            GIT_TAG "${CCCL_SAMPLES_CCCL_TAG}"
+        )
+    endif()
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for cubDeviceFind
+add_executable(cubDeviceFind cubDeviceFind.cu)
+
+target_compile_options(cubDeviceFind PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(cubDeviceFind PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(cubDeviceFind PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_link_libraries(cubDeviceFind PRIVATE
+    CUDA::cudart
+    CCCL::CCCL
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cubDeviceFind/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `cubDeviceFind.cu`
+
+Source: cpp/4_CUDA_Libraries/cubDeviceFind/cubDeviceFind.cu:37-55
+```cuda
+#include <algorithm>
+#include <stdio.h>
+#include <stdlib.h>
+#include <vector>
+
+/* Includes, cuda */
+#include <cuda_runtime.h>
+#include <helper_cuda.h>
+
+/* Includes, cccl */
+#include <cub/device/device_find.cuh>
+#include <cuda/std/functional>
+#include <thrust/device_vector.h>
+#include <thrust/host_vector.h>
+
+/* Predicate used with cub::DeviceFind::FindIf. */
+struct is_greater_than_t
+{
+    int threshold;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cubDeviceFind/cubDeviceFind.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/cubDeviceFind/cubDeviceFind.cu:74-93
+```cuda
+                                            temp_bytes,
+                                            d_in.begin(),
+                                            d_out.begin(),
+                                            predicate,
+                                            num_items));
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    checkCudaErrors(cudaDeviceSynchronize());
+
+    const int got = d_out[0];
+
+    thrust::host_vector<int> h_in       = d_in;
+    auto                     host_it    = std::find_if(h_in.begin(), h_in.end(),
+                                   [&](int v) { return v > predicate.threshold; });
+    const int                expected   = static_cast<int>(host_it - h_in.begin());
+
+    printf("cub::DeviceFind::FindIf(value > %d) over [0..%d)\n", predicate.threshold, num_items);
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+    printf("  got index = %d, expected = %d  %s\n", got, expected, (got == expected ? "OK" : "FAIL"));
+    return got == expected;
+}
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cubDeviceFind/cubDeviceFind.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/cubDeviceFind/cubDeviceFind.cu:232-251
+```cuda
+        printf(" %d", exp_ub[i]);
+    printf(" }  %s\n", ok ? "OK" : "FAIL");
+    return ok;
+}
+
+int main(int argc, char **argv)
+{
+    int devID = findCudaDevice(argc, (const char **)argv);
+    cudaDeviceProp props;
+    checkCudaErrors(cudaGetDeviceProperties(&props, devID));
+    printf("Device: %s (Compute Capability %d.%d)\n\n", props.name, props.major, props.minor);
+
+    bool ok = true;
+    ok &= run_find_if();
+    printf("\n");
+    ok &= run_lower_bound();
+    printf("\n");
+    ok &= run_upper_bound();
+
+    printf("\n%s\n", ok ? "Done" : "FAILED");
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cubDeviceFind/cubDeviceFind.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

@@ -73,7 +73,7 @@ English anchor: read `simpleCudaGraphs` as a focused example of the CUDA concept
 
 ## Concrete Reading Path
 
-- `simpleCudaGraphs.cu`: focus on `blockDim`, `cudaGraphNode_t`, `cudaStreamCreate`, `cudaStreamDestroy`, `blockIdx`.
+- `simpleCudaGraphs.cu`: focus on `launch`, `CUDA`, `blockDim`, `cudaGraphNode_t`, `cudaStreamCreate`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
@@ -81,10 +81,199 @@ English anchor: read `simpleCudaGraphs` as a focused example of the CUDA concept
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/3_CUDA_Features/simpleCudaGraphs/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleCudaGraphs LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simpleCudaGraphs
+add_executable(simpleCudaGraphs simpleCudaGraphs.cu)
+
+target_compile_options(simpleCudaGraphs PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleCudaGraphs PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simpleCudaGraphs PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/simpleCudaGraphs/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleCudaGraphs.cu`
+
+Source: cpp/3_CUDA_Features/simpleCudaGraphs/simpleCudaGraphs.cu:29-61
+```cuda
+#include <cooperative_groups.h>
+#include <cuda_runtime.h>
+#include <helper_cuda.h>
+#include <vector>
+
+namespace cg = cooperative_groups;
+
+#define THREADS_PER_BLOCK       512
+#define GRAPH_LAUNCH_ITERATIONS 3
+
+typedef struct callBackData
+{
+    const char *fn_name;
+    double     *data;
+} callBackData_t;
+
+__global__ void reduce(float *inputVec, double *outputVec, size_t inputSize, size_t outputSize)
+{
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    __shared__ double tmp[THREADS_PER_BLOCK];
+
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    cg::thread_block cta       = cg::this_thread_block();
+    size_t           globaltid = blockIdx.x * blockDim.x + threadIdx.x;
+
+    double temp_sum = 0.0;
+    for (int i = globaltid; i < inputSize; i += gridDim.x * blockDim.x) {
+        temp_sum += (double)inputVec[i];
+    }
+    tmp[cta.thread_rank()] = temp_sum;
+
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    cg::sync(cta);
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/simpleCudaGraphs/simpleCudaGraphs.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/simpleCudaGraphs/simpleCudaGraphs.cu:177-200
+```cuda
+    cudaGraph_t                  graph;
+    std::vector<cudaGraphNode_t> nodeDependencies;
+    cudaGraphNode_t              memcpyNode, kernelNode, memsetNode;
+    double                       result_h = 0.0;
+
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    checkCudaErrors(cudaStreamCreate(&streamForGraph));
+
+    cudaKernelNodeParams kernelNodeParams = {0};
+    cudaMemcpy3DParms    memcpyParams     = {0};
+    cudaMemsetParams     memsetParams     = {0};
+
+    memcpyParams.srcArray = NULL;
+    memcpyParams.srcPos   = make_cudaPos(0, 0, 0);
+    memcpyParams.srcPtr   = make_cudaPitchedPtr(inputVec_h, sizeof(float) * inputSize, inputSize, 1);
+    memcpyParams.dstArray = NULL;
+    memcpyParams.dstPos   = make_cudaPos(0, 0, 0);
+    memcpyParams.dstPtr   = make_cudaPitchedPtr(inputVec_d, sizeof(float) * inputSize, inputSize, 1);
+    memcpyParams.extent   = make_cudaExtent(sizeof(float) * inputSize, 1, 1);
+    // JP: `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    memcpyParams.kind     = cudaMemcpyHostToDevice;
+
+    memsetParams.dst         = (void *)outputVec_d;
+    memsetParams.value       = 0;
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/simpleCudaGraphs/simpleCudaGraphs.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/simpleCudaGraphs/simpleCudaGraphs.cu:300-319
+```cuda
+    for (int i = 0; i < GRAPH_LAUNCH_ITERATIONS; i++) {
+        checkCudaErrors(cudaGraphLaunch(graphExec, streamForGraph));
+    }
+
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
+    checkCudaErrors(cudaStreamSynchronize(streamForGraph));
+
+    printf("Cloned Graph Output.. \n");
+    for (int i = 0; i < GRAPH_LAUNCH_ITERATIONS; i++) {
+        // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+        checkCudaErrors(cudaGraphLaunch(clonedGraphExec, streamForGraph));
+    }
+    // JP: この anchor では device/stream/event の完了待ち境界です。validation や resource 解放の前に待つ work を確認します。
+    checkCudaErrors(cudaStreamSynchronize(streamForGraph));
+
+    checkCudaErrors(cudaGraphExecDestroy(graphExec));
+    checkCudaErrors(cudaGraphExecDestroy(clonedGraphExec));
+    checkCudaErrors(cudaGraphDestroy(graph));
+    checkCudaErrors(cudaGraphDestroy(clonedGraph));
+    // JP: `cudaStreamDestroy`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/simpleCudaGraphs/simpleCudaGraphs.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/simpleCudaGraphs/simpleCudaGraphs.cu:422-456
+```cuda
+    checkCudaErrors(cudaStreamDestroy(stream1));
+    checkCudaErrors(cudaStreamDestroy(stream2));
+    checkCudaErrors(cudaStreamDestroy(streamForGraph));
+}
+
+int main(int argc, char **argv)
+{
+    size_t size      = 1 << 24; // number of elements to reduce
+    size_t maxBlocks = 512;
+
+    // This will pick the best possible CUDA capable device
+    int devID = findCudaDevice(argc, (const char **)argv);
+
+    printf("%zu elements\n", size);
+    printf("threads per block  = %d\n", THREADS_PER_BLOCK);
+    printf("Graph Launch iterations = %d\n", GRAPH_LAUNCH_ITERATIONS);
+
+    float  *inputVec_d = NULL, *inputVec_h = NULL;
+    double *outputVec_d = NULL, *result_d;
+
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
+    checkCudaErrors(cudaMallocHost(&inputVec_h, sizeof(float) * size));
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc(&inputVec_d, sizeof(float) * size));
+    checkCudaErrors(cudaMalloc(&outputVec_d, sizeof(double) * maxBlocks));
+    checkCudaErrors(cudaMalloc(&result_d, sizeof(double)));
+
+    init_input(inputVec_h, size);
+
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+    cudaGraphsManual(inputVec_h, inputVec_d, outputVec_d, result_d, size, maxBlocks);
+    cudaGraphsUsingStreamCapture(inputVec_h, inputVec_d, outputVec_d, result_d, size, maxBlocks);
+
+    // JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
+    checkCudaErrors(cudaFree(inputVec_d));
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/simpleCudaGraphs/simpleCudaGraphs.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
 | - | - |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `blockDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `cudaStreamCreate` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
 | `cudaStreamDestroy` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
@@ -98,7 +287,6 @@ English anchor: read `simpleCudaGraphs` as a focused example of the CUDA concept
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
 | `cudaGraphNode_t` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 | `cudaGraphsUsingStreamCapture` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
-| `cudaEventCreate` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。
@@ -173,7 +361,7 @@ Run the sample as documented and compare its output with the original README, va
 
 ## Exercises
 
-- `blockDim` の直前と直後で、どの memory/resource が有効になったかをメモする。
+- `launch` の直前と直後で、どの memory/resource が有効になったかをメモする。
 - source file を上から読み、setup、GPU work、sync、validation、cleanup の行番号を抜き出す。
 - problem size や input size を変更した場合に、境界チェックや allocation size が破綻しないか説明する。
 - shared memory tile の producer、consumer、barrier を図にする。

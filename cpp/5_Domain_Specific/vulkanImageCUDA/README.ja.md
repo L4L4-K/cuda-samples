@@ -89,6 +89,229 @@ English anchor: read `vulkanImageCUDA` as a focused example of the CUDA concepts
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/5_Domain_Specific/vulkanImageCUDA/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(vulkanImageCUDA LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/vulkanImageCUDA/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `linmath.h`
+
+Source: cpp/5_Domain_Specific/vulkanImageCUDA/linmath.h:22-40
+```cpp
+#ifndef LINMATH_H
+#define LINMATH_H
+
+#include <math.h>
+
+// Converts degrees to radians.
+#define degreesToRadians(angleDegrees) (angleDegrees * M_PI / 180.0)
+
+// Converts radians to degrees.
+#define radiansToDegrees(angleRadians) (angleRadians * 180.0 / M_PI)
+
+typedef float      vec3[3];
+static inline void vec3_add(vec3 r, vec3 const a, vec3 const b)
+{
+    int i;
+    for (i = 0; i < 3; ++i)
+        r[i] = a[i] + b[i];
+}
+static inline void vec3_sub(vec3 r, vec3 const a, vec3 const b)
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/vulkanImageCUDA/linmath.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `shader.frag`
+
+Source: cpp/5_Domain_Specific/vulkanImageCUDA/shader.frag:1-13
+```glsl
+#version 450
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_NV_gpu_shader5 : enable
+
+layout(location = 0) in vec3 fragColor;
+layout(location = 1) in vec2 fragTexCoord;
+layout(binding = 1) uniform sampler2D texSampler;
+
+layout(location = 0) out vec4 outColor;
+
+void main() {
+    outColor = texture(texSampler, fragTexCoord);
+}
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/vulkanImageCUDA/shader.frag` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `shader.vert`
+
+Source: cpp/5_Domain_Specific/vulkanImageCUDA/shader.vert:1-26
+```glsl
+#version 450
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_NV_gpu_shader5 : enable
+
+layout(binding = 0) uniform UniformBufferObject {
+    mat4 model;
+    mat4 view;
+    mat4 proj;
+} ubo;
+
+layout(location = 0) in vec4 inPosition;
+layout(location = 1) in vec3 inColor;
+layout(location = 2) in vec2 inTexCoord;
+
+layout(location = 0) out vec3 fragColor;
+layout(location = 1) out vec2 fragTexCoord;
+
+out gl_PerVertex {
+    vec4 gl_Position;
+};
+
+void main() {
+    gl_Position = ubo.proj * ubo.view * ubo.model * inPosition;
+    fragColor = inColor;
+    fragTexCoord = inTexCoord;
+}
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/vulkanImageCUDA/shader.vert` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `vulkanImageCUDA.cu`
+
+Source: cpp/5_Domain_Specific/vulkanImageCUDA/vulkanImageCUDA.cu:29-47
+```cuda
+#define GLFW_INCLUDE_VULKAN
+#ifdef _WIN64
+// Add windows.h to the include path firstly as dependency for other Windows headers
+#include <windows.h>
+// Add other Windows headers
+#include <VersionHelpers.h>
+#include <aclapi.h>
+#include <dxgi1_2.h>
+#define _USE_MATH_DEFINES
+#endif
+
+#include <GLFW/glfw3.h>
+#include <vulkan/vulkan.h>
+#ifdef _WIN64
+#include <vulkan/vulkan_win32.h>
+#endif
+
+#include <algorithm>
+#include <array>
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/vulkanImageCUDA/vulkanImageCUDA.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/vulkanImageCUDA/vulkanImageCUDA.cu:159-178
+```cuda
+    }
+    if (*ppACL) {
+        LocalFree(*ppACL);
+    }
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    free(m_winPSecurityDescriptor);
+}
+#endif
+
+// JP: この anchor では CUDA resource lifetime end です。未完了 work が残っていないか確認し、確保/作成/登録と対応する API で閉じます。
+void DestroyDebugUtilsMessengerEXT(VkInstance                   instance,
+                                   VkDebugUtilsMessengerEXT     debugMessenger,
+                                   const VkAllocationCallbacks *pAllocator)
+{
+    auto func = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
+    if (func != nullptr) {
+        func(instance, debugMessenger, pAllocator);
+    }
+}
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/vulkanImageCUDA/vulkanImageCUDA.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/vulkanImageCUDA/vulkanImageCUDA.cu:292-311
+```cuda
+                                   size_t               baseHeight,
+                                   size_t               mipLevels,
+                                   int                  filter_radius)
+{
+    float        scale = 1.0f / (float)((filter_radius << 1) + 1);
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    unsigned int y     = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (y < baseHeight) {
+        for (uint32_t mipLevelIdx = 0; mipLevelIdx < mipLevels; mipLevelIdx++) {
+            uint32_t width  = (baseWidth >> mipLevelIdx) ? (baseWidth >> mipLevelIdx) : 1;
+            uint32_t height = (baseHeight >> mipLevelIdx) ? (baseHeight >> mipLevelIdx) : 1;
+            if (y < height && filter_radius < width) {
+                float  px = 1.0 / width;
+                float  py = 1.0 / height;
+                float4 t  = make_float4(0.0f);
+                for (int x = -filter_radius; x <= filter_radius; x++) {
+                    t += tex2DLod<float4>(textureMipMapInput, x * px, y * py, (float)mipLevelIdx);
+                }
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/vulkanImageCUDA/vulkanImageCUDA.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/vulkanImageCUDA/vulkanImageCUDA.cu:855-874
+```cuda
+            checkCudaErrors(cudaDeviceGetAttribute(&computeMode, cudaDevAttrComputeMode, current_device));
+            if ((computeMode != cudaComputeModeProhibited)) {
+                // Compare the cuda device UUID with vulkan UUID
+                int ret = memcmp(&deviceProp.uuid, &vkDeviceUUID, VK_UUID_SIZE);
+                if (ret == 0) {
+                    checkCudaErrors(cudaSetDevice(current_device));
+                    checkCudaErrors(cudaGetDeviceProperties(&deviceProp, current_device));
+                    printf("GPU Device %d: \"%s\" with compute capability %d.%d\n\n",
+                           current_device,
+                           deviceProp.name,
+                           deviceProp.major,
+                           deviceProp.minor);
+
+                    return current_device;
+                }
+            }
+            else {
+                devices_prohibited++;
+            }
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/vulkanImageCUDA/vulkanImageCUDA.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

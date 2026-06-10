@@ -80,6 +80,257 @@ English anchor: read `device-side-launch` as a focused example of the CUDA conce
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/7_libNVVM/device-side-launch/CMakeLists.txt:2-72
+```cmake
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+# OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+set(CMAKE_INSTALL_RPATH ${LIBNVVM_HOME})
+set(CMAKE_INCLUDE_CURRENT_DIR YES)
+set_property(SOURCE dsl.c
+             PROPERTY COMPILE_DEFINITIONS LIBCUDADEVRT="${CUDADEVRT_LIB}")
+
+# JP: `add_executable`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+add_executable(dsl dsl.c)
+
+add_test(NAME device-side-launch COMMAND dsl
+	WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(dsl ${NVVM_LIB} ${CUDA_LIB})
+
+if (WIN32)
+  set_target_properties(dsl PROPERTIES COMPILE_FLAGS "/wd4996")
+else (WIN32)
+  set_target_properties(dsl PROPERTIES LINK_FLAGS "-Wl,-rpath,${LIBNVVM_RPATH}")
+endif (WIN32)
+
+# Install to CUDA_SAMPLES_INSTALL_DIR if defined (for unified installation),
+# otherwise install to bin (for standalone libNVVM build)
+if(DEFINED CUDA_SAMPLES_INSTALL_DIR)
+    install(TARGETS dsl DESTINATION ${CUDA_SAMPLES_INSTALL_DIR})
+    install(FILES dsl-gpu64.ll DESTINATION ${CUDA_SAMPLES_INSTALL_DIR})
+else()
+    install(TARGETS dsl DESTINATION bin)
+    install(FILES dsl-gpu64.ll DESTINATION bin)
+endif()
+
+# 'dsl' will load dsl-gpu64.ll from the current working directory. That
+# .ll file should be present where tests are executed (the build directory).
+add_custom_command(
+    TARGET dsl
+    POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/dsl-gpu64.ll" "$<TARGET_FILE_DIR:dsl>"
+)
+if (WIN32)
+  add_custom_command(
+      TARGET dsl
+      POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+              "${CMAKE_BINARY_DIR}/nvvm64_40_0.dll" "$<TARGET_FILE_DIR:dsl>"
+  )
+endif ()
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/device-side-launch/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `dsl-gpu64.ll`
+
+Source: cpp/7_libNVVM/device-side-launch/dsl-gpu64.ll:2-20
+```llvm
+;
+; Redistribution and use in source and binary forms, with or without
+; modification, are permitted provided that the following conditions
+; are met:
+;  * Redistributions of source code must retain the above copyright
+;    notice, this list of conditions and the following disclaimer.
+;  * Redistributions in binary form must reproduce the above copyright
+;    notice, this list of conditions and the following disclaimer in the
+;    documentation and/or other materials provided with the distribution.
+;  * Neither the name of NVIDIA CORPORATION nor the names of its
+;    contributors may be used to endorse or promote products derived
+;    from this software without specific prior written permission.
+;
+; THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+; EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+; IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+; PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+; CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+; EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/device-side-launch/dsl-gpu64.ll` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/7_libNVVM/device-side-launch/dsl-gpu64.ll:27-50
+```llvm
+; This NVVM IR program shows how to call cudaGetParameterBuffer and cudaLaunchDevice functions.
+; What it does is similar to the following CUDA C code.
+;
+; __global__ void kernel(int depth)
+; {
+;   if (threadIdx.x == 0) {
+;     printf("kernel launched, depth = %d\n", depth);
+;   }
+;
+;   __syncthreads();
+;
+;   if (++depth > 3)
+;     return;
+;
+;   kernel<<<1,1>>>(depth);
+;
+; }
+
+target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-i128:128:128-f32:32:32-f64:64:64-v16:16:16-v32:32:32-v64:64:64-v128:128:128-n16:32:64"
+target triple = "nvptx64-nvidia-cuda"
+
+%struct.dim3 = type { i32, i32, i32 }
+%struct.CUstream_st = type opaque
+
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/device-side-launch/dsl-gpu64.ll` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `dsl.c`
+
+Source: cpp/7_libNVVM/device-side-launch/dsl.c:24-47
+```c
+// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+// OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+#include <assert.h>
+#include <builtin_types.h>
+#include <cuda.h>
+#include <math.h>
+#include <nvvm.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+
+// The full path to the libcudadevrt.a is determined by the build environment.
+const char *_libCudaDevRt = LIBCUDADEVRT;
+
+static const char *getLibCudaDevRtName(void)
+{
+    // Check that the library exists.
+    FILE *fh = fopen(_libCudaDevRt, "rb");
+    if (fh == NULL) {
+        fprintf(stderr, "Error locating the libcudadevrt runtime: %s\n", _libCudaDevRt);
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/device-side-launch/dsl.c` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/7_libNVVM/device-side-launch/dsl.c:79-98
+```c
+    *size        = 0;
+    FILE *fh     = fopen(filename, "rb");
+    if (fh) {
+        struct stat statbuf;
+        stat(filename, &statbuf);
+        source = (char *)malloc(statbuf.st_size + 1);
+        if (source) {
+            fread(source, statbuf.st_size, 1, fh);
+            source[statbuf.st_size] = 0;
+            *size                   = statbuf.st_size + 1;
+        }
+    }
+    else {
+        fprintf(stderr, "Error reading file %s\n", filename);
+        exit(EXIT_FAILURE);
+    }
+    return source;
+}
+
+// Compile the NVVM IR into PTX.
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/device-side-launch/dsl.c` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/7_libNVVM/device-side-launch/dsl.c:129-148
+```c
+        nvvmGetProgramLogSize(program, &LogSize);
+        Msg = (char *)malloc(LogSize);
+        nvvmGetProgramLog(program, Msg);
+        fprintf(stderr, "%s\n", Msg);
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        free(Msg);
+        exit(EXIT_FAILURE);
+    }
+
+    size_t ptxSize = 0;
+    result         = nvvmGetCompiledResultSize(program, &ptxSize);
+    if (result != NVVM_SUCCESS) {
+        fprintf(stderr, "nvvmGetCompiledResultSize: Failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    char *ptx = malloc(ptxSize);
+    assert(ptx);
+    result = nvvmGetCompiledResult(program, ptx);
+    if (result != NVVM_SUCCESS) {
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/device-side-launch/dsl.c` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/7_libNVVM/device-side-launch/dsl.c:165-184
+```c
+// JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
+static CUdevice cudaDeviceInit(int *major, int *minor)
+{
+    assert(major && minor);
+    // Count the number of CUDA compute capable devices..
+    CUresult err         = cuInit(0);
+    int      deviceCount = 0;
+    if (CUDA_SUCCESS == err)
+        checkCudaErrors(cuDeviceGetCount(&deviceCount));
+    if (deviceCount == 0) {
+        fprintf(stderr, "cudaDeviceInit error: no devices supporting CUDA\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Get the first device discovered (device 0) and print its name.
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
+    CUdevice cuDevice = 0;
+    checkCudaErrors(cuDeviceGet(&cuDevice, 0));
+    char name[128] = {0};
+    checkCudaErrors(cuDeviceGetName(name, sizeof(name), cuDevice));
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/device-side-launch/dsl.c` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

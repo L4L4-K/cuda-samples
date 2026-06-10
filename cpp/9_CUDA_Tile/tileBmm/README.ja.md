@@ -81,6 +81,170 @@ English anchor: read `tileBmm` as a focused example of the CUDA concepts used in
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/9_CUDA_Tile/tileBmm/CMakeLists.txt:1-32
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(tileBmm LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_CUDA_ARCHITECTURES 80 86 87 89 90 100 110 120)
+
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --enable-tile")
+
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+add_executable(tileBmm tileBmm.cu)
+
+target_compile_features(tileBmm PRIVATE cxx_std_20 cuda_std_20)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileBmm/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `tileBmm.cu`
+
+Source: cpp/9_CUDA_Tile/tileBmm/tileBmm.cu:46-72
+```cuda
+#include "helper_cuda.h"
+
+#include "cuda_tile.h"
+#include "cuda_fp16.h"
+
+#include <cstdio>
+#include <cstdlib>
+
+/* SIMT initializer for A (shape Q x M x K) and B (shape Q x K x N).
+ * Values are bounded so the K-summed result fits comfortably in __half. */
+__global__ void initializeMatrices(__half* a, __half* b,
+                                   int Q, int M, int N, int K) {
+  // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+  auto idx = blockIdx.x * blockDim.x + threadIdx.x;
+  std::size_t a_size = std::size_t(Q) * M * K;
+  std::size_t b_size = std::size_t(Q) * K * N;
+
+  if (idx < a_size) {
+    int k = idx % K;
+    int m = (idx / K) % M;
+    a[idx] = __half{float((m + k + 1) % 8) / 32.0f};
+  }
+  if (idx < b_size) {
+    int n = idx % N;
+    int k = (idx / N) % K;
+    b[idx] = __half{float((k + n + 1) % 8) / 32.0f};
+  }
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileBmm/tileBmm.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/9_CUDA_Tile/tileBmm/tileBmm.cu:184-220
+```cuda
+  std::size_t c_size = std::size_t(Q) * M * N;
+
+  __half* d_A = nullptr;
+  __half* d_B = nullptr;
+  __half* d_C = nullptr;
+  // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+  checkCudaErrors(cudaMalloc(&d_A, a_size * sizeof(__half)));
+  checkCudaErrors(cudaMalloc(&d_B, b_size * sizeof(__half)));
+  checkCudaErrors(cudaMalloc(&d_C, c_size * sizeof(__half)));
+
+  /* populate A and B with deterministic test data on the device */
+  int init_threads = 256;
+  std::size_t init_elems = (a_size > b_size) ? a_size : b_size;
+  int init_blocks = int((init_elems + init_threads - 1) / init_threads);
+  // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+  initializeMatrices<<<init_blocks, init_threads>>>(d_A, d_B, Q, M, N, K);
+  checkCudaErrors(cudaGetLastError());
+
+  /* compute a CPU reference using double accumulation, then cast to __half */
+  __half* h_A = new __half[a_size];
+  __half* h_B = new __half[b_size];
+  __half* h_C_ref = new __half[c_size];
+  // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+  checkCudaErrors(cudaMemcpy(h_A, d_A, a_size * sizeof(__half), cudaMemcpyDeviceToHost));
+  checkCudaErrors(cudaMemcpy(h_B, d_B, b_size * sizeof(__half), cudaMemcpyDeviceToHost));
+
+  for (int q = 0; q < Q; ++q) {
+    for (int m = 0; m < M; ++m) {
+      for (int n = 0; n < N; ++n) {
+        double acc = 0.0;
+        for (int k = 0; k < K; ++k) {
+          double av = double(float(h_A[(std::size_t(q) * M + m) * K + k]));
+          double bv = double(float(h_B[(std::size_t(q) * K + k) * N + n]));
+          acc += av * bv;
+        }
+        h_C_ref[(std::size_t(q) * M + m) * N + n] = __half{float(acc)};
+      }
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileBmm/tileBmm.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/9_CUDA_Tile/tileBmm/tileBmm.cu:241-275
+```cuda
+  persistent_bmm_kernel<__half, BLOCK_SIZE_Q, BLOCK_SIZE_M, BLOCK_SIZE_N,
+                        BLOCK_SIZE_K, GROUP_SIZE_M, Q, M, N, K,
+                        NUM_CTAS, OCCUPANCY>
+      <<<dim3(grid_size, 1, 1)>>>(d_A, d_B, d_C);
+  checkCudaErrors(cudaGetLastError());
+  // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+  checkCudaErrors(cudaDeviceSynchronize());
+
+  __half* h_C = new __half[c_size];
+  checkCudaErrors(cudaMemcpy(h_C, d_C, c_size * sizeof(__half), cudaMemcpyDeviceToHost));
+
+  for (std::size_t idx = 0; idx < c_size; ++idx) {
+    float got = float(h_C[idx]);
+    float ref = float(h_C_ref[idx]);
+    float diff = got > ref ? got - ref : ref - got;
+    if (diff > 1e-1f) {
+      printf("Expected: h_C[%zu] == %f\n", idx, ref);
+      printf("Actual:   h_C[%zu] == %f\n", idx, got);
+
+      return 1;
+    }
+  }
+
+  printf("Success! BMM matches expected results.\n");
+
+  // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+  checkCudaErrors(cudaFree(d_A));
+  checkCudaErrors(cudaFree(d_B));
+  checkCudaErrors(cudaFree(d_C));
+
+  delete[] h_A;
+  delete[] h_B;
+  delete[] h_C;
+  delete[] h_C_ref;
+}
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileBmm/tileBmm.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

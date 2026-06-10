@@ -74,13 +74,227 @@ English anchor: read `simpleTemplates` as a focused example of the CUDA concepts
 ## Concrete Reading Path
 
 - `sharedmem.cuh`: focus on `__shared__`.
-- `simpleTemplates.cu`: focus on `CUDA`, `__syncthreads`, `cudaMalloc`, `cudaMemcpy`, `launch`.
+- `simpleTemplates.cu`: focus on `CUDA`, `cudaMalloc`, `cudaMemcpy`, `launch`, `threadIdx`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/simpleTemplates/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleTemplates LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simpleTemplates
+add_executable(simpleTemplates simpleTemplates.cu)
+
+target_compile_options(simpleTemplates PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleTemplates PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simpleTemplates PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleTemplates/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `sharedmem.cuh`
+
+Source: cpp/0_Introduction/simpleTemplates/sharedmem.cuh:29-62
+```cuda
+#ifndef _SHAREDMEM_H_
+#define _SHAREDMEM_H_
+
+//****************************************************************************
+// Because dynamically sized shared memory arrays are declared "extern",
+// we can't templatize them directly.  To get around this, we declare a
+// simple wrapper struct that will declare the extern array with a different
+// name depending on the type.  This avoids compiler errors about duplicate
+// definitions.
+//
+// To use dynamically allocated shared memory in a templatized __global__ or
+// __device__ function, just replace code like this:
+//
+//
+//  template<class T>
+//  __global__ void
+//  foo( T* g_idata, T* g_odata)
+//  {
+//      // Shared mem size is determined by the host app at run time
+//      extern __shared__  T sdata[];
+//      ...
+//      doStuff(sdata);
+//      ...
+//   }
+//
+//   With this
+//  template<class T>
+//  __global__ void
+//  foo( T* g_idata, T* g_odata)
+//  {
+//      // Shared mem size is determined by the host app at run time
+//      SharedMemory<T> smem;
+//      T* sdata = smem.getPointer();
+//      ...
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleTemplates/sharedmem.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleTemplates.cu`
+
+Source: cpp/0_Introduction/simpleTemplates/simpleTemplates.cu:31-54
+```cuda
+ * memory arrays.
+ * Host code.
+ */
+
+// System includes
+#include <assert.h>
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
+
+// CUDA runtime
+#include <cuda_runtime.h>
+
+// helper functions and utilities to work with CUDA
+#include <helper_cuda.h>
+#include <helper_functions.h>
+
+#ifndef MAX
+#define MAX(a, b) (a > b ? a : b)
+#endif
+
+// includes, kernels
+#include "sharedmem.cuh"
+
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleTemplates/simpleTemplates.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleTemplates/simpleTemplates.cu:65-84
+```cuda
+    // JP: shared_memory: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    SharedMemory<T> smem;
+    T              *sdata = smem.getPointer();
+
+    // access thread id
+    // JP: `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    const unsigned int tid = threadIdx.x;
+    // access number of threads in this block
+    const unsigned int num_threads = blockDim.x;
+
+    // read in input data from global memory
+    sdata[tid] = g_idata[tid];
+    // JP: この連続する anchor 群では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
+    __syncthreads();
+
+    // perform some computations
+    sdata[tid] = (T)num_threads * sdata[tid];
+    __syncthreads();
+
+    // write data to global memory
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleTemplates/simpleTemplates.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleTemplates/simpleTemplates.cu:99-118
+```cuda
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    printf("> runTest<float,32>\n");
+    runTest<float>(argc, argv, 32);
+    printf("> runTest<int,64>\n");
+    runTest<int>(argc, argv, 64);
+
+    printf("\n[simpleTemplates] -> Test Results: %d Failures\n", g_TotalFailures);
+
+    exit(g_TotalFailures == 0 ? EXIT_SUCCESS : EXIT_FAILURE);
+}
+
+// To completely templatize runTest (below) with cutil, we need to use
+// template specialization to wrap up CUTIL's array comparison and file writing
+// functions for different types.
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleTemplates/simpleTemplates.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleTemplates/simpleTemplates.cu:204-235
+```cuda
+
+    unsigned int num_threads = len;
+    unsigned int mem_size    = sizeof(float) * num_threads;
+
+    // allocate host memory
+    T *h_idata = (T *)malloc(mem_size);
+
+    // initialize the memory
+    for (unsigned int i = 0; i < num_threads; ++i) {
+        h_idata[i] = (T)i;
+    }
+
+    // allocate device memory
+    T *d_idata;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc((void **)&d_idata, mem_size));
+    // copy host memory to device
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpy(d_idata, h_idata, mem_size, cudaMemcpyHostToDevice));
+
+    // allocate device memory for result
+    T *d_odata;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
+    checkCudaErrors(cudaMalloc((void **)&d_odata, mem_size));
+
+    // setup execution parameters
+    dim3 grid(1, 1, 1);
+    dim3 threads(num_threads, 1, 1);
+
+    // execute the kernel
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    testKernel<T><<<grid, threads, mem_size>>>(d_idata, d_odata);
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleTemplates/simpleTemplates.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 
@@ -90,10 +304,10 @@ English anchor: read `simpleTemplates` as a focused example of the CUDA concepts
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
 | `cudaMemcpy` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
-| `__syncthreads` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |
 | `cudaGetDeviceProperties` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `threadIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
+| `__syncthreads` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |
 | `cudaMemcpyHostToDevice` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `blockDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `Program` | 実行時 compile/link の境界です。log、module、kernel name の対応を確認します。 |

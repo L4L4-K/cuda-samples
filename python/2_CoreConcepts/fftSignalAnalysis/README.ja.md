@@ -80,6 +80,116 @@ English anchor: read `fftSignalAnalysis` as a focused example of the CUDA concep
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `fftSignalAnalysis.py`
+
+Source: python/2_CoreConcepts/fftSignalAnalysis/fftSignalAnalysis.py:2-20
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/fftSignalAnalysis/fftSignalAnalysis.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/fftSignalAnalysis/fftSignalAnalysis.py:174-193
+```python
+    print("FFT Signal Analysis")
+    print("=" * 60)
+
+    # Initialize device
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
+    device = Device(device_id)
+    device.set_current()
+    stream = device.create_stream()
+
+    try:
+        print(f"\nDevice: {device.name}")
+        print(f"Compute Capability: sm_{device.arch}")
+
+        # Make CuPy use our cuda.core stream
+        # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
+        cp.cuda.Stream.from_external(stream).use()
+
+        # Define test signal: composite of multiple frequencies
+        test_frequencies = [440.0, 880.0, 1320.0, 2000.0, 5000.0]  # Hz
+        test_amplitudes = [1.0, 0.5, 0.3, 0.7, 0.4]
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/fftSignalAnalysis/fftSignalAnalysis.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/fftSignalAnalysis/fftSignalAnalysis.py:210-229
+```python
+
+        # ---------------------------------------------------------------------
+        # GPU FFT (cuFFT via CuPy)
+        # ---------------------------------------------------------------------
+        print("\n" + "-" * 60)
+        # JP: `cuFFT`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。 CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+        print("GPU FFT (cuFFT)")
+        print("-" * 60)
+
+        event_opts = EventOptions(timing_enabled=True)
+
+        # Warmup
+        # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
+        d_fft_result = cp.fft.rfft(d_signal)
+        stream.sync()
+
+        # Timed runs
+        start = stream.record(options=event_opts)
+        for _ in range(num_iterations):
+            d_fft_result = cp.fft.rfft(d_signal)
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/fftSignalAnalysis/fftSignalAnalysis.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/fftSignalAnalysis/fftSignalAnalysis.py:300-319
+```python
+        detected_freqs = [freq for freq, _ in detected_peaks]
+        all_found = True
+        for expected_freq in test_frequencies:
+            found = any(abs(f - expected_freq) < 10 for f in detected_freqs)
+            # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+            status = "[OK]" if found else "[FAIL]"
+            print(f"  {expected_freq:6.0f} Hz: {status}")
+            all_found = all_found and found
+
+        success = success and all_found
+        return success
+
+    finally:
+        # Cleanup - always close resources
+        # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
+        cp.cuda.Stream.null.use()
+        stream.close()
+
+
+def main() -> None:
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/fftSignalAnalysis/fftSignalAnalysis.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

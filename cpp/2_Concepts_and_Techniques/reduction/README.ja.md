@@ -76,13 +76,273 @@ English anchor: read `reduction` as a focused example of the CUDA concepts used 
 
 - `reduction.cpp`: focus on `cudaMemcpy`, `cudaMalloc`, `cudaFree`, `cudaMemcpyDeviceToHost`, `cudaMemcpyHostToDevice`.
 - `reduction.h`: focus on control flow and helper functions.
-- `reduction_kernel.cu`: focus on `blockIdx`, `threadIdx`, `blockDim`, `gridDim`, `__shared__`.
+- `reduction_kernel.cu`: focus on `blockIdx`, `threadIdx`, `blockDim`, `launch`, `gridDim`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/2_Concepts_and_Techniques/reduction/CMakeLists.txt:1-41
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(reduction LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for reduction
+add_executable(reduction reduction.cpp reduction_kernel.cu)
+
+target_compile_options(reduction PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(reduction PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(reduction PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_include_directories(reduction PUBLIC
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/reduction/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `reduction.cpp`
+
+Source: cpp/2_Concepts_and_Techniques/reduction/reduction.cpp:30-48
+```cpp
+    Parallel reduction
+
+    This sample shows how to perform a reduction operation on an array of values
+    to produce a single value.
+
+    Reductions are a very common computation in parallel algorithms.  Any time
+    an array of values needs to be reduced to a single value using a binary
+    associative operator, a reduction can be used.  Example applications include
+    statistics computations such as mean and standard deviation, and image
+    processing applications such as finding the total luminance of an
+    image.
+
+    This code performs sum reductions, but any associative operator such as
+    min() or max() could also be used.
+
+    It assumes the input size is a power of 2.
+
+    COMMAND LINE ARGUMENTS
+
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/reduction/reduction.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/reduction/reduction.cpp:102-121
+```cpp
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    printf("%s Starting...\n\n", argv[0]);
+
+    char *typeInput = 0;
+    getCmdLineArgumentString(argc, (const char **)argv, "type", &typeInput);
+
+    ReduceType datatype = REDUCE_INT;
+
+    if (0 != typeInput) {
+        if (!strcasecmp(typeInput, "float")) {
+            datatype = REDUCE_FLOAT;
+        }
+        else if (!strcasecmp(typeInput, "double")) {
+            datatype = REDUCE_DOUBLE;
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/reduction/reduction.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/reduction/reduction.cpp:261-299
+```cpp
+{
+    T    gpu_result   = 0;
+    bool needReadBack = true;
+
+    T *d_intermediateSums;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc((void **)&d_intermediateSums, sizeof(T) * numBlocks));
+
+    for (int i = 0; i < testIterations; ++i) {
+        gpu_result = 0;
+
+        // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+        cudaDeviceSynchronize();
+        sdkStartTimer(&timer);
+
+        // execute the kernel
+        reduce<T>(n, numThreads, numBlocks, whichKernel, d_idata, d_odata);
+
+        // check if kernel execution generated an error
+        getLastCudaError("Kernel execution failed");
+
+        if (cpuFinalReduction) {
+            // sum partial sums from each block on CPU
+            // copy result from device to host
+            // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+            checkCudaErrors(cudaMemcpy(h_odata, d_odata, numBlocks * sizeof(T), cudaMemcpyDeviceToHost));
+
+            for (int i = 0; i < numBlocks; i++) {
+                gpu_result += h_odata[i];
+            }
+
+            needReadBack = false;
+        }
+        else {
+            // sum partial block sums on GPU
+            int s      = numBlocks;
+            int kernel = whichKernel;
+
+            while (s > cpuFinalThreshold) {
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/reduction/reduction.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/reduction/reduction.cpp:331-350
+```cpp
+
+    if (needReadBack) {
+        // copy final sum from device to host
+        checkCudaErrors(cudaMemcpy(&gpu_result, d_odata, sizeof(T), cudaMemcpyDeviceToHost));
+    }
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaFree(d_intermediateSums));
+    return gpu_result;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// This function calls benchmarkReduce multiple times for a range of array sizes
+// and prints a report in CSV (comma-separated value) format that can be used
+// for generating a "shmoo" plot showing the performance for each kernel
+// variation over a wide range of input sizes.
+////////////////////////////////////////////////////////////////////////////////
+template <class T> void shmoo(int minN, int maxN, int maxThreads, int maxBlocks, ReduceType datatype)
+{
+    // create random input data on CPU
+    unsigned int bytes = maxN * sizeof(T);
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/reduction/reduction.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `reduction.h`
+
+Source: cpp/2_Concepts_and_Techniques/reduction/reduction.h:30-35
+```cpp
+#ifndef __REDUCTION_H__
+#define __REDUCTION_H__
+
+template <class T> void reduce(int size, int threads, int blocks, int whichKernel, T *d_idata, T *d_odata);
+
+#endif
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/reduction/reduction.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `reduction_kernel.cu`
+
+Source: cpp/2_Concepts_and_Techniques/reduction/reduction_kernel.cu:30-63
+```cuda
+    Parallel reduction kernels
+*/
+
+#ifndef _REDUCE_KERNEL_H_
+#define _REDUCE_KERNEL_H_
+
+#include <cooperative_groups.h>
+#include <cooperative_groups/reduce.h>
+#include <stdio.h>
+
+namespace cg = cooperative_groups;
+
+// Utility class used to avoid linker errors with extern
+// unsized shared memory arrays with templated type
+// JP: shared_memory: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+template <class T> struct SharedMemory
+{
+    __device__ inline operator T *()
+    {
+        extern __shared__ int __smem[];
+        return (T *)__smem;
+    }
+
+    __device__ inline operator const T *() const
+    {
+        extern __shared__ int __smem[];
+        return (T *)__smem;
+    }
+};
+
+// specialize for double to avoid unaligned memory
+// access compile errors
+template <> struct SharedMemory<double>
+{
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/reduction/reduction_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/reduction/reduction_kernel.cu:550-569
+```cuda
+    if ((tid % warpSize) == 0) {
+        sdata[tid / warpSize] = mySum;
+    }
+
+    // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
+    __syncthreads();
+
+    // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+    const unsigned int shmem_extent  = (blockSize / warpSize) > 0 ? (blockSize / warpSize) : 1;
+    const unsigned int ballot_result = __ballot_sync(mask, tid < shmem_extent);
+    if (tid < shmem_extent) {
+        mySum = sdata[tid];
+        // Reduce final warp using shuffle or reduce_add if T==int & CUDA_ARCH ==
+        // SM 8.0
+        mySum = warpReduceSum<T>(ballot_result, mySum);
+    }
+
+    // write result for this block to global mem
+    if (tid == 0) {
+        // JP: この anchor では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/reduction/reduction_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 
@@ -92,10 +352,10 @@ English anchor: read `reduction` as a focused example of the CUDA concepts used 
 | `threadIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `blockDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `cudaMemcpy` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
 | `gridDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
-| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaDeviceSynchronize` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `__shared__` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |
 | `cudaGetDeviceProperties` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |

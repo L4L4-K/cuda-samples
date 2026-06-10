@@ -81,6 +81,165 @@ English anchor: read `streamOrderedAllocationP2P` as a focused example of the CU
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/2_Concepts_and_Techniques/streamOrderedAllocationP2P/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(streamOrderedAllocationP2P LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for streamOrderedAllocationP2P
+add_executable(streamOrderedAllocationP2P streamOrderedAllocationP2P.cu)
+
+target_compile_options(streamOrderedAllocationP2P PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(streamOrderedAllocationP2P PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(streamOrderedAllocationP2P PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/streamOrderedAllocationP2P/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `streamOrderedAllocationP2P.cu`
+
+Source: cpp/2_Concepts_and_Techniques/streamOrderedAllocationP2P/streamOrderedAllocationP2P.cu:31-68
+```cuda
+ * allocated with cudaMallocAsync and cudaMemPool family of APIs through simple
+ * kernel which does peer-to-peer to access & scales vector elements.
+ */
+
+// System includes
+#include <assert.h>
+#include <iostream>
+#include <map>
+#include <set>
+#include <stdio.h>
+#include <utility>
+
+// CUDA runtime
+#include <cuda_runtime.h>
+
+// helper functions and utilities to work with CUDA
+#include <helper_cuda.h>
+#include <helper_functions.h>
+
+// Simple kernel to demonstrate copying cudaMallocAsync memory via P2P to peer
+// device
+__global__ void copyP2PAndScale(const int *src, int *dst, int N)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (idx < N) {
+        // scale & store src vector.
+        dst[idx] = 2 * src[idx];
+    }
+}
+
+// Map of device version to device number
+std::multimap<std::pair<int, int>, int> getIdenticalGPUs()
+{
+    int numGpus = 0;
+    checkCudaErrors(cudaGetDeviceCount(&numGpus));
+
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/streamOrderedAllocationP2P/streamOrderedAllocationP2P.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/streamOrderedAllocationP2P/streamOrderedAllocationP2P.cu:118-137
+```cuda
+
+    // check & select peer-to-peer access capable GPU devices.
+    int devIds[2];
+    for (auto itr = bestFit.first; itr != bestFit.second; itr++) {
+        int deviceId = itr->second;
+        checkCudaErrors(cudaSetDevice(deviceId));
+
+        std::for_each(itr, bestFit.second, [&deviceId, &bestFitDeviceIds, &kNumGpusRequired](decltype(*itr) mapPair) {
+            if (deviceId != mapPair.second) {
+                int access = 0;
+                checkCudaErrors(cudaDeviceCanAccessPeer(&access, deviceId, mapPair.second));
+                printf("Device=%d %s Access Peer Device=%d\n", deviceId, access ? "CAN" : "CANNOT", mapPair.second);
+                if (access && bestFitDeviceIds.size() < kNumGpusRequired) {
+                    bestFitDeviceIds.emplace(deviceId);
+                    bestFitDeviceIds.emplace(mapPair.second);
+                }
+                else {
+                    printf("Ignoring device %i (max devices exceeded)\n", mapPair.second);
+                }
+            }
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/streamOrderedAllocationP2P/streamOrderedAllocationP2P.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/streamOrderedAllocationP2P/streamOrderedAllocationP2P.cu:182-212
+```cuda
+    }
+
+    auto p2pDevices = getP2PCapableGpuPair();
+    printf("selected devices = %d & %d\n", p2pDevices.first, p2pDevices.second);
+    checkCudaErrors(cudaSetDevice(p2pDevices.first));
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    checkCudaErrors(cudaEventCreate(&waitOnStream1));
+
+    checkCudaErrors(cudaStreamCreateWithFlags(&stream1, cudaStreamNonBlocking));
+
+    // Get the default mempool for device p2pDevices.first from the pair
+    checkCudaErrors(cudaDeviceGetDefaultMemPool(&memPool, p2pDevices.first));
+
+    // Allocate memory in a stream from the pool set above.
+    checkCudaErrors(cudaMallocAsync(&dev0_srcVec, bytes, stream1));
+
+    // JP: `cudaMemcpyAsync`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpyAsync(dev0_srcVec, a, bytes, cudaMemcpyHostToDevice, stream1));
+    checkCudaErrors(cudaEventRecord(waitOnStream1, stream1));
+
+    checkCudaErrors(cudaSetDevice(p2pDevices.second));
+    checkCudaErrors(cudaStreamCreateWithFlags(&stream2, cudaStreamNonBlocking));
+
+    // Allocate memory in p2pDevices.second device
+    checkCudaErrors(cudaMallocAsync(&dev1_dstVec, bytes, stream2));
+
+    // Setup peer mappings for p2pDevices.second device
+    cudaMemAccessDesc desc;
+    memset(&desc, 0, sizeof(cudaMemAccessDesc));
+    desc.location.type = cudaMemLocationTypeDevice;
+    desc.location.id   = p2pDevices.second;
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/streamOrderedAllocationP2P/streamOrderedAllocationP2P.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

@@ -80,6 +80,120 @@ English anchor: read `cudaGraphs` as a focused example of the CUDA concepts used
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `cudaGraphs.py`
+
+Source: python/2_CoreConcepts/cudaGraphs/cudaGraphs.py:2-20
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/cudaGraphs/cudaGraphs.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/cudaGraphs/cudaGraphs.py:35-58
+```python
+This sample runs a three-stage elementwise pipeline (add -> multiply ->
+subtract) in two modes:
+
+  1. Individually launched kernels on a stream.
+  2. A single CUDA graph that captures the same three launches and is
+     replayed with ``graph.launch(stream)``.
+
+We then measure the wall-clock time of each mode across many iterations to
+illustrate the graph replay advantage for short kernels, and demonstrate that
+a graph can be relaunched against new data (the pointers are baked in, but
+the contents of those buffers are not).
+"""
+
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "Utilities"))
+
+try:
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
+    import cupy as cp
+    import numpy as np
+    from cuda.core import Device, LaunchConfig, Program, ProgramOptions, launch
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/cudaGraphs/cudaGraphs.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/cudaGraphs/cudaGraphs.py:159-178
+```python
+    stream.sync()
+    return time.perf_counter() - t0
+
+
+def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="CUDA Graphs demo with cuda.core")
+    parser.add_argument(
+        "--elements",
+        type=int,
+        default=1 << 12,
+        help="Elements per vector (default: 4096 - small to emphasize launch overhead)",
+    )
+    parser.add_argument(
+        "--iters",
+        type=int,
+        default=1000,
+        help="Number of pipeline iterations to time (default: 1000)",
+    )
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/cudaGraphs/cudaGraphs.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/cudaGraphs/cudaGraphs.py:220-239
+```python
+        run_pipeline_individual(stream, kernels, config, buffers, N, n_iters=5)
+        t_individual = run_pipeline_individual(
+            stream, kernels, config, buffers, N, n_iters=args.iters
+        )
+        # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+        assert cp.allclose(
+            r3, expected, rtol=1e-5, atol=1e-5
+        ), "Individual pipeline produced incorrect results"
+        print(
+            f"\nIndividual launches: {args.iters} iters in {t_individual:.4f}s"
+            f"  ({t_individual * 1e6 / args.iters:.2f} us/iter)"
+        )
+
+        # Capture the same pipeline as a graph and measure the replay.
+        print("\nBuilding CUDA graph...")
+        graph_builder, graph = build_graph(stream, kernels, config, buffers, N)
+
+        run_pipeline_graph(stream, graph, n_iters=5)  # warm up
+        t_graph = run_pipeline_graph(stream, graph, n_iters=args.iters)
+        # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/cudaGraphs/cudaGraphs.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

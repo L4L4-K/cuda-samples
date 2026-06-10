@@ -81,6 +81,170 @@ English anchor: read `simpleIPC` as a focused example of the CUDA concepts used 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/simpleIPC/CMakeLists.txt:1-41
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleIPC LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
+    message(STATUS "Will not build sample simpleIPC - not supported on aarch64")
+else()
+    # Source file
+    # Add target for simpleIPC
+    add_executable(simpleIPC simpleIPC.cu ../../../Common/helper_multiprocess.cpp)
+
+    target_compile_options(simpleIPC PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+    target_compile_features(simpleIPC PRIVATE cxx_std_17 cuda_std_17)
+
+    set_target_properties(simpleIPC PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+endif()
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleIPC/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleIPC.cu`
+
+Source: cpp/0_Introduction/simpleIPC/simpleIPC.cu:33-51
+```cuda
+#include <stdio.h>
+#include <stdlib.h>
+#include <vector>
+
+#include "helper_cuda.h"
+#include "helper_multiprocess.h"
+static const char shmName[] = "simpleIPCshm";
+// For direct NVLINK and PCI-E peers, at max 8 simultaneous peers are allowed
+// For NVSWITCH connected peers like DGX-2, simultaneous peers are not limited
+// in the same way.
+#define MAX_DEVICES (32)
+#define DATA_SIZE   (64ULL << 20ULL) // 64MB
+
+#if defined(__linux__)
+#define cpu_atomic_add32(a, x) __sync_add_and_fetch(a, x)
+#elif defined(WIN32) || defined(_WIN32) || defined(WIN64) || defined(_WIN64)
+#define cpu_atomic_add32(a, x) InterlockedAdd((volatile LONG *)a, x)
+#else
+#error Unsupported system
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleIPC/simpleIPC.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleIPC/simpleIPC.cu:61-80
+```cuda
+    cudaIpcEventHandle_t eventHandle[MAX_DEVICES];
+} shmStruct;
+
+__global__ void simpleKernel(char *ptr, int sz, char val)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    for (; idx < sz; idx += (gridDim.x * blockDim.x)) {
+        ptr[idx] = val;
+    }
+}
+
+static void barrierWait(volatile int *barrier, volatile int *sense, unsigned int n)
+{
+    int count;
+
+    // Check-in
+    count = cpu_atomic_add32(barrier, 1);
+    if (count == n) // Last one in
+        *sense = 1;
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleIPC/simpleIPC.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleIPC/simpleIPC.cu:124-145
+```cuda
+    shm       = (volatile shmStruct *)info.addr;
+    procCount = shm->nprocesses;
+
+    printf("Process %d: Starting on device %d...\n", id, shm->devices[id]);
+
+    checkCudaErrors(cudaSetDevice(shm->devices[id]));
+    checkCudaErrors(cudaGetDeviceProperties(&prop, shm->devices[id]));
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    checkCudaErrors(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+    checkCudaErrors(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks, simpleKernel, threads, 0));
+    blocks *= prop.multiProcessorCount;
+
+    // Open and track all the allocations and events created in the master
+    // process for use later
+    for (i = 0; i < procCount; i++) {
+        void       *ptr = NULL;
+        cudaEvent_t event;
+
+        // Notice, we don't need to explicitly enable peer access for
+        // allocations on other devices.
+        checkCudaErrors(
+            cudaIpcOpenMemHandle(&ptr, *(cudaIpcMemHandle_t *)&shm->memHandle[i], cudaIpcMemLazyEnablePeerAccess));
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleIPC/simpleIPC.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleIPC/simpleIPC.cu:175-197
+```cuda
+        }
+    }
+
+    // Now wait for my buffer to be ready so I can copy it locally and verify it
+    checkCudaErrors(cudaStreamWaitEvent(stream, events[id], 0));
+    // JP: `cudaMemcpyAsync`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpyAsync(&verification_buffer[0], ptrs[id], DATA_SIZE, cudaMemcpyDeviceToHost, stream));
+    // And wait for all the queued up work to complete
+    // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    checkCudaErrors(cudaStreamSynchronize(stream));
+
+    printf("Process %d: verifying...\n", id);
+
+    // The contents should have the id of the sibling just after me
+    // JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+    char compareId = (char)((id + 1) % procCount);
+    for (unsigned long long j = 0; j < DATA_SIZE; j++) {
+        if (verification_buffer[j] != compareId) {
+            printf("Process %d: Verification mismatch at %lld: %d != %d\n",
+                   id,
+                   j,
+                   (int)verification_buffer[j],
+                   (int)compareId);
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleIPC/simpleIPC.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

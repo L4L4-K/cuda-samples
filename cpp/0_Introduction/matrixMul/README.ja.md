@@ -82,6 +82,188 @@ English anchor: read `matrixMul` as a focused example of the CUDA concepts used 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/matrixMul/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(matrixMul LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for asyncAPI
+add_executable(matrixMul matrixMul.cu)
+
+target_compile_options(matrixMul PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(matrixMul PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(matrixMul PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMul/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `matrixMul.cu`
+
+Source: cpp/0_Introduction/matrixMul/matrixMul.cu:39-76
+```cuda
+ * in Proc. 2008 ACM/IEEE Conf. on Supercomputing (SC '08),
+ * Piscataway, NJ: IEEE Press, 2008, pp. Art. 31:1-11.
+ */
+
+// System includes
+#include <assert.h>
+#include <stdio.h>
+
+// CUDA runtime
+#include <cuda_profiler_api.h>
+#include <cuda_runtime.h>
+
+// Helper functions and utilities to work with CUDA
+#include <helper_cuda.h>
+#include <helper_functions.h>
+
+/**
+ * Matrix multiplication (CUDA Kernel) on the device: C = A * B
+ * wA is A's width and wB is B's width
+ */
+template <int BLOCK_SIZE> __global__ void MatrixMulCUDA(float *C, float *A, float *B, int wA, int wB)
+{
+    // Block index
+    // JP: `blockIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int bx = blockIdx.x;
+    int by = blockIdx.y;
+
+    // Thread index
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+
+    // Index of the first sub-matrix of A processed by the block
+    int aBegin = wA * BLOCK_SIZE * by;
+
+    // Index of the last sub-matrix of A processed by the block
+    int aEnd = aBegin + wA - 1;
+
+    // Step size used to iterate through the sub-matrices of A
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMul/matrixMul.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/matrixMul/matrixMul.cu:144-163
+```cuda
+{
+    // Allocate host memory for matrices A and B
+    unsigned int size_A     = dimsA.x * dimsA.y;
+    unsigned int mem_size_A = sizeof(float) * size_A;
+    float       *h_A;
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
+    checkCudaErrors(cudaMallocHost(&h_A, mem_size_A));
+    unsigned int size_B     = dimsB.x * dimsB.y;
+    unsigned int mem_size_B = sizeof(float) * size_B;
+    float       *h_B;
+    checkCudaErrors(cudaMallocHost(&h_B, mem_size_B));
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+    cudaStream_t stream;
+
+    // Initialize host memory
+    const float valB = 0.01f;
+    ConstantInit(h_A, size_A, 1.0f);
+    ConstantInit(h_B, size_B, valB);
+
+    // Allocate device memory
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMul/matrixMul.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/matrixMul/matrixMul.cu:178-205
+```cuda
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&d_A), mem_size_A));
+    checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&d_B), mem_size_B));
+    checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&d_C), mem_size_C));
+    // Allocate CUDA events that we'll use for timing
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    cudaEvent_t start, stop;
+    checkCudaErrors(cudaEventCreate(&start));
+    checkCudaErrors(cudaEventCreate(&stop));
+
+    checkCudaErrors(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+
+    // copy host memory to device
+    // JP: `cudaMemcpyAsync`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpyAsync(d_A, h_A, mem_size_A, cudaMemcpyHostToDevice, stream));
+    checkCudaErrors(cudaMemcpyAsync(d_B, h_B, mem_size_B, cudaMemcpyHostToDevice, stream));
+
+    // Setup execution parameters
+    dim3 threads(block_size, block_size);
+    dim3 grid(dimsB.x / threads.x, dimsA.y / threads.y);
+
+    // Create and start timer
+    printf("Computing result using CUDA Kernel...\n");
+
+    // Performs warmup operation using matrixMul CUDA kernel
+    if (block_size == 16) {
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+        MatrixMulCUDA<16><<<grid, threads, 0, stream>>>(d_C, d_A, d_B, dimsA.x, dimsB.x);
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMul/matrixMul.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/matrixMul/matrixMul.cu:301-320
+```cuda
+
+
+/**
+ * Program main
+ */
+int main(int argc, char **argv)
+{
+    printf("[Matrix Multiply Using CUDA] - Starting...\n");
+
+    if (checkCmdLineFlag(argc, (const char **)argv, "help") || checkCmdLineFlag(argc, (const char **)argv, "?")) {
+        printf("Usage -device=n (n >= 0 for deviceID)\n");
+        printf("      -wA=WidthA -hA=HeightA (Width x Height of Matrix A)\n");
+        printf("      -wB=WidthB -hB=HeightB (Width x Height of Matrix B)\n");
+        printf("  Note: Outer matrix dimensions of A & B matrices"
+               " must be equal.\n");
+
+        exit(EXIT_SUCCESS);
+    }
+
+    // This will pick the best possible CUDA capable device, otherwise
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMul/matrixMul.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
@@ -95,9 +277,9 @@ English anchor: read `matrixMul` as a focused example of the CUDA concepts used 
 | `cudaStreamSynchronize` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
 | `cudaEventRecord` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
 | `cudaEventDestroy` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `blockIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `__shared__` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |
-| `__syncthreads` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |
 | `cudaStreamCreateWithFlags` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
 | `cudaMemcpyHostToDevice` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 

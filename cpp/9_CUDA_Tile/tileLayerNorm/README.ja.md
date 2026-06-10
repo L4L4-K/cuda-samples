@@ -81,6 +81,160 @@ English anchor: read `tileLayerNorm` as a focused example of the CUDA concepts u
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/9_CUDA_Tile/tileLayerNorm/CMakeLists.txt:1-32
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(tileLayerNorm LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_CUDA_ARCHITECTURES 80 86 87 89 90 100 110 120)
+
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --enable-tile")
+
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+add_executable(tileLayerNorm tileLayerNorm.cu)
+
+target_compile_features(tileLayerNorm PRIVATE cxx_std_20 cuda_std_20)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileLayerNorm/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `tileLayerNorm.cu`
+
+Source: cpp/9_CUDA_Tile/tileLayerNorm/tileLayerNorm.cu:43-67
+```cuda
+#include "helper_cuda.h"
+#include "cuda_tile.h"
+#include "cuda_fp16.h"
+#include <cstdio>
+#include <cstdlib>
+#include <cmath>
+
+/* SIMT initializer for X (N x D), W (D,), B (D,) with deterministic data. */
+__global__ void initializeInputs(__half* X, __half* W, __half* B,
+                                 int N, int D) {
+  // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+  auto idx   = blockIdx.x * blockDim.x + threadIdx.x;
+  auto total = N * D;
+  if (idx < total) {
+    int m = idx / D;
+    int n = idx - m * D;
+    X[idx] = __half{float((m + n) % 7) - 3.5f};
+  }
+  if (idx < D) {
+    W[idx] = __half{1.0f + 0.1f * float(idx % 5)};
+    B[idx] = __half{0.1f * float(idx % 3)};
+  }
+}
+
+template<typename T,
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileLayerNorm/tileLayerNorm.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/9_CUDA_Tile/tileLayerNorm/tileLayerNorm.cu:188-238
+```cuda
+  constexpr int   NUM_SMS = 132;
+  constexpr float EPS     = 1e-5f;
+
+  __half *d_X = nullptr, *d_Y = nullptr, *d_W = nullptr, *d_B = nullptr;
+  float  *d_Mean = nullptr, *d_Rstd = nullptr;
+  // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+  checkCudaErrors(cudaMalloc(&d_X,    N * D * sizeof(__half)));
+  checkCudaErrors(cudaMalloc(&d_Y,    N * D * sizeof(__half)));
+  checkCudaErrors(cudaMalloc(&d_W,    D     * sizeof(__half)));
+  checkCudaErrors(cudaMalloc(&d_B,    D     * sizeof(__half)));
+  checkCudaErrors(cudaMalloc(&d_Mean, N     * sizeof(float)));
+  checkCudaErrors(cudaMalloc(&d_Rstd, N     * sizeof(float)));
+
+  int init_threads = 256, init_blocks = 1 + ((N * D - 1) / init_threads);
+  // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+  initializeInputs<<<init_blocks, init_threads>>>(d_X, d_W, d_B, N, D);
+  checkCudaErrors(cudaGetLastError());
+
+  /* NUM_SMS is a compile-time NTTP that doubles as the persistent-loop
+   * stride; the launch grid x must equal NUM_SMS for correctness.
+   * Adjust the constant (and recompile) for one block per SM on a
+   * device with a different SM count. */
+  persistent_layer_norm_fwd_kernel<__half, BLOCK_N, BLOCK_D,
+                                   /*TRAINING=*/true, /*COMPUTE_MEAN_AND_RSTD=*/true,
+                                   N, D, NUM_SMS, EPS>
+      <<<dim3(NUM_SMS, 1, 1)>>>(d_X, d_Y, d_W, d_B, d_Mean, d_Rstd);
+  checkCudaErrors(cudaGetLastError());
+  // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+  checkCudaErrors(cudaDeviceSynchronize());
+
+  __half* h_Y        = new __half[N * D];
+  __half* h_Y_ref    = new __half[N * D];
+  float*  h_Mean     = new float[N];
+  float*  h_Rstd     = new float[N];
+  float*  h_Mean_ref = new float[N];
+  float*  h_Rstd_ref = new float[N];
+  // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+  checkCudaErrors(cudaMemcpy(h_Y,    d_Y,    N * D * sizeof(__half), cudaMemcpyDeviceToHost));
+  checkCudaErrors(cudaMemcpy(h_Mean, d_Mean, N     * sizeof(float),  cudaMemcpyDeviceToHost));
+  checkCudaErrors(cudaMemcpy(h_Rstd, d_Rstd, N     * sizeof(float),  cudaMemcpyDeviceToHost));
+
+  /* CPU reference in double precision; compare with 1e-1 fp16 tolerance
+   * for Y and 1e-3 for the float32 Mean/Rstd outputs. */
+  for (int m = 0; m < N; ++m) {
+    double sum = 0.0, sumsq = 0.0;
+    for (int n = 0; n < D; ++n) {
+      double x = double(float((m + n) % 7) - 3.5f);
+      sum += x; sumsq += x * x;
+    }
+    double mu      = sum / double(D);
+    double var     = sumsq / double(D) - mu * mu;
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileLayerNorm/tileLayerNorm.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/9_CUDA_Tile/tileLayerNorm/tileLayerNorm.cu:265-277
+```cuda
+    }
+  }
+
+  printf("Success! Persistent LayerNorm matches expected results.\n");
+
+  // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+  checkCudaErrors(cudaFree(d_X));   checkCudaErrors(cudaFree(d_Y));
+  checkCudaErrors(cudaFree(d_W));   checkCudaErrors(cudaFree(d_B));
+  checkCudaErrors(cudaFree(d_Mean)); checkCudaErrors(cudaFree(d_Rstd));
+  delete[] h_Y;        delete[] h_Y_ref;
+  delete[] h_Mean;     delete[] h_Rstd;
+  delete[] h_Mean_ref; delete[] h_Rstd_ref;
+}
+```
+
+> JP: この抜粋は `cpp/9_CUDA_Tile/tileLayerNorm/tileLayerNorm.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

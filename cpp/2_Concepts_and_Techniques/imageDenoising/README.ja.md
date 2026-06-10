@@ -93,10 +93,10 @@ English anchor: read `imageDenoising` as a focused example of the CUDA concepts 
 - `bmploader.cpp`: focus on control flow and helper functions.
 - `imageDenoising.cu`: focus on `cudaError_t`, `cudaMallocArray`, `cudaMemcpyHostToDevice`, `cudaResourceDesc`, `cudaTextureDesc`.
 - `imageDenoising.h`: focus on `cudaTextureObject_t`, `CUDA`, `cudaError_t`, `launch`, `CUDA_MallocArray`.
-- `imageDenoisingGL.cpp`: focus on `CUDA`, `cudaGraphicsResource`, `cudaGraphicsMapResources`, `cudaGraphicsResourceGetMappedPointer`, `CUDA_FreeArray`.
+- `imageDenoisingGL.cpp`: focus on `CUDA`, `cudaGraphicsResource`, `launch`, `cudaGraphicsMapResources`, `cudaGraphicsResourceGetMappedPointer`.
 - `imageDenoising_copy_kernel.cuh`: focus on `launch`, `cudaTextureObject_t`, `blockDim`, `blockIdx`, `threadIdx`.
 - `imageDenoising_knn_kernel.cuh`: focus on `blockDim`, `blockIdx`, `threadIdx`, `cudaTextureObject_t`, `launch`.
-- `imageDenoising_nlm2_kernel.cuh`: focus on `threadIdx`, `blockDim`, `blockIdx`, `cudaTextureObject_t`, `__shared__`.
+- `imageDenoising_nlm2_kernel.cuh`: focus on `threadIdx`, `blockDim`, `blockIdx`, `cudaTextureObject_t`, `launch`.
 - `imageDenoising_nlm_kernel.cuh`: focus on `blockDim`, `blockIdx`, `threadIdx`, `cudaTextureObject_t`, `launch`.
 
 > **日本語**
@@ -104,6 +104,460 @@ English anchor: read `imageDenoising` as a focused example of the CUDA concepts 
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/2_Concepts_and_Techniques/imageDenoising/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(imageDenoising LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/imageDenoising/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `bmploader.cpp`
+
+Source: cpp/2_Concepts_and_Techniques/imageDenoising/bmploader.cpp:29-47
+```cpp
+#include <stdio.h>
+#include <stdlib.h>
+
+#if defined(WIN32) || defined(_WIN32) || defined(WIN64) || defined(_WIN64)
+#pragma warning(disable : 4996) // disable deprecated warning
+#endif
+
+#pragma pack(1)
+
+typedef struct
+{
+    short type;
+    int   size;
+    short reserved1;
+    short reserved2;
+    int   offset;
+} BMPHeader;
+
+typedef struct
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/imageDenoising/bmploader.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `imageDenoising.cu`
+
+Source: cpp/2_Concepts_and_Techniques/imageDenoising/imageDenoising.cu:39-57
+```cuda
+#include <helper_cuda.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "imageDenoising.h"
+
+////////////////////////////////////////////////////////////////////////////////
+// Helper functions
+////////////////////////////////////////////////////////////////////////////////
+float Max(float x, float y) { return (x > y) ? x : y; }
+
+float Min(float x, float y) { return (x < y) ? x : y; }
+
+int iDivUp(int a, int b) { return ((a % b) != 0) ? (a / b + 1) : (a / b); }
+
+__device__ float lerpf(float a, float b, float c) { return a + (b - a) * c; }
+
+__device__ float vecLen(float4 a, float4 b)
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/imageDenoising/imageDenoising.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/imageDenoising/imageDenoising.cu:84-105
+```cuda
+
+extern "C" cudaError_t CUDA_MallocArray(uchar4 **h_Src, int imageW, int imageH)
+{
+    cudaError_t error;
+
+    // JP: `cudaMallocArray`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    error = cudaMallocArray(&a_Src, &uchar4tex, imageW, imageH);
+    error = cudaMemcpy2DToArray(
+        // JP: `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+        a_Src, 0, 0, *h_Src, sizeof(uchar4) * imageW, sizeof(uchar4) * imageW, imageH, cudaMemcpyHostToDevice);
+
+    cudaResourceDesc texRes;
+    memset(&texRes, 0, sizeof(cudaResourceDesc));
+
+    texRes.resType         = cudaResourceTypeArray;
+    texRes.res.array.array = a_Src;
+
+    cudaTextureDesc texDescr;
+    memset(&texDescr, 0, sizeof(cudaTextureDesc));
+
+    texDescr.normalizedCoords = false;
+    texDescr.filterMode       = cudaFilterModeLinear;
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/imageDenoising/imageDenoising.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/imageDenoising/imageDenoising.cu:110-116
+```cuda
+    checkCudaErrors(cudaCreateTextureObject(&texImage, &texRes, &texDescr, NULL));
+
+    return error;
+}
+
+// JP: `cudaError_t`, `cudaFreeArray`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+extern "C" cudaError_t CUDA_FreeArray() { return cudaFreeArray(a_Src); }
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/imageDenoising/imageDenoising.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `imageDenoising.h`
+
+Source: cpp/2_Concepts_and_Techniques/imageDenoising/imageDenoising.h:29-83
+```cpp
+#ifndef IMAGE_DENOISING_H
+#define IMAGE_DENOISING_H
+
+typedef unsigned int TColor;
+
+////////////////////////////////////////////////////////////////////////////////
+// Filter configuration
+////////////////////////////////////////////////////////////////////////////////
+#define KNN_WINDOW_RADIUS   3
+#define NLM_WINDOW_RADIUS   3
+#define NLM_BLOCK_RADIUS    3
+#define KNN_WINDOW_AREA     ((2 * KNN_WINDOW_RADIUS + 1) * (2 * KNN_WINDOW_RADIUS + 1))
+#define NLM_WINDOW_AREA     ((2 * NLM_WINDOW_RADIUS + 1) * (2 * NLM_WINDOW_RADIUS + 1))
+#define INV_KNN_WINDOW_AREA (1.0f / (float)KNN_WINDOW_AREA)
+#define INV_NLM_WINDOW_AREA (1.0f / (float)NLM_WINDOW_AREA)
+
+#define KNN_WEIGHT_THRESHOLD 0.02f
+#define KNN_LERP_THRESHOLD   0.79f
+#define NLM_WEIGHT_THRESHOLD 0.10f
+#define NLM_LERP_THRESHOLD   0.10f
+
+#define BLOCKDIM_X 8
+#define BLOCKDIM_Y 8
+
+#ifndef MAX
+#define MAX(a, b) ((a < b) ? b : a)
+#endif
+#ifndef MIN
+#define MIN(a, b) ((a < b) ? a : b)
+#endif
+
+// functions to load images
+extern "C" void LoadBMPFile(uchar4 **dst, int *width, int *height, const char *name);
+
+// CUDA wrapper functions for allocation/freeing texture arrays
+extern "C" cudaTextureObject_t texImage;
+
+extern "C" cudaError_t CUDA_MallocArray(uchar4 **h_Src, int imageW, int imageH);
+extern "C" cudaError_t CUDA_FreeArray();
+
+// CUDA kernel functions
+extern "C" void cuda_Copy(TColor *d_dst, int imageW, int imageH, cudaTextureObject_t texImage);
+extern "C" void cuda_KNN(TColor *d_dst, int imageW, int imageH, float Noise, float lerpC, cudaTextureObject_t texImage);
+extern "C" void
+cuda_KNNdiag(TColor *d_dst, int imageW, int imageH, float Noise, float lerpC, cudaTextureObject_t texImage);
+extern "C" void cuda_NLM(TColor *d_dst, int imageW, int imageH, float Noise, float lerpC, cudaTextureObject_t texImage);
+extern "C" void
+cuda_NLMdiag(TColor *d_dst, int imageW, int imageH, float Noise, float lerpC, cudaTextureObject_t texImage);
+
+extern "C" void
+cuda_NLM2(TColor *d_dst, int imageW, int imageH, float Noise, float LerpC, cudaTextureObject_t texImage);
+extern "C" void
+cuda_NLM2diag(TColor *d_dst, int imageW, int imageH, float Noise, float LerpC, cudaTextureObject_t texImage);
+
+#endif
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/imageDenoising/imageDenoising.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `imageDenoisingGL.cpp`
+
+Source: cpp/2_Concepts_and_Techniques/imageDenoising/imageDenoisingGL.cpp:40-58
+```cpp
+#include <helper_gl.h>
+#if defined(__APPLE__) || defined(MACOSX)
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#include <GLUT/glut.h>
+#else
+#include <GL/freeglut.h>
+#endif
+
+// CUDA utilities and system includes
+#include <cuda_gl_interop.h>
+#include <cuda_runtime.h>
+
+// Includes
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "imageDenoising.h"
+
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/imageDenoising/imageDenoisingGL.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/imageDenoising/imageDenoisingGL.cpp:184-203
+```cpp
+    if (frameCounter++ == 0) {
+        sdkResetTimer(&timer);
+    }
+
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+    checkCudaErrors(cudaGraphicsMapResources(1, &cuda_pbo_resource, 0));
+    getLastCudaError("cudaGraphicsMapResources failed");
+    checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&d_dst, &num_bytes, cuda_pbo_resource));
+    getLastCudaError("cudaGraphicsResourceGetMappedPointer failed");
+
+    runImageFilters(d_dst);
+
+    checkCudaErrors(cudaGraphicsUnmapResources(1, &cuda_pbo_resource, 0));
+
+    // Common display code path
+    {
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, imageW, imageH, GL_RGBA, GL_UNSIGNED_BYTE, BUFFER_DATA(0));
+        glBegin(GL_TRIANGLES);
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/imageDenoising/imageDenoisingGL.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/imageDenoising/imageDenoisingGL.cpp:415-434
+```cpp
+}
+
+void cleanup()
+{
+    // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    free(h_Src);
+    checkCudaErrors(CUDA_FreeArray());
+    checkCudaErrors(cudaGraphicsUnregisterResource(cuda_pbo_resource));
+
+    glDeleteProgramsARB(1, &shader);
+
+    sdkDeleteTimer(&timer);
+}
+
+void runAutoTest(int argc, char **argv, const char *filename, int kernel_param)
+{
+    printf("[%s] - (automated testing w/ readback)\n", sSDKsample);
+
+    int devID = findCudaDevice(argc, (const char **)argv);
+
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/imageDenoising/imageDenoisingGL.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/imageDenoising/imageDenoisingGL.cpp:448-497
+```cpp
+
+    checkCudaErrors(CUDA_MallocArray(&h_Src, imageW, imageH));
+
+    TColor        *d_dst = NULL;
+    unsigned char *h_dst = NULL;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc((void **)&d_dst, imageW * imageH * sizeof(TColor)));
+    h_dst = (unsigned char *)malloc(imageH * imageW * 4);
+
+    {
+        g_Kernel = kernel_param;
+        printf("[AutoTest]: %s <%s>\n", sSDKsample, filterMode[g_Kernel]);
+
+        runImageFilters(d_dst);
+
+        // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+        checkCudaErrors(cudaDeviceSynchronize());
+
+        // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+        checkCudaErrors(cudaMemcpy(h_dst, d_dst, imageW * imageH * sizeof(TColor), cudaMemcpyDeviceToHost));
+        sdkSavePPM4ub(filename, h_dst, imageW, imageH);
+    }
+
+    checkCudaErrors(CUDA_FreeArray());
+    free(h_Src);
+
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
+    checkCudaErrors(cudaFree(d_dst));
+    free(h_dst);
+
+    printf("\n[%s] -> Kernel %d, Saved: %s\n", sSDKsample, kernel_param, filename);
+
+    exit(g_TotalErrors == 0 ? EXIT_SUCCESS : EXIT_FAILURE);
+}
+
+int main(int argc, char **argv)
+{
+    char *dump_file = NULL;
+
+#if defined(__linux__)
+    setenv("DISPLAY", ":0", 0);
+#endif
+
+    pArgc = &argc;
+    pArgv = argv;
+
+    printf("%s Starting...\n\n", sSDKsample);
+
+    if (checkCmdLineFlag(argc, (const char **)argv, "file")) {
+        getCmdLineArgumentString(argc, (const char **)argv, "file", (char **)&dump_file);
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/imageDenoising/imageDenoisingGL.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `imageDenoising_copy_kernel.cuh`
+
+Source: cpp/2_Concepts_and_Techniques/imageDenoising/imageDenoising_copy_kernel.cuh:29-51
+```cuda
+__global__ void Copy(TColor *dst, int imageW, int imageH, cudaTextureObject_t texImage)
+{
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+    const int ix = blockDim.x * blockIdx.x + threadIdx.x;
+    const int iy = blockDim.y * blockIdx.y + threadIdx.y;
+    // Add half of a texel to always address exact texel centers
+    const float x = (float)ix + 0.5f;
+    const float y = (float)iy + 0.5f;
+
+    if (ix < imageW && iy < imageH) {
+        float4 fresult        = tex2D<float4>(texImage, x, y);
+        dst[imageW * iy + ix] = make_color(fresult.x, fresult.y, fresult.z, 0);
+    }
+}
+
+extern "C" void cuda_Copy(TColor *d_dst, int imageW, int imageH, cudaTextureObject_t texImage)
+{
+    dim3 threads(BLOCKDIM_X, BLOCKDIM_Y);
+    dim3 grid(iDivUp(imageW, BLOCKDIM_X), iDivUp(imageH, BLOCKDIM_Y));
+
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    Copy<<<grid, threads>>>(d_dst, imageW, imageH, texImage);
+}
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/imageDenoising/imageDenoising_copy_kernel.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `imageDenoising_knn_kernel.cuh`
+
+Source: cpp/2_Concepts_and_Techniques/imageDenoising/imageDenoising_knn_kernel.cuh:29-50
+```cuda
+////////////////////////////////////////////////////////////////////////////////
+// KNN kernel
+////////////////////////////////////////////////////////////////////////////////
+__global__ void KNN(TColor *dst, int imageW, int imageH, float Noise, float lerpC, cudaTextureObject_t texImage)
+{
+    // JP: `blockDim`, `blockIdx`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    const int ix = blockDim.x * blockIdx.x + threadIdx.x;
+    const int iy = blockDim.y * blockIdx.y + threadIdx.y;
+    // Add half of a texel to always address exact texel centers
+    const float x = (float)ix + 0.5f;
+    const float y = (float)iy + 0.5f;
+
+    if (ix < imageW && iy < imageH) {
+        // Normalized counter for the weight threshold
+        float fCount = 0;
+        // Total sum of pixel weights
+        float sumWeights = 0;
+        // Result accumulator
+        float3 clr = {0, 0, 0};
+        // Center of the KNN window
+        float4 clr00 = tex2D<float4>(texImage, x, y);
+
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/imageDenoising/imageDenoising_knn_kernel.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `imageDenoising_nlm2_kernel.cuh`
+
+Source: cpp/2_Concepts_and_Techniques/imageDenoising/imageDenoising_nlm2_kernel.cuh:48-73
+```cuda
+#include <cooperative_groups.h>
+
+namespace cg = cooperative_groups;
+
+__global__ void NLM2(TColor *dst, int imageW, int imageH, float Noise, float lerpC, cudaTextureObject_t texImage)
+{
+    // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    cg::thread_block cta = cg::this_thread_block();
+
+    // Weights cache
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    __shared__ float fWeights[BLOCKDIM_X * BLOCKDIM_Y];
+
+    const int ix = blockDim.x * blockIdx.x + threadIdx.x;
+    const int iy = blockDim.y * blockIdx.y + threadIdx.y;
+    // Add half of a texel to always address exact texel centers
+    const float x  = (float)ix + 0.5f;
+    const float y  = (float)iy + 0.5f;
+    const float cx = blockDim.x * blockIdx.x + NLM_WINDOW_RADIUS + 0.5f;
+    const float cy = blockDim.x * blockIdx.y + NLM_WINDOW_RADIUS + 0.5f;
+
+    if (ix < imageW && iy < imageH) {
+        // Find color distance from current texel to the center of NLM window
+        float weight = 0;
+
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/imageDenoising/imageDenoising_nlm2_kernel.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `imageDenoising_nlm_kernel.cuh`
+
+Source: cpp/2_Concepts_and_Techniques/imageDenoising/imageDenoising_nlm_kernel.cuh:29-50
+```cuda
+////////////////////////////////////////////////////////////////////////////////
+// NLM kernel
+////////////////////////////////////////////////////////////////////////////////
+__global__ void NLM(TColor *dst, int imageW, int imageH, float Noise, float lerpC, cudaTextureObject_t texImage)
+{
+    // JP: `blockDim`, `blockIdx`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    const int ix = blockDim.x * blockIdx.x + threadIdx.x;
+    const int iy = blockDim.y * blockIdx.y + threadIdx.y;
+    // Add half of a texel to always address exact texel centers
+    const float x = (float)ix + 0.5f;
+    const float y = (float)iy + 0.5f;
+
+    if (ix < imageW && iy < imageH) {
+        // Normalized counter for the NLM weight threshold
+        float fCount = 0;
+        // Total sum of pixel weights
+        float sumWeights = 0;
+        // Result accumulator
+        float3 clr = {0, 0, 0};
+
+        // Cycle through NLM window, surrounding (x, y) texel
+        for (float i = -NLM_WINDOW_RADIUS; i <= NLM_WINDOW_RADIUS; i++)
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/imageDenoising/imageDenoising_nlm_kernel.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

@@ -82,6 +82,197 @@ English anchor: read `transpose` as a focused example of the CUDA concepts used 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/6_Performance/transpose/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(transpose LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for transpose
+add_executable(transpose transpose.cu)
+
+target_compile_options(transpose PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(transpose PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(transpose PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/6_Performance/transpose/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `transpose.cu`
+
+Source: cpp/6_Performance/transpose/transpose.cu:42-60
+```cuda
+#include <cooperative_groups.h>
+
+namespace cg = cooperative_groups;
+// Utilities and system includes
+#include <helper_cuda.h>   // helper for cuda error checking functions
+#include <helper_image.h>  // helper for image and data comparison
+#include <helper_string.h> // helper for string parsing
+
+const char *sSDKsample = "Transpose";
+
+// Each block transposes/copies a tile of TILE_DIM x TILE_DIM elements
+// using TILE_DIM x BLOCK_ROWS threads, so that each thread transposes
+// TILE_DIM/BLOCK_ROWS elements.  TILE_DIM must be an integral multiple of
+// BLOCK_ROWS
+
+#define TILE_DIM   32
+#define BLOCK_ROWS 16
+
+// This sample assumes that MATRIX_SIZE_X = MATRIX_SIZE_Y
+```
+
+> JP: この抜粋は `cpp/6_Performance/transpose/transpose.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/6_Performance/transpose/transpose.cu:79-98
+```cuda
+// width and height must be integral multiples of TILE_DIM
+// -------------------------------------------------------
+
+__global__ void copy(float *odata, float *idata, int width, int height)
+{
+    // JP: `blockIdx`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int xIndex = blockIdx.x * TILE_DIM + threadIdx.x;
+    int yIndex = blockIdx.y * TILE_DIM + threadIdx.y;
+
+    int index = xIndex + width * yIndex;
+
+    for (int i = 0; i < TILE_DIM; i += BLOCK_ROWS) {
+        odata[index + i * width] = idata[index + i * width];
+    }
+}
+
+__global__ void copySharedMem(float *odata, float *idata, int width, int height)
+{
+    // Handle to thread block group
+    cg::thread_block cta = cg::this_thread_block();
+```
+
+> JP: この抜粋は `cpp/6_Performance/transpose/transpose.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/6_Performance/transpose/transpose.cu:387-406
+```cuda
+
+// ----
+// main
+// ----
+
+int main(int argc, char **argv)
+{
+    // Start logs
+    printf("%s Starting...\n\n", sSDKsample);
+
+    if (checkCmdLineFlag(argc, (const char **)argv, "help")) {
+        showHelp();
+        return 0;
+    }
+
+    int            devID = findCudaDevice(argc, (const char **)argv);
+    cudaDeviceProp deviceProp;
+
+    // get number of SMs on this GPU
+    checkCudaErrors(cudaGetDevice(&devID));
+```
+
+> JP: この抜粋は `cpp/6_Performance/transpose/transpose.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/6_Performance/transpose/transpose.cu:481-536
+```cuda
+        printf("Please choose a smaller size matrix\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // allocate host memory
+    float *h_idata       = (float *)malloc(mem_size);
+    float *h_odata       = (float *)malloc(mem_size);
+    float *transposeGold = (float *)malloc(mem_size);
+    float *gold;
+
+    // allocate device memory
+    float *d_idata, *d_odata;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc((void **)&d_idata, mem_size));
+    checkCudaErrors(cudaMalloc((void **)&d_odata, mem_size));
+
+    // initialize host data
+    for (int i = 0; i < (size_x * size_y); ++i) {
+        h_idata[i] = (float)i;
+    }
+
+    // copy host data to device
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpy(d_idata, h_idata, mem_size, cudaMemcpyHostToDevice));
+
+    // Compute reference transpose solution
+    computeTransposeGold(transposeGold, h_idata, size_x, size_y);
+
+    // print out common data for all kernels
+    printf("\nMatrix size: %dx%d (%dx%d tiles), tile size: %dx%d, block size: "
+           "%dx%d\n\n",
+           size_x,
+           size_y,
+           size_x / TILE_DIM,
+           size_y / TILE_DIM,
+           TILE_DIM,
+           TILE_DIM,
+           TILE_DIM,
+           BLOCK_ROWS);
+
+    // initialize events
+    // JP: この連続する anchor 群では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    checkCudaErrors(cudaEventCreate(&start));
+    checkCudaErrors(cudaEventCreate(&stop));
+
+    //
+    // loop over different kernels
+    //
+
+    bool success = true;
+
+    for (int k = 0; k < 8; k++) {
+        // set kernel pointer
+        switch (k) {
+        case 0:
+            kernel     = &copy;
+```
+
+> JP: この抜粋は `cpp/6_Performance/transpose/transpose.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
@@ -92,13 +283,13 @@ English anchor: read `transpose` as a focused example of the CUDA concepts used 
 | `__shared__` | block 内共有 memory または同期境界です。producer/consumer の順序を確認します。 |
 | `gridDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaMemcpyHostToDevice` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaEventCreate` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
 | `cudaGetLastError` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaEventRecord` | 非同期 work の順序、overlap、計測範囲を表す API です。 |
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
 | `cudaEventDestroy` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
-| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaGetDevice` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 
 > **日本語**

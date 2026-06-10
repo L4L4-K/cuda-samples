@@ -74,13 +74,123 @@ English anchor: read `parallelReduction` as a focused example of the CUDA concep
 
 ## Concrete Reading Path
 
-- `parallelReduction.py`: focus on `launch`, `Stream`, `cp.float32`, `CUDA`, `cp.ndarray`.
+- `parallelReduction.py`: focus on `CUDA`, `launch`, `Stream`, `cp.float32`, `cp.ndarray`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `parallelReduction.py`
+
+Source: python/2_CoreConcepts/parallelReduction/parallelReduction.py:2-20
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/parallelReduction/parallelReduction.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/parallelReduction/parallelReduction.py:32-51
+```python
+1. Custom CUDA kernel showing reduction tree pattern and synchronization
+2. cuda.compute.reduce_into() for production-ready reduction
+
+Key Concepts:
+- Reduction tree pattern: Divide-and-conquer parallel algorithm
+- Thread synchronization: Using __syncthreads() for coordination
+- Sequential thread IDs: How to avoid warp divergence
+- cuda.core Stream integration with CuPy via Stream.from_external
+"""
+
+import math
+import sys
+from pathlib import Path
+
+# Add Utilities to path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "Utilities"))
+
+try:
+    import cupy as cp
+    import numpy as np
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/parallelReduction/parallelReduction.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/parallelReduction/parallelReduction.py:116-135
+```python
+def compile_kernel(device: Device) -> Kernel:
+    """Compile the reduction kernel for the given device."""
+    arch = f"sm_{device.arch}"
+    options = ProgramOptions(arch=arch)
+    # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
+    program = Program(REDUCTION_KERNEL, code_type="c++", options=options)
+    return program.compile(target_type="cubin").get_kernel("reduce_sum")
+
+
+def reduction_stage_output_counts(n: int, block_size: int) -> list[int]:
+    """Lengths of intermediate arrays for each multi-launch reduction stage."""
+    counts: list[int] = []
+    while n > 1:
+        num_blocks = math.ceil(n / block_size)
+        counts.append(num_blocks)
+        n = num_blocks
+    return counts
+
+
+def reduce_custom(
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/parallelReduction/parallelReduction.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/parallelReduction/parallelReduction.py:287-306
+```python
+            d_in=d_input,
+            d_out=d_output,
+            op=OpKind.PLUS,
+            num_items=len(d_input),
+            h_init=h_init,
+            # JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+            stream=stream,
+        )
+        stream.record(end_event)
+        end_event.sync()
+
+        result = float(d_output[0])
+        times.append(end_event - start_event)
+
+    return result, float(np.mean(times))
+
+
+def main() -> bool:
+    """Main function demonstrating parallel reduction."""
+    print("=" * 70)
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/parallelReduction/parallelReduction.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

@@ -82,6 +82,126 @@ English anchor: read `tmaTensorMap` as a focused example of the CUDA concepts us
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `tmaTensorMap.py`
+
+Source: python/2_CoreConcepts/tmaTensorMap/tmaTensorMap.py:2-20
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/tmaTensorMap/tmaTensorMap.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/tmaTensorMap/tmaTensorMap.py:39-58
+```python
+  1. Creates a TMA tiled descriptor from a CuPy device array via
+     ``StridedMemoryView.from_any_interface(...).as_tensor_map(...)``.
+  2. Passes the descriptor by value (as ``__grid_constant__``) to a
+     kernel that uses libcudacxx TMA/barrier wrappers to bulk-load a
+     tile into shared memory.
+  3. Reuses the same descriptor against a new source tensor with
+     ``replace_address()`` to avoid rebuilding it.
+
+On GPUs older than Hopper (sm < 90), the sample prints a diagnostic
+and exits cleanly.
+
+Ported from ``cuda_core/examples/tma_tensor_map.py`` in the
+`cuda-python` repository.
+"""
+
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "Utilities"))
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/tmaTensorMap/tmaTensorMap.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/tmaTensorMap/tmaTensorMap.py:93-122
+```python
+__global__ void tma_copy(
+    const __grid_constant__ TensorMap tensor_map,
+    float* output,
+    int N)
+{
+    __shared__ __align__(128) float smem[TILE_SIZE];
+    __shared__ TmaBarrier bar;
+
+    const int tid        = threadIdx.x;
+    const int tile_start = blockIdx.x * TILE_SIZE;
+
+    if (tid == 0)
+    {
+        init(&bar, 1);
+    }
+    __syncthreads();
+
+    if (tid == 0)
+    {
+        cuda::device::experimental::cp_async_bulk_tensor_1d_global_to_shared(
+            smem,
+            reinterpret_cast<const CUtensorMap*>(&tensor_map),
+            tile_start,
+            bar);
+        bar.wait(cuda::device::barrier_arrive_tx(bar, 1, TILE_SIZE * sizeof(float)));
+    }
+    __syncthreads();
+
+    if (tid < TILE_SIZE)
+    {
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/tmaTensorMap/tmaTensorMap.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/tmaTensorMap/tmaTensorMap.py:177-196
+```python
+        sys.exit(1)
+    return include_path
+
+
+def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Use a TMA tensor map to bulk-copy data on Hopper+ GPUs"
+    )
+    parser.add_argument(
+        "--elements",
+        type=int,
+        default=1024,
+        help="Total number of float32 elements (must be a multiple of 128)",
+    )
+    parser.add_argument("--device", type=int, default=0, help="CUDA device id")
+    args = parser.parse_args()
+
+    if args.elements % TILE_SIZE != 0:
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/tmaTensorMap/tmaTensorMap.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

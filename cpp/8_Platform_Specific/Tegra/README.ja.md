@@ -202,11 +202,43 @@ English anchor: read `Tegra` as a focused example of the CUDA concepts used in `
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/8_Platform_Specific/Tegra/CMakeLists.txt:1-18
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+add_subdirectory(cudaNvSciNvMedia)
+add_subdirectory(cudaNvSciBufMultiplanar)
+add_subdirectory(cuDLAErrorReporting)
+add_subdirectory(cuDLAHybridMode)
+add_subdirectory(cuDLALayerwiseStatsHybrid)
+add_subdirectory(cuDLALayerwiseStatsStandalone)
+add_subdirectory(cuDLAStandaloneMode)
+add_subdirectory(EGLSync_CUDAEvent_Interop)
+add_subdirectory(fluidsGLES)
+add_subdirectory(nbody_opengles)
+add_subdirectory(simpleGLES)
+add_subdirectory(simpleGLES_EGLOutput)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/8_Platform_Specific/Tegra/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
 | - | - |
 | `cudaExtResObj` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
 | `cudaResObj` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `blockDim` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
@@ -216,7 +248,6 @@ English anchor: read `Tegra` as a focused example of the CUDA concepts used in `
 | `cuDLA` | Driver API の handle 境界です。context/module/function と error code を追います。 |
 | `blockIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
-| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaGraphicsResource` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 | `cudaSetDevice` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaStream_t` | 非同期 work の順序、overlap、計測範囲を表す API です。 |

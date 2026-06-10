@@ -79,13 +79,240 @@ English anchor: read `matrixMulDrv` as a focused example of the CUDA concepts us
 
 - `matrixMul.h`: focus on control flow and helper functions.
 - `matrixMulDrv.cpp`: focus on `CUDA`, `CUdeviceptr`, `cuDevice`, `launch`, `CUfunction`.
-- `matrixMul_kernel.cu`: focus on `blockIdx`, `__shared__`, `__syncthreads`, `threadIdx`, `launch`.
+- `matrixMul_kernel.cu`: focus on `blockIdx`, `__shared__`, `threadIdx`, `__syncthreads`, `launch`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/matrixMulDrv/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(matrixMulDrv LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMulDrv/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `matrixMul.h`
+
+Source: cpp/0_Introduction/matrixMulDrv/matrixMul.h:29-41
+```cpp
+#ifndef _MATRIXMUL_H_
+#define _MATRIXMUL_H_
+
+// Matrix dimensions
+// (chosen as multiples of the thread block size for simplicity)
+#define WA (4 * block_size) // Matrix A width
+#define HA (6 * block_size) // Matrix A height
+#define WB (4 * block_size) // Matrix B width
+#define HB WA               // Matrix B height
+#define WC WB               // Matrix C width
+#define HC HA               // Matrix C height
+
+#endif // _MATRIXMUL_H_
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMulDrv/matrixMul.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `matrixMulDrv.cpp`
+
+Source: cpp/0_Introduction/matrixMulDrv/matrixMulDrv.cpp:49-67
+```cpp
+#include <builtin_types.h>
+#include <cstring>
+#include <iostream>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// includes, project, CUDA
+#include <cstring>
+#include <cuda.h>
+#include <helper_cuda_drvapi.h>
+#include <helper_image.h>
+#include <helper_string.h>
+#include <helper_timer.h>
+#include <iostream>
+#include <string>
+
+#include "matrixMul.h"
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMulDrv/matrixMulDrv.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/matrixMulDrv/matrixMulDrv.cpp:100-119
+```cpp
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    printf("[ %s ]\n", sSDKsample);
+
+    runTest(argc, argv);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//! Run a simple test for CUDA
+////////////////////////////////////////////////////////////////////////////////
+void runTest(int argc, char **argv)
+{
+    // initialize CUDA
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
+    CUfunction matrixMul  = NULL;
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMulDrv/matrixMulDrv.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/matrixMulDrv/matrixMulDrv.cpp:125-144
+```cpp
+    srand(2006);
+
+    // allocate host memory for matrices A and B
+    unsigned int size_A     = WA * HA;
+    unsigned int mem_size_A = sizeof(float) * size_A;
+    float       *h_A        = reinterpret_cast<float *>(malloc(mem_size_A));
+    unsigned int size_B     = WB * HB;
+    unsigned int mem_size_B = sizeof(float) * size_B;
+    float       *h_B        = reinterpret_cast<float *>(malloc(mem_size_B));
+
+    // initialize host memory
+    const float valB = 0.01f;
+    constantInit(h_A, size_A, 1.0f);
+    constantInit(h_B, size_B, valB);
+
+    // allocate device memory
+    CUdeviceptr d_A;
+    // JP: `cuMemAlloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cuMemAlloc(&d_A, mem_size_A));
+    CUdeviceptr d_B;
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMulDrv/matrixMulDrv.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/matrixMulDrv/matrixMulDrv.cpp:178-197
+```cpp
+        // Launching (simplier method)
+        size_t Matrix_Width_A = (size_t)WA;
+        size_t Matrix_Width_B = (size_t)WB;
+        void  *args[5]        = {&d_C, &d_A, &d_B, &Matrix_Width_A, &Matrix_Width_B};
+        // new CUDA 4.0 Driver API Kernel launch call
+        // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+        checkCudaErrors(cuLaunchKernel(matrixMul,
+                                       grid.x,
+                                       grid.y,
+                                       grid.z,
+                                       block.x,
+                                       block.y,
+                                       block.z,
+                                       2 * block_size * block_size * sizeof(float),
+                                       NULL,
+                                       args,
+                                       NULL));
+    }
+    else {
+        // This is the new CUDA 4.0 API for Kernel Parameter passing and Kernel
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMulDrv/matrixMulDrv.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `matrixMul_kernel.cu`
+
+Source: cpp/0_Introduction/matrixMulDrv/matrixMul_kernel.cu:33-63
+```cuda
+#ifndef _MATRIXMUL_KERNEL_H_
+#define _MATRIXMUL_KERNEL_H_
+
+#include <stdio.h>
+
+#define AS(i, j) As[i][j]
+#define BS(i, j) Bs[i][j]
+
+////////////////////////////////////////////////////////////////////////////////
+//! Matrix multiplication on the device: C = A * B
+//! wA is A's width and wB is B's width
+////////////////////////////////////////////////////////////////////////////////
+template <int block_size, typename size_type>
+__device__ void matrixMul(float *C, float *A, float *B, size_type wA, size_type wB)
+{
+    // Block index
+    // JP: `blockIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    size_type bx = blockIdx.x;
+    size_type by = blockIdx.y;
+
+    // Thread index
+    size_type tx = threadIdx.x;
+    size_type ty = threadIdx.y;
+
+    // Index of the first sub-matrix of A processed by the block
+    size_type aBegin = wA * block_size * by;
+
+    // Index of the last sub-matrix of A processed by the block
+    size_type aEnd = aBegin + wA - 1;
+
+    // Step size used to iterate through the sub-matrices of A
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMulDrv/matrixMul_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/matrixMulDrv/matrixMul_kernel.cu:91-110
+```cuda
+        AS(ty, tx) = A[a + wA * ty + tx];
+        BS(ty, tx) = B[b + wB * ty + tx];
+
+        // Synchronize to make sure the matrices are loaded
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
+        __syncthreads();
+
+        // Multiply the two matrices together;
+        // each thread computes one element
+        // of the block sub-matrix
+#pragma unroll
+
+        for (size_type k = 0; k < block_size; ++k)
+            Csub += AS(ty, k) * BS(k, tx);
+
+        // Synchronize to make sure that the preceding
+        // computation is done before loading two new
+        // sub-matrices of A and B in the next iteration
+        // JP: この anchor では block/warp/group 内の device-side barrier です。参加 thread の範囲、shared memory visibility、次の反復に進む前の同期 を確認します。
+        __syncthreads();
+```
+
+> JP: この抜粋は `cpp/0_Introduction/matrixMulDrv/matrixMul_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

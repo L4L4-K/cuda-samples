@@ -73,13 +73,190 @@ English anchor: read `simpleCUFFT` as a focused example of the CUDA concepts use
 
 ## Concrete Reading Path
 
-- `simpleCUFFT.cu`: focus on `cufftComplex`, `cufftExecC2C`, `CUFFT`, `cudaMemcpy`, `cudaMalloc`.
+- `simpleCUFFT.cu`: focus on `cufftComplex`, `cufftExecC2C`, `CUFFT`, `CUDA`, `cudaMemcpy`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/simpleCUFFT/CMakeLists.txt:1-47
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleCUFFT LANGUAGES CUDA)
+
+# Disable response file for libraries on QNX as qcc does not support lib paths with double quotes
+if(CMAKE_SYSTEM_NAME STREQUAL "QNX")
+    set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_LIBRARIES OFF)
+endif()
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simpleCUFFT
+add_executable(simpleCUFFT simpleCUFFT.cu)
+
+target_compile_options(simpleCUFFT PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleCUFFT PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simpleCUFFT PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_link_libraries(simpleCUFFT PRIVATE
+    # JP: library_resources: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    CUDA::cufft
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUFFT/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleCUFFT.cu`
+
+Source: cpp/4_CUDA_Libraries/simpleCUFFT/simpleCUFFT.cu:32-50
+```cuda
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// includes, project
+#include <cuda_runtime.h>
+#include <cufft.h>
+#include <cufftXt.h>
+#include <helper_cuda.h>
+#include <helper_functions.h>
+
+// Complex data type
+typedef float2                            Complex;
+static __device__ __host__ inline Complex ComplexAdd(Complex, Complex);
+static __device__ __host__ inline Complex ComplexScale(Complex, float);
+static __device__ __host__ inline Complex ComplexMul(Complex, Complex);
+static __global__ void                    ComplexPointwiseMulAndScale(Complex *, const Complex *, int, float);
+
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUFFT/simpleCUFFT.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/simpleCUFFT/simpleCUFFT.cu:63-94
+```cuda
+#define FILTER_KERNEL_SIZE 11
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv) { runTest(argc, argv); }
+
+////////////////////////////////////////////////////////////////////////////////
+//! Run a simple test for CUDA
+////////////////////////////////////////////////////////////////////////////////
+void runTest(int argc, char **argv)
+{
+    printf("[simpleCUFFT] is starting...\n");
+
+    findCudaDevice(argc, (const char **)argv);
+
+    // Allocate host memory for the signal
+    Complex *h_signal = reinterpret_cast<Complex *>(malloc(sizeof(Complex) * SIGNAL_SIZE));
+
+    // Initialize the memory for the signal
+    for (unsigned int i = 0; i < SIGNAL_SIZE; ++i) {
+        h_signal[i].x = rand() / static_cast<float>(RAND_MAX);
+        h_signal[i].y = 0;
+    }
+
+    // Allocate host memory for the filter
+    Complex *h_filter_kernel = reinterpret_cast<Complex *>(malloc(sizeof(Complex) * FILTER_KERNEL_SIZE));
+
+    // Initialize the memory for the filter
+    for (unsigned int i = 0; i < FILTER_KERNEL_SIZE; ++i) {
+        h_filter_kernel[i].x = rand() / static_cast<float>(RAND_MAX);
+        h_filter_kernel[i].y = 0;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUFFT/simpleCUFFT.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/simpleCUFFT/simpleCUFFT.cu:104-123
+```cuda
+    // Allocate device memory for signal
+    Complex *d_signal;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&d_signal), mem_size));
+    // Copy host memory to device
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpy(d_signal, h_padded_signal, mem_size, cudaMemcpyHostToDevice));
+
+    // Allocate device memory for filter kernel
+    Complex *d_filter_kernel;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
+    checkCudaErrors(cudaMalloc(reinterpret_cast<void **>(&d_filter_kernel), mem_size));
+
+    // Copy host memory to device
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
+    checkCudaErrors(cudaMemcpy(d_filter_kernel, h_padded_filter_kernel, mem_size, cudaMemcpyHostToDevice));
+
+    // CUFFT plan simple API
+    // JP: `cufftHandle`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+    cufftHandle plan;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUFFT/simpleCUFFT.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/simpleCUFFT/simpleCUFFT.cu:132-151
+```cuda
+    checkCudaErrors(cufftXtMakePlanMany(
+        plan_adv, 1, &new_size_long, NULL, 1, 1, CUDA_C_32F, NULL, 1, 1, CUDA_C_32F, 1, &workSize, CUDA_C_32F));
+    printf("Temporary buffer size %li bytes\n", workSize);
+
+    // Transform signal and kernel
+    printf("Transforming signal cufftExecC2C\n");
+    checkCudaErrors(cufftExecC2C(
+        plan, reinterpret_cast<cufftComplex *>(d_signal), reinterpret_cast<cufftComplex *>(d_signal), CUFFT_FORWARD));
+    checkCudaErrors(cufftExecC2C(plan_adv,
+                                 reinterpret_cast<cufftComplex *>(d_filter_kernel),
+                                 reinterpret_cast<cufftComplex *>(d_filter_kernel),
+                                 CUFFT_FORWARD));
+
+    // Multiply the coefficients together and normalize the result
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    printf("Launching ComplexPointwiseMulAndScale<<< >>>\n");
+    ComplexPointwiseMulAndScale<<<32, 256>>>(d_signal, d_filter_kernel, new_size, 1.0f / new_size);
+
+    // Check if kernel execution generated and error
+    getLastCudaError("Kernel execution failed [ ComplexPointwiseMulAndScale ]");
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUFFT/simpleCUFFT.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

@@ -84,6 +84,164 @@ English anchor: read `memMapIPCDrv` as a focused example of the CUDA concepts us
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/3_CUDA_Features/memMapIPCDrv/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(memMapIPCDrv LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/memMapIPCDrv/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `memMapIpc.cpp`
+
+Source: cpp/3_CUDA_Features/memMapIPCDrv/memMapIpc.cpp:34-52
+```cpp
+#include <cstring>
+#include <iostream>
+#include <stdio.h>
+
+#include "cuda.h"
+#include "helper_multiprocess.h"
+
+// includes, project
+#include <helper_functions.h>
+
+#include "helper_cuda_drvapi.h"
+
+// includes, CUDA
+#include <builtin_types.h>
+
+using namespace std;
+
+// For direct NVLINK and PCI-E peers, at max 8 simultaneous peers are allowed
+// For NVSWITCH connected peers like DGX-2, simultaneous peers are not limited
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/memMapIPCDrv/memMapIpc.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/memMapIPCDrv/memMapIpc.cpp:274-293
+```cpp
+
+    // Create module from binary file (PTX or CUBIN)
+    if (module_path.rfind("ptx") != string::npos) {
+        // in this branch we use compilation with parameters
+        const unsigned int jitNumOptions = 3;
+        CUjit_option      *jitOptions    = new CUjit_option[jitNumOptions];
+        void             **jitOptVals    = new void *[jitNumOptions];
+        // set up size of compilation log buffer
+        jitOptions[0]        = CU_JIT_INFO_LOG_BUFFER_SIZE_BYTES;
+        int jitLogBufferSize = 1024;
+        jitOptVals[0]        = (void *)(size_t)jitLogBufferSize;
+        // set up pointer to the compilation log buffer
+        jitOptions[1]      = CU_JIT_INFO_LOG_BUFFER;
+        char *jitLogBuffer = new char[jitLogBufferSize];
+        jitOptVals[1]      = jitLogBuffer;
+        // set up pointer to set the Maximum # of registers for a particular kernel
+        jitOptions[2]   = CU_JIT_MAX_REGISTERS;
+        int jitRegCount = 32;
+        jitOptVals[2]   = (void *)(size_t)jitRegCount;
+        checkCudaErrors(
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/memMapIPCDrv/memMapIpc.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/memMapIPCDrv/memMapIpc.cpp:388-407
+```cpp
+        char        val  = (char)id;
+
+        void *args[] = {&ptr, &size, &val};
+
+        // Push a simple kernel on th buffer.
+        // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+        checkCudaErrors(cuLaunchKernel(_memMapIpc_kernel, blocks, 1, 1, threads, 1, 1, 0, stream, args, 0));
+        checkCudaErrors(cuStreamSynchronize(stream));
+
+        // Wait for all my sibling processes to push this stage of their work
+        // before proceeding to the next. This makes the data in the buffer
+        // deterministic.
+        barrierWait(&shm->barrier, &shm->sense, (unsigned int)procCount);
+        if (id == 0) {
+            printf("Step %llu done\n", (unsigned long long)i);
+        }
+    }
+
+    printf("Process %d: verifying...\n", id);
+
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/memMapIPCDrv/memMapIpc.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/3_CUDA_Features/memMapIPCDrv/memMapIpc.cpp:626-645
+```cpp
+    checkIpcErrors(ipcCloseSocket(ipcParentHandle));
+    sharedMemoryClose(&info);
+}
+
+// Host code
+int main(int argc, char **argv)
+{
+    // Initialize
+    // JP: この anchor では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
+    checkCudaErrors(cuInit(0));
+
+    if (argc == 1) {
+        parentProcess(argv[0]);
+    }
+    else {
+        childProcess(atoi(argv[1]), atoi(argv[2]), argv);
+    }
+    return EXIT_SUCCESS;
+}
+
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/memMapIPCDrv/memMapIpc.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `memMapIpc_kernel.cu`
+
+Source: cpp/3_CUDA_Features/memMapIPCDrv/memMapIpc_kernel.cu:31-39
+```cuda
+extern "C" __global__ void memMapIpc_kernel(char *ptr, int sz, char val)
+{
+    // Dummy kernel
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    for (; idx < sz; idx += (gridDim.x * blockDim.x)) {
+        ptr[idx] = val;
+    }
+}
+```
+
+> JP: この抜粋は `cpp/3_CUDA_Features/memMapIPCDrv/memMapIpc_kernel.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

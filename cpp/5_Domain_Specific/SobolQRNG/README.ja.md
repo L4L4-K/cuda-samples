@@ -94,6 +94,333 @@ English anchor: read `SobolQRNG` as a focused example of the CUDA concepts used 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/5_Domain_Specific/SobolQRNG/CMakeLists.txt:1-41
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(SobolQRNG LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for SobolQRNG
+add_executable(SobolQRNG sobol_gold.cpp sobol_gpu.cu sobol_primitives.cpp sobol.cpp)
+
+target_compile_options(SobolQRNG PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(SobolQRNG PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(SobolQRNG PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_include_directories(SobolQRNG PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/SobolQRNG/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `sobol.cpp`
+
+Source: cpp/5_Domain_Specific/SobolQRNG/sobol.cpp:57-75
+```cpp
+#include "sobol.h"
+
+#include <cuda_runtime.h>     // CUDA Runtime Functions
+#include <helper_cuda.h>      // helper functions for CUDA error checking and initialization
+#include <helper_functions.h> // helper functions
+#include <iostream>
+#include <math.h>
+#include <stdexcept>
+
+#include "sobol_gold.h"
+#include "sobol_gpu.h"
+
+#define L1ERROR_TOLERANCE (1e-6)
+
+const char *sSDKsample = "Sobol Quasi-Random Number Generator";
+
+void printHelp(int argc, char *argv[])
+{
+    if (argc > 0) {
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/SobolQRNG/sobol.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/SobolQRNG/sobol.cpp:84-103
+```cpp
+    std::cout << "\t--dimensions=N  specify number of dimensions (required)\n";
+    std::cout << "\t                Each vector will consist of N components\n\n";
+    std::cout << std::endl;
+}
+
+int main(int argc, char *argv[])
+{
+    bool ok = true;
+
+    // We will generate n_vectors vectors of n_dimensions numbers
+    int n_vectors    = 100000;
+    int n_dimensions = 100;
+
+    printf("%s Starting...\n\n", sSDKsample);
+
+    // Print help if requested
+    if (checkCmdLineFlag(argc, (const char **)argv, "help")) {
+        printHelp(argc, argv);
+        return 0;
+    }
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/SobolQRNG/sobol.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/SobolQRNG/sobol.cpp:157-176
+```cpp
+    unsigned int *h_directions = 0;
+    float        *h_outputCPU  = 0;
+    float        *h_outputGPU  = 0;
+
+    try {
+        h_directions = new unsigned int[n_dimensions * n_directions];
+        h_outputCPU  = new float[n_vectors * n_dimensions];
+        h_outputGPU  = new float[n_vectors * n_dimensions];
+    }
+    catch (std::exception e) {
+        std::cerr << "Caught exception: " << e.what() << std::endl;
+        std::cerr << "Unable to allocate CPU memory (try running with fewer "
+                     "vectors/dimensions)"
+                  << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    std::cout << "Allocating GPU memory..." << std::endl;
+    unsigned int *d_directions;
+    float        *d_output;
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/SobolQRNG/sobol.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/SobolQRNG/sobol.cpp:202-224
+```cpp
+    std::cout << "Initializing direction numbers..." << std::endl;
+    initSobolDirectionVectors(n_dimensions, h_directions);
+
+    // Copy the direction numbers to the device
+    std::cout << "Copying direction numbers to device..." << std::endl;
+    // JP: `cudaMemcpy`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpy(
+        d_directions, h_directions, n_dimensions * n_directions * sizeof(unsigned int), cudaMemcpyHostToDevice));
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    checkCudaErrors(cudaDeviceSynchronize());
+
+    // Execute the QRNG on the device
+    std::cout << "Executing QRNG on GPU..." << std::endl;
+    sdkResetTimer(&hTimer);
+    sdkStartTimer(&hTimer);
+    sobolGPU(n_vectors, n_dimensions, d_directions, d_output);
+    checkCudaErrors(cudaDeviceSynchronize());
+    sdkStopTimer(&hTimer);
+    time = sdkGetTimerValue(&hTimer);
+
+    if (time < 1e-6) {
+        std::cout << "Gsamples/s: problem size too small to measure, try "
+                     "increasing number of vectors or dimensions"
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/SobolQRNG/sobol.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `sobol.h`
+
+Source: cpp/5_Domain_Specific/SobolQRNG/sobol.h:57-63
+```cpp
+#ifndef SOBOL_H
+#define SOBOL_H
+
+// Number of direction vectors is fixed to 32
+#define n_directions 32
+
+#endif
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/SobolQRNG/sobol.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `sobol_gold.cpp`
+
+Source: cpp/5_Domain_Specific/SobolQRNG/sobol_gold.cpp:57-75
+```cpp
+#include "sobol_gold.h"
+
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "sobol.h"
+#include "sobol_primitives.h"
+
+#define k_2powneg32 2.3283064E-10F
+
+// Windows does not provide ffs (find first set) so here is a
+// fairly simple implementation.
+// WIN32 is defined on 32 and 64 bit Windows
+#if defined(WIN32) || defined(_WIN32) || defined(WIN64) || defined(_WIN64)
+int ffs(const unsigned int &i)
+{
+    unsigned int v = i;
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/SobolQRNG/sobol_gold.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `sobol_gold.h`
+
+Source: cpp/5_Domain_Specific/SobolQRNG/sobol_gold.h:58-64
+```cpp
+#ifndef SOBOL_GOLD_H
+#define SOBOL_GOLD_H
+
+void initSobolDirectionVectors(int n_dimensions, unsigned int *directions);
+void sobolCPU(int n_vectors, int n_dimensions, unsigned int *directions, float *output);
+
+#endif
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/SobolQRNG/sobol_gold.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `sobol_gpu.cu`
+
+Source: cpp/5_Domain_Specific/SobolQRNG/sobol_gpu.cu:58-87
+```cuda
+#include <cooperative_groups.h>
+
+#include "sobol.h"
+#include "sobol_gpu.h"
+
+namespace cg = cooperative_groups;
+#include <helper_cuda.h>
+
+#define k_2powneg32 2.3283064E-10F
+
+__global__ void sobolGPU_kernel(unsigned n_vectors, unsigned n_dimensions, unsigned *d_directions, float *d_output)
+{
+    // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    cg::thread_block        cta = cg::this_thread_block();
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    __shared__ unsigned int v[n_directions];
+
+    // Offset into the correct dimension as specified by the
+    // block y coordinate
+    // JP: この連続する anchor 群では block/thread/warp index から data index や担当範囲を決めます。境界条件と problem size の単位 を確認します。
+    d_directions = d_directions + n_directions * blockIdx.y;
+    d_output     = d_output + n_vectors * blockIdx.y;
+
+    // Copy the direction numbers for this dimension into shared
+    // memory - there are only 32 direction numbers so only the
+    // first 32 (n_directions) threads need participate.
+    if (threadIdx.x < n_directions) {
+        v[threadIdx.x] = d_directions[threadIdx.x];
+    }
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/SobolQRNG/sobol_gpu.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `sobol_gpu.h`
+
+Source: cpp/5_Domain_Specific/SobolQRNG/sobol_gpu.h:58-63
+```cpp
+#ifndef SOBOL_GPU_H
+#define SOBOL_GPU_H
+
+extern "C" void sobolGPU(int n_vectors, int n_dimensions, unsigned int *d_directions, float *d_output);
+
+#endif
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/SobolQRNG/sobol_gpu.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `sobol_primitives.cpp`
+
+Source: cpp/5_Domain_Specific/SobolQRNG/sobol_primitives.cpp:58-76
+```cpp
+#include "sobol_primitives.h"
+
+// Each primitive is stored as a struct where
+//  dimension is the dimension number of the polynomial (unused)
+//  degree is the degree of the polynomial
+//  a is a binary word representing the coefficients
+//  m is the array of m values
+
+// The primitives are based on those generated by Stephen Joe and
+// Frances Kuo in the joe-kuo-6.10200 set.
+// c.f. http://web.maths.unsw.edu.au/~fkuo/sobol/index.html
+const struct primitive sobol_primitives[] = {
+    // First dimension is a special case so this entry is actually ignored
+    {1, 0, 0, {}},
+    {2, 1, 0, {1}},
+    {3, 2, 1, {1, 3}},
+    {4, 3, 1, {1, 3, 1}},
+    {5, 3, 2, {1, 1, 1}},
+    {6, 4, 1, {1, 1, 3, 3}},
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/SobolQRNG/sobol_primitives.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `sobol_primitives.h`
+
+Source: cpp/5_Domain_Specific/SobolQRNG/sobol_primitives.h:58-78
+```cpp
+#ifndef SOBOL_PRIMITIVES_H
+#define SOBOL_PRIMITIVES_H
+
+#define max_m 17
+
+// Each primitive is stored as a struct where
+//  dimension is the dimension number of the polynomial (unused)
+//  degree is the degree of the polynomial
+//  a is a binary word representing the coefficients
+//  m is the array of m values
+struct primitive
+{
+    unsigned int dimension;
+    unsigned int degree;
+    unsigned int a;
+    unsigned int m[max_m];
+};
+
+extern const struct primitive sobol_primitives[];
+
+#endif
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/SobolQRNG/sobol_primitives.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

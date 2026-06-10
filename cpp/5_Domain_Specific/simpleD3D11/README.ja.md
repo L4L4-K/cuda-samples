@@ -86,6 +86,300 @@ English anchor: read `simpleD3D11` as a focused example of the CUDA concepts use
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/5_Domain_Specific/simpleD3D11/CMakeLists.txt:1-62
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleD3D11 LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+if(WIN32)
+    # Source file
+    # Add target for simpleD3D11
+    add_executable(simpleD3D11
+        simpleD3D11.cpp
+        sinewave_cuda.cu
+        ../../../Common/rendercheck_d3d11.cpp
+    )
+
+    target_compile_options(simpleD3D11 PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+    target_compile_features(simpleD3D11 PRIVATE cxx_std_17 cuda_std_17)
+
+    set_target_properties(simpleD3D11 PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+    target_include_directories(simpleD3D11 PRIVATE
+        ${CUDAToolkit_INCLUDE_DIRS}
+    )
+
+    target_link_libraries(simpleD3D11 PRIVATE
+        d3d11
+        dxgi
+        dxguid
+        d3dcompiler
+    )
+
+    add_custom_command(TARGET simpleD3D11 POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/data
+        ${CMAKE_CURRENT_BINARY_DIR}/data
+    )
+else()
+    message(STATUS "Sample 'simpleD3D11' is Windows-only - skipping")
+endif()
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleD3D11/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `ShaderStructs.h`
+
+Source: cpp/5_Domain_Specific/simpleD3D11/ShaderStructs.h:29-50
+```cpp
+#pragma once
+
+// #include "stdafx.h"
+#include <DirectXMath.h>
+#include <cuda_runtime.h>
+
+#include "helper_cuda.h"
+
+using namespace DirectX;
+
+struct Vertex
+{
+    XMFLOAT3 position;
+    XMFLOAT4 color;
+};
+
+void RunSineWaveKernel(size_t       mesh_width,
+                       size_t       mesh_height,
+                       Vertex      *cudaDevVertptr,
+                       // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+                       cudaStream_t streamToRun,
+                       float        AnimTime);
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleD3D11/ShaderStructs.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleD3D11.cpp`
+
+Source: cpp/5_Domain_Specific/simpleD3D11/simpleD3D11.cpp:33-51
+```cpp
+#pragma warning(disable : 4312)
+
+// includes for Windows
+#include <windows.h>
+
+// includes for multimedia
+#include <mmsystem.h>
+
+// This header inclues all the necessary D3D11 and CUDA includes
+#include <cuda_d3d11_interop.h>
+#include <cuda_runtime_api.h>
+#include <d3dcompiler.h>
+#include <dxgi1_2.h>
+#include <dynlink_d3d11.h>
+
+// includes, project
+#include <helper_cuda.h>
+#include <helper_functions.h> // includes cuda.h and cuda_runtime_api.h
+#include <rendercheck_d3d11.h>
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleD3D11/simpleD3D11.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/simpleD3D11/simpleD3D11.cpp:143-162
+```cpp
+        printf("> There are no device(s) supporting CUDA\n");
+        return false;
+    }
+    else {
+        // JP: python_cuda: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
+        printf("> Found %d CUDA Capable Device(s)\n", deviceCount);
+    }
+
+    return true;
+}
+
+bool findDXDevice(char *dev_name)
+{
+    HRESULT   hr = S_OK;
+    // JP: `cudaError`, `cuStatus`: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
+    cudaError cuStatus;
+    int       cuda_dev = -1;
+
+    // Iterate through the candidate adapters
+    IDXGIFactory1 *pFactory;
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleD3D11/simpleD3D11.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/simpleD3D11/simpleD3D11.cpp:207-226
+```cpp
+    DXGI_ADAPTER_DESC adapterDesc;
+    g_pCudaCapableAdapter->GetDesc(&adapterDesc);
+    wcstombs(dev_name, adapterDesc.Description, 128);
+
+    checkCudaErrors(cudaSetDevice(cuda_dev));
+    // JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+    checkCudaErrors(cudaStreamCreateWithFlags(&cuda_stream, cudaStreamNonBlocking));
+
+    printf("> Found 1 D3D11 Adapater(s) /w Compute capability.\n");
+    printf("> %s\n", dev_name);
+
+    return true;
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char *argv[])
+{
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleD3D11/simpleD3D11.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/simpleD3D11/simpleD3D11.cpp:330-349
+```cpp
+                    const char *cur_image_path = "simpleD3D11.ppm";
+
+                    // Save a reference of our current test run image
+                    CheckRenderD3D11::ActiveRenderTargetToPPM(g_pd3dDevice, cur_image_path);
+
+                    // compare to offical reference image, printing PASS or FAIL.
+                    g_bPassed = CheckRenderD3D11::PPMvsPPM(cur_image_path, ref_file, argv[0], MAX_EPSILON, 0.15f);
+
+                    g_bDone = true;
+
+                    Cleanup();
+
+                    PostQuitMessage(0);
+                }
+                else {
+                    g_bPassed = true;
+                }
+            }
+        }
+    };
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleD3D11/simpleD3D11.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `sinewave_cuda.cu`
+
+Source: cpp/5_Domain_Specific/simpleD3D11/sinewave_cuda.cu:29-51
+```cuda
+#include <stdio.h>
+
+#include "ShaderStructs.h"
+#include "helper_cuda.h"
+#include "sinewave_cuda.h"
+
+__global__ void sinewave_gen_kernel(Vertex *vertices, unsigned int width, unsigned int height, float time)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    // calculate uv coordinates
+    float u = x / (float)width;
+    float v = y / (float)height;
+    u       = u * 2.0f - 1.0f;
+    v       = v * 2.0f - 1.0f;
+
+    // calculate simple sine wave pattern
+    float freq = 4.0f;
+    float w    = sinf(u * freq + time) * cosf(v * freq + time) * 0.5f;
+
+    if (y < height && x < width) {
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleD3D11/sinewave_cuda.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/simpleD3D11/sinewave_cuda.cu:108-127
+```cuda
+    extSemWaitParams.params.keyedMutex.timeoutMs = timeoutMs;
+
+    checkCudaErrors(cudaWaitExternalSemaphoresAsync(&extSemaphore, &extSemWaitParams, 1, streamToRun));
+}
+
+// JP: この anchor では stream/event resource と timeline operation です。投入順、依存、timing 範囲、destroy 前の完了 を確認します。
+void cudaReleaseSync(cudaExternalSemaphore_t &extSemaphore, uint64_t key, cudaStream_t streamToRun)
+{
+    cudaExternalSemaphoreSignalParams extSemSigParams;
+    memset(&extSemSigParams, 0, sizeof(extSemSigParams));
+    extSemSigParams.params.keyedMutex.key = key;
+
+    checkCudaErrors(cudaSignalExternalSemaphoresAsync(&extSemaphore, &extSemSigParams, 1, streamToRun));
+}
+
+////////////////////////////////////////////////////////////////////////////////
+//! Run the Cuda part of the computation
+////////////////////////////////////////////////////////////////////////////////
+void RunSineWaveKernel(cudaExternalSemaphore_t &extSemaphore,
+                       uint64_t                &key,
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleD3D11/sinewave_cuda.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `sinewave_cuda.h`
+
+Source: cpp/5_Domain_Specific/simpleD3D11/sinewave_cuda.h:29-47
+```cpp
+#ifndef SINEWAVE_CUDA_H
+#define SINEWAVE_CUDA_H
+
+#include <stdio.h>
+
+#include "ShaderStructs.h"
+#include "helper_cuda.h"
+
+void    RunSineWaveKernel(cudaExternalSemaphore_t &extSemaphore,
+                          uint64_t                &key,
+                          unsigned int             timeoutMs,
+                          size_t                   mesh_width,
+                          size_t                   mesh_height,
+                          Vertex                  *cudaDevVertptr,
+                          // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+                          cudaStream_t             streamToRun);
+Vertex *cudaImportVertexBuffer(void *sharedHandle, cudaExternalMemory_t &externalMemory, int meshWidth, int meshHeight);
+void    cudaImportKeyedMutex(void *sharedHandle, cudaExternalSemaphore_t &extSemaphore);
+#endif // !
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/simpleD3D11/sinewave_cuda.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

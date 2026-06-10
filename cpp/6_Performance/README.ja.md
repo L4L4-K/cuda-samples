@@ -103,14 +103,14 @@ English anchor: read `6_Performance` as a focused example of the CUDA concepts u
 
 ## Concrete Reading Path
 
-- `LargeKernelParameter/LargeKernelParameter.cu`: focus on `cudaDeviceSynchronize`, `cudaFree`, `cudaMemcpyToSymbol`, `cudaMemcpyHostToDevice`, `launch`.
+- `LargeKernelParameter/LargeKernelParameter.cu`: focus on `launch`, `cudaDeviceSynchronize`, `cudaFree`, `cudaMemcpyToSymbol`, `cudaMemcpyHostToDevice`.
 - `UnifiedMemoryPerf/commonDefs.hpp`: focus on control flow and helper functions.
 - `UnifiedMemoryPerf/commonKernels.cu`: focus on control flow and helper functions.
 - `UnifiedMemoryPerf/commonKernels.hpp`: focus on control flow and helper functions.
 - `UnifiedMemoryPerf/helperFunctions.cpp`: focus on `CU_INIT_UUID`.
 - `UnifiedMemoryPerf/matrixMultiplyPerf.cu`: focus on `cudaFree`, `cudaMalloc`, `cudaMallocManaged`, `cudaMemPrefetchAsync`, `cudaMemcpyAsync`.
 - `alignedTypes/alignedTypes.cu`: focus on `CUDA`, `blockDim`, `cudaDeviceSynchronize`, `cudaMalloc`, `cudaFree`.
-- `cudaGraphsPerfScaling/cudaGraphPerfScaling.cu`: focus on `cudaEventRecord`, `cudaStreamSynchronize`, `launch`, `cudaEvent_t`, `cudaGraph_t`.
+- `cudaGraphsPerfScaling/cudaGraphPerfScaling.cu`: focus on `launch`, `CUDA`, `cudaEventRecord`, `cudaStreamSynchronize`, `cudaEvent_t`.
 - `transpose/transpose.cu`: focus on `threadIdx`, `blockIdx`, `__shared__`, `cudaMemcpy`, `gridDim`.
 
 > **日本語**
@@ -119,14 +119,35 @@ English anchor: read `6_Performance` as a focused example of the CUDA concepts u
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/6_Performance/CMakeLists.txt:1-8
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+add_subdirectory(LargeKernelParameter)
+add_subdirectory(UnifiedMemoryPerf)
+add_subdirectory(alignedTypes)
+# JP: `cudaGraphsPerfScaling`: CUDA Graph は依存関係を記録して再実行する仕組みです。node 間の順序と使う buffer の寿命を確認します。
+add_subdirectory(cudaGraphsPerfScaling)
+add_subdirectory(transpose)
+```
+
+> JP: この抜粋は `cpp/6_Performance/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
 | - | - |
 | `threadIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `blockIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
-| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
 | `cudaMemcpyHostToDevice` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaMemcpy` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |

@@ -80,6 +80,109 @@ English anchor: read `ipcMemoryPool` as a focused example of the CUDA concepts u
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `ipcMemoryPool.py`
+
+Source: python/4_DistributedComputing/ipcMemoryPool/ipcMemoryPool.py:2-20
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `python/4_DistributedComputing/ipcMemoryPool/ipcMemoryPool.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/4_DistributedComputing/ipcMemoryPool/ipcMemoryPool.py:30-49
+```python
+
+Share GPU memory between Python processes using CUDA Inter-Process
+Communication (IPC) and cuda.core's IPC-enabled memory pools. By default
+each worker process has its own CUDA virtual address space and cannot see
+allocations made by another process. With an IPC-enabled
+``DeviceMemoryResource`` the parent can allocate once, and the child
+process can map that same physical GPU memory into its own address space
+so both read and write the same bytes.
+
+The sample does a round-trip test:
+
+  1. Parent creates an IPC-enabled ``DeviceMemoryResource`` and allocates
+     a ``Buffer``.
+  2. Parent fills the buffer with a known pattern.
+  3. Parent sends the ``Buffer`` to a child process through an
+     ``mp.Queue`` - cuda.core's pickle reducers take care of re-creating
+     the memory resource and mapping the buffer in the child.
+  4. Child verifies the parent's pattern, writes a new pattern, and
+     signals completion.
+  5. Parent verifies the child's writes.
+```
+
+> JP: この抜粋は `python/4_DistributedComputing/ipcMemoryPool/ipcMemoryPool.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/4_DistributedComputing/ipcMemoryPool/ipcMemoryPool.py:98-136
+```python
+
+
+def child_worker(q_in, q_out, n_elements, parent_seed, child_seed):
+    """Runs in a separate process. Verifies and modifies the shared buffer."""
+    # JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
+    device = Device(0)
+    device.set_current()
+    pid = mp.current_process().pid
+
+    # The Buffer (and its MR) are reconstructed and mapped in this process
+    # when the queued object is unpickled. Both ``is_mapped`` flags are
+    # True here.
+    buffer = q_in.get(timeout=CHILD_TIMEOUT_SEC)
+    print(
+        f"[child pid={pid}] received buffer: is_mapped={buffer.is_mapped}, "
+        f"size={buffer.size}"
+    )
+
+    # Build a zero-copy CuPy view of the shared device memory.
+    # JP: この連続する anchor 群では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
+    arr = cp.from_dlpack(buffer).view(dtype=cp.float32)
+
+    # Verify the parent's pattern.
+    expected_parent = cp.arange(n_elements, dtype=cp.float32) + float(parent_seed)
+    if not cp.allclose(arr, expected_parent):
+        print("[child] ERROR: parent's pattern did not match expectation")
+        buffer.close()
+        q_out.put("fail")
+        return
+
+    # Write a new pattern for the parent to verify.
+    arr[:] = cp.arange(n_elements, dtype=cp.float32) * float(child_seed)
+    device.sync()
+
+    buffer.close()
+    q_out.put("done")
+
+
+def main() -> int:
+```
+
+> JP: この抜粋は `python/4_DistributedComputing/ipcMemoryPool/ipcMemoryPool.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

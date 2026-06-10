@@ -74,13 +74,71 @@ English anchor: read `deviceQuery` as a focused example of the CUDA concepts use
 
 ## Concrete Reading Path
 
-- `deviceQuery.py`: focus on `CUDA`, `Device`, `cudaSetDevice`, `cuMemGetInfo`, `cudaRuntimeGetVersion`.
+- `deviceQuery.py`: focus on `CUDA`, `Device`, `cudaSetDevice`, `cuMemGetInfo`, `launch`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `deviceQuery.py`
+
+Source: python/1_GettingStarted/deviceQuery/deviceQuery.py:2-20
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `python/1_GettingStarted/deviceQuery/deviceQuery.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/1_GettingStarted/deviceQuery/deviceQuery.py:271-290
+```python
+        "Device PCI Domain ID / Bus ID / location ID:",
+        f"{props.pci_domain_id} / {props.pci_bus_id} / {props.pci_device_id}",
+    )
+    compute_modes = {
+        0: (
+            "Default (multiple host threads can use cudaSetDevice() "
+            "with device simultaneously)"
+        ),
+        1: (
+            "Exclusive (only one host thread in one process is able to "
+            "use cudaSetDevice() with this device)"
+        ),
+        2: "Prohibited (no host thread can use cudaSetDevice() with this device)",
+        3: (
+            "Exclusive Process (many threads in one process is able to "
+            "use cudaSetDevice() with this device)"
+        ),
+    }
+    print_property("Compute Mode:", "")
+    print(f"     < {compute_modes.get(props.compute_mode, 'Unknown')} >")
+```
+
+> JP: この抜粋は `python/1_GettingStarted/deviceQuery/deviceQuery.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 
@@ -91,6 +149,7 @@ English anchor: read `deviceQuery` as a focused example of the CUDA concepts use
 | `cuMemGetInfo` | Driver API の handle 境界です。context/module/function と error code を追います。 |
 | `cudaRuntimeGetVersion` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaDeviceGetAttribute` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaError_t` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `CUresult` | Driver API の handle 境界です。context/module/function と error code を追います。 |
 | `CUDA_SUCCESS` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |

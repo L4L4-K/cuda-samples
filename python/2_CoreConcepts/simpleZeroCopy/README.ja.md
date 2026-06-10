@@ -82,6 +82,151 @@ English anchor: read `simpleZeroCopy` as a focused example of the CUDA concepts 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `simpleZeroCopy.py`
+
+Source: python/2_CoreConcepts/simpleZeroCopy/simpleZeroCopy.py:2-42
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    distribution and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+# OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+# JP: この file では Python から CUDA work を起動する境界、memory ownership と host/device transfer、kernel launch と thread indexing を確認します。英語の識別子/API/出力文字列は保持します。
+
+import argparse
+import ctypes
+import sys
+from pathlib import Path
+
+try:
+    import numpy as np
+    # JP: `cuda_rt`: Python object が CUDA resource を包みます。Python から見えても device memory/stream/context の寿命と順序は CUDA 側で管理します。
+    from cuda.bindings import runtime as cuda_rt
+    from cuda.core import (
+        Device,
+        LaunchConfig,
+        Program,
+        ProgramOptions,
+        launch,
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/simpleZeroCopy/simpleZeroCopy.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/simpleZeroCopy/simpleZeroCopy.py:52-84
+```python
+
+
+def _mapped_host_alloc(num_floats, stream):
+    """
+    Allocate page-locked host memory mapped for device access; return
+    (host_ptr, device_ptr) for CPU views and for ``launch()``.
+    """
+    nbytes = int(num_floats) * np.dtype(np.float32).itemsize
+    if nbytes <= 0:
+        return 0, 0
+    # JP: `cuda_rt`, `cudaHostAlloc`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
+    err, h_ptr = cuda_rt.cudaHostAlloc(
+        nbytes, cuda_rt.cudaHostAllocMapped | cuda_rt.cudaHostAllocPortable
+    )
+    if err != cuda_rt.cudaError_t.cudaSuccess:
+        raise RuntimeError(f"cudaHostAlloc failed: {err}")
+    err, d_ptr = cuda_rt.cudaHostGetDevicePointer(h_ptr, 0)
+    if err != cuda_rt.cudaError_t.cudaSuccess:
+        # JP: `cuda_rt`, `cudaFreeHost`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        cuda_rt.cudaFreeHost(h_ptr)
+        raise RuntimeError(f"cudaHostGetDevicePointer failed: {err}")
+    # Ensure prior work on this stream is visible before host fills buffers.
+    if stream is not None:
+        stream.sync()
+    return h_ptr, d_ptr
+
+
+def _float_view(host_ptr, num_floats):
+    return np.frombuffer(
+        (ctypes.c_float * num_floats).from_address(host_ptr),
+        dtype=np.float32,
+        count=num_floats,
+    )
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/simpleZeroCopy/simpleZeroCopy.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/simpleZeroCopy/simpleZeroCopy.py:99-118
+```python
+
+
+def run(num_elements=1048576):
+    """
+    Zero-copy vector add: map host memory, launch kernel with device
+    pointers, validate on CPU.
+
+    This function shows how to:
+    1. Allocate pinned (page-locked) host memory
+    2. Map host memory into GPU address space (zero-copy)
+    3. Access host memory directly from GPU kernel
+    4. Validate results
+
+    Parameters
+    ----------
+    num_elements : int
+        Number of elements in vectors (default: 1048576)
+    """
+    print("\n" + "=" * 70)
+    print("simpleZeroCopy - CUDA Python Sample")
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/simpleZeroCopy/simpleZeroCopy.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/2_CoreConcepts/simpleZeroCopy/simpleZeroCopy.py:197-216
+```python
+        print("  Kernel execution complete")
+
+        print("\n> Checking results from vectorAddGPU()...")
+        print(f"  Comparing {num_elements:,} elements...")
+
+        # ``c`` is a host view of the same buffer; no cudaMemcpy D2H needed.
+        # JP: validation: GPU result を CPU/reference と比較する検証地点です。失敗時は transfer、indexing、sync の順に疑います。
+        if np.allclose(c, reference, rtol=1e-5, atol=1e-6):
+            error_norm = np.linalg.norm(c - reference)
+            ref_norm = np.linalg.norm(reference)
+            relative_error = error_norm / ref_norm
+            print(f"  Relative error: {relative_error:.6e}")
+            print("  Validation PASSED")
+            success = True
+        else:
+            max_error = np.max(np.abs(c - reference))
+            print(f"  Max error: {max_error}")
+            print("  Validation FAILED")
+            success = False
+
+```
+
+> JP: この抜粋は `python/2_CoreConcepts/simpleZeroCopy/simpleZeroCopy.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

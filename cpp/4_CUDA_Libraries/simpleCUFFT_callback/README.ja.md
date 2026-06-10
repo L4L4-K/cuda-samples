@@ -73,13 +73,193 @@ English anchor: read `simpleCUFFT_callback` as a focused example of the CUDA con
 
 ## Concrete Reading Path
 
-- `simpleCUFFT_callback.cu`: focus on `cufftComplex`, `CUFFT`, `cudaMemcpy`, `cufftExecC2C`, `cudaMalloc`.
+- `simpleCUFFT_callback.cu`: focus on `cufftComplex`, `CUDA`, `CUFFT`, `cudaMemcpy`, `cufftExecC2C`.
 
 > **日本語**
 > 読む順番を file ごとに固定すると、CUDA API と helper code の境界を見失いにくくなります。
 >
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
+
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/simpleCUFFT_callback/CMakeLists.txt:1-47
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleCUFFT_callback LANGUAGES CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Source file
+    # Add target for simpleCUFFT_callback
+    add_executable(simpleCUFFT_callback simpleCUFFT_callback.cu)
+
+    target_compile_options(simpleCUFFT_callback PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+    target_compile_features(simpleCUFFT_callback PRIVATE cxx_std_17 cuda_std_17)
+
+    set_target_properties(simpleCUFFT_callback PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+    target_link_libraries(simpleCUFFT_callback PRIVATE
+        # JP: `cufft_static`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+        CUDA::cufft_static
+        culibos
+    )
+else()
+    message(STATUS "Will not build sample simpleCUFFT_callback - requires Linux OS")
+endif()
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUFFT_callback/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleCUFFT_callback.cu`
+
+Source: cpp/4_CUDA_Libraries/simpleCUFFT_callback/simpleCUFFT_callback.cu:39-72
+```cuda
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// includes, project
+#include <cuda_runtime.h>
+#include <cufft.h>
+#include <cufftXt.h>
+#include <helper_cuda.h>
+#include <helper_functions.h>
+
+// Complex data type
+typedef float2                            Complex;
+static __device__ __host__ inline Complex ComplexAdd(Complex, Complex);
+static __device__ __host__ inline Complex ComplexScale(Complex, float);
+static __device__ __host__ inline Complex ComplexMul(Complex, Complex);
+
+// This is the callback routine prototype
+// JP: `cufftComplex`: CUDA library の handle/descriptor/workspace は外部 resource です。作成、設定、利用、破棄の順序を対応させます。
+static __device__ cufftComplex ComplexPointwiseMulAndScale(void *a, size_t index, void *cb_info, void *sharedmem);
+
+typedef struct _cb_params
+{
+    Complex *filter;
+    float    scale;
+} cb_params;
+
+// This is the callback routine. It does complex pointwise multiplication with
+// scaling.
+// JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+static __device__ cufftComplex ComplexPointwiseMulAndScale(void *a, size_t index, void *cb_info, void *sharedmem)
+{
+    cb_params *my_params = (cb_params *)cb_info;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUFFT_callback/simpleCUFFT_callback.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/simpleCUFFT_callback/simpleCUFFT_callback.cu:91-110
+```cuda
+#define FILTER_KERNEL_SIZE 11
+
+////////////////////////////////////////////////////////////////////////////////
+// Program main
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    struct cudaDeviceProp properties;
+    int                   device;
+    checkCudaErrors(cudaGetDevice(&device));
+    checkCudaErrors(cudaGetDeviceProperties(&properties, device));
+    if (!(properties.major >= 2)) {
+        printf("simpleCUFFT_callback requires CUDA architecture SM2.0 or higher\n");
+        return EXIT_WAIVED;
+    }
+
+    return runTest(argc, argv);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUFFT_callback/simpleCUFFT_callback.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/simpleCUFFT_callback/simpleCUFFT_callback.cu:144-163
+```cuda
+    // Allocate device memory for signal
+    Complex *d_signal;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc((void **)&d_signal, mem_size));
+    // Copy host memory to device
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpy(d_signal, h_padded_signal, mem_size, cudaMemcpyHostToDevice));
+
+    // Allocate device memory for filter kernel
+    Complex *d_filter_kernel;
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
+    checkCudaErrors(cudaMalloc((void **)&d_filter_kernel, mem_size));
+
+    // Copy host memory to device
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
+    checkCudaErrors(cudaMemcpy(d_filter_kernel, h_padded_filter_kernel, mem_size, cudaMemcpyHostToDevice));
+
+    // Create one CUFFT plan for the forward transforms, and one for the reverse
+    // transform with load callback.
+    // JP: この連続する anchor 群では CUDA library/NPP resource call です。handle/descriptor/workspace/allocation の作成、利用、破棄 を確認します。
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUFFT_callback/simpleCUFFT_callback.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/simpleCUFFT_callback/simpleCUFFT_callback.cu:195-214
+```cuda
+    // Now associate the load callback with the plan.
+    checkCudaErrors(
+        cufftXtSetCallback(cb_plan, (void **)&hostCopyOfCallbackPtr, CUFFT_CB_LD_COMPLEX, (void **)&d_params));
+
+    // Transform signal and kernel
+    printf("Transforming signal cufftExecC2C\n");
+    checkCudaErrors(cufftExecC2C(plan, (cufftComplex *)d_signal, (cufftComplex *)d_signal, CUFFT_FORWARD));
+    checkCudaErrors(
+        cufftExecC2C(plan, (cufftComplex *)d_filter_kernel, (cufftComplex *)d_filter_kernel, CUFFT_FORWARD));
+
+    // Transform signal back, using the callback to do the pointwise multiply on
+    // the way in.
+    printf("Transforming signal back cufftExecC2C\n");
+    checkCudaErrors(cufftExecC2C(cb_plan, (cufftComplex *)d_signal, (cufftComplex *)d_signal, CUFFT_INVERSE));
+
+    // Copy device memory to host
+    Complex *h_convolved_signal = h_padded_signal;
+    // JP: この anchor では host/device/peer transfer です。転送方向、byte 数、stream ordering、producer/consumer を確認します。
+    checkCudaErrors(cudaMemcpy(h_convolved_signal, d_signal, mem_size, cudaMemcpyDeviceToHost));
+
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/simpleCUFFT_callback/simpleCUFFT_callback.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
 
 ## Key APIs And Concepts
 

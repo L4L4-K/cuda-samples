@@ -79,6 +79,215 @@ English anchor: read `libcuxxRandom` as a focused example of the CUDA concepts u
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/libcuxxRandom/CMakeLists.txt:1-68
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(libcuxxRandom LANGUAGES C CXX CUDA)
+
+# Disable response file for libraries on QNX as qcc does not support lib paths with double quotes
+if(CMAKE_SYSTEM_NAME STREQUAL "QNX")
+    set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_LIBRARIES OFF)
+endif()
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Fetch CCCL (CUB + libcu++ + Thrust) via CPM. The toolkit that ships
+# with CUDA 13.2 bundles CCCL 3.2, but this sample uses APIs added in
+# CCCL 3.3. Pinning the tag here lets the sample build on any toolkit
+# with a usable nvcc. Override with -DCCCL_SOURCE_DIR=/path/to/cccl
+# to use a local checkout instead of fetching from GitHub.
+set(CCCL_SAMPLES_CCCL_TAG "v3.3.3" CACHE STRING
+    "Tag/branch of NVIDIA/cccl to fetch for the CCCL samples")
+
+if(NOT TARGET CCCL::CCCL)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/CPM.cmake")
+    if(DEFINED CCCL_SOURCE_DIR AND NOT CCCL_SOURCE_DIR STREQUAL "")
+        CPMAddPackage(NAME CCCL SOURCE_DIR "${CCCL_SOURCE_DIR}")
+    else()
+        CPMAddPackage(
+            NAME CCCL
+            GIT_REPOSITORY "https://github.com/NVIDIA/cccl"
+            GIT_TAG "${CCCL_SAMPLES_CCCL_TAG}"
+        )
+    endif()
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for libcuxxRandom
+add_executable(libcuxxRandom libcuxxRandom.cu)
+
+target_compile_options(libcuxxRandom PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(libcuxxRandom PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(libcuxxRandom PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_link_libraries(libcuxxRandom PRIVATE
+    CUDA::cudart
+    CCCL::CCCL
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/libcuxxRandom/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `libcuxxRandom.cu`
+
+Source: cpp/4_CUDA_Libraries/libcuxxRandom/libcuxxRandom.cu:42-60
+```cuda
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <vector>
+
+/* Includes, cuda */
+#include <cuda_runtime.h>
+#include <helper_cuda.h>
+
+/* Includes, cccl */
+#include <cuda/random>
+#include <cuda/std/random>
+
+#define THREADS_PER_BLOCK  256
+#define SAMPLES_PER_THREAD 256
+
+/* Per-thread kernel: seed a PCG engine, draw samples from four
+ * distributions, and also pull Philox output through a Bernoulli dist
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/libcuxxRandom/libcuxxRandom.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/libcuxxRandom/libcuxxRandom.cu:64-83
+```cuda
+                              float             *uniform_out,
+                              float             *normal_out,
+                              int               *poisson_out,
+                              int               *bernoulli_out)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    const int tid           = blockIdx.x * blockDim.x + threadIdx.x;
+    const int total_threads = gridDim.x * blockDim.x;
+
+    cuda::pcg64 rng(base_seed + static_cast<unsigned long long>(tid));
+
+    cuda::std::uniform_real_distribution<float> uniform_dist(0.0f, 1.0f);
+    cuda::std::normal_distribution<float>       normal_dist(0.0f, 1.0f);
+    cuda::std::poisson_distribution<int>        poisson_dist(4.0);
+    cuda::std::bernoulli_distribution           bernoulli_dist(0.25);
+
+    cuda::std::philox4x32 philox(static_cast<cuda::std::uint32_t>(base_seed + 17u + tid));
+
+    for (int i = 0; i < num_samples_per_thread; ++i) {
+        const int idx      = i * total_threads + tid;
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/libcuxxRandom/libcuxxRandom.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/libcuxxRandom/libcuxxRandom.cu:118-137
+```cuda
+        ones += v;
+    const double p = static_cast<double>(ones) / static_cast<double>(samples.size());
+    printf("%-24s n=%zu  p(1)=%.4f (exp %.4f)\n", "bernoulli(0.25):", samples.size(), p, expected_p);
+}
+
+int main(int argc, char **argv)
+{
+    int num_blocks = 64;
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (strcmp(argv[i], "--blocks") == 0)
+            num_blocks = atoi(argv[i + 1]);
+    }
+    if (num_blocks <= 0)
+        num_blocks = 1;
+
+    int devID = findCudaDevice(argc, (const char **)argv);
+    cudaDeviceProp props;
+    checkCudaErrors(cudaGetDeviceProperties(&props, devID));
+    printf("Device: %s (Compute Capability %d.%d)\n\n", props.name, props.major, props.minor);
+
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/libcuxxRandom/libcuxxRandom.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/libcuxxRandom/libcuxxRandom.cu:145-187
+```cuda
+
+    float *d_uniform   = nullptr;
+    float *d_normal    = nullptr;
+    int   *d_poisson   = nullptr;
+    int   *d_bernoulli = nullptr;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc(&d_uniform, n * sizeof(float)));
+    checkCudaErrors(cudaMalloc(&d_normal, n * sizeof(float)));
+    checkCudaErrors(cudaMalloc(&d_poisson, n * sizeof(int)));
+    checkCudaErrors(cudaMalloc(&d_bernoulli, n * sizeof(int)));
+
+    const unsigned long long seed = 0xC0FFEE00ULL;
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    sample_kernel<<<num_blocks, THREADS_PER_BLOCK>>>(
+        seed, SAMPLES_PER_THREAD, d_uniform, d_normal, d_poisson, d_bernoulli);
+    checkCudaErrors(cudaGetLastError());
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    checkCudaErrors(cudaDeviceSynchronize());
+
+    std::vector<float> uniform(n), normal(n);
+    std::vector<int>   poisson(n), bernoulli(n);
+    // JP: `cudaMemcpy`, `cudaMemcpyDeviceToHost`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpy(uniform.data(), d_uniform, n * sizeof(float), cudaMemcpyDeviceToHost));
+    checkCudaErrors(cudaMemcpy(normal.data(), d_normal, n * sizeof(float), cudaMemcpyDeviceToHost));
+    checkCudaErrors(cudaMemcpy(poisson.data(), d_poisson, n * sizeof(int), cudaMemcpyDeviceToHost));
+    checkCudaErrors(cudaMemcpy(bernoulli.data(), d_bernoulli, n * sizeof(int), cudaMemcpyDeviceToHost));
+
+    summarize(uniform, /*mean=*/0.5, /*var=*/1.0 / 12.0, "uniform(0,1):");
+    summarize(normal, /*mean=*/0.0, /*var=*/1.0, "normal(0,1):");
+    summarize(poisson, /*mean=*/4.0, /*var=*/4.0, "poisson(lambda=4):");
+    summarize_bernoulli(bernoulli, /*p=*/0.25);
+
+    printf("\nEngines exercised: cuda::pcg64 (NumPy-compatible) and cuda::std::philox4x32 (C++26)\n");
+
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaFree(d_uniform));
+    checkCudaErrors(cudaFree(d_normal));
+    checkCudaErrors(cudaFree(d_poisson));
+    checkCudaErrors(cudaFree(d_bernoulli));
+
+    printf("Done\n");
+    return EXIT_SUCCESS;
+}
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/libcuxxRandom/libcuxxRandom.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

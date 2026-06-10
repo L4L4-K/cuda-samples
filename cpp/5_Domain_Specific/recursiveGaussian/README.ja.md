@@ -80,7 +80,7 @@ English anchor: read `recursiveGaussian` as a focused example of the CUDA concep
 
 ## Concrete Reading Path
 
-- `recursiveGaussian.cpp`: focus on `CUDA`, `cudaFree`, `cudaDeviceSynchronize`, `cudaMalloc`, `cudaMemcpy`.
+- `recursiveGaussian.cpp`: focus on `CUDA`, `cudaFree`, `cudaDeviceSynchronize`, `cudaMalloc`, `launch`.
 - `recursiveGaussian_cuda.cu`: focus on `launch`, `CUDA`.
 - `recursiveGaussian_kernel.cuh`: focus on `threadIdx`, `blockIdx`, `__shared__`, `blockDim`, `launch`.
 
@@ -90,11 +90,255 @@ English anchor: read `recursiveGaussian` as a focused example of the CUDA concep
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/5_Domain_Specific/recursiveGaussian/CMakeLists.txt:1-23
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(recursiveGaussian LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/recursiveGaussian/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `recursiveGaussian.cpp`
+
+Source: cpp/5_Domain_Specific/recursiveGaussian/recursiveGaussian.cpp:30-48
+```cpp
+  Recursive Gaussian filter
+  sgreen 8/1/08
+
+  This code sample implements a Gaussian blur using Deriche's recursive method:
+  http://citeseer.ist.psu.edu/deriche93recursively.html
+
+  This is similar to the box filter sample in the SDK, but it uses the previous
+  outputs of the filter as well as the previous inputs. This is also known as an
+  IIR (infinite impulse response) filter, since its response to an input impulse
+  can last forever.
+
+  The main advantage of this method is that the execution time is independent of
+  the filter width.
+
+  The GPU processes columns of the image in parallel. To avoid uncoalesced reads
+  for the row pass we transpose the image and then transpose it back again
+  afterwards.
+
+  The implementation is based on code from the CImg library:
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/recursiveGaussian/recursiveGaussian.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/recursiveGaussian/recursiveGaussian.cpp:158-177
+```cpp
+    sdkStartTimer(&timer);
+
+    // execute filter, writing results to pbo
+    unsigned int *d_result;
+    // JP: この連続する anchor 群では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+    checkCudaErrors(cudaGraphicsMapResources(1, &cuda_vbo_resource, 0));
+    size_t num_bytes;
+    checkCudaErrors(cudaGraphicsResourceGetMappedPointer((void **)&d_result, &num_bytes, cuda_vbo_resource));
+    gaussianFilterRGBA(d_img, d_result, d_temp, width, height, sigma, order, nthreads);
+
+    // unmap buffer object
+    checkCudaErrors(cudaGraphicsUnmapResources(1, &cuda_vbo_resource, 0));
+
+    // load texture from pbo
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, pbo);
+    glBindTexture(GL_TEXTURE_2D, texid);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, 0);
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/recursiveGaussian/recursiveGaussian.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/recursiveGaussian/recursiveGaussian.cpp:204-223
+```cpp
+
+void cleanup()
+{
+    sdkDeleteTimer(&timer);
+
+    // JP: `cudaFree`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。 ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaFree(d_img));
+    checkCudaErrors(cudaFree(d_temp));
+
+    if (!runBenchmark) {
+        if (pbo) {
+            // unregister this buffer object with CUDA
+            // JP: この anchor では CUDA Graph/graphics resource dependency です。capture/node/instantiate/launch と buffer lifetime を対応させます。
+            checkCudaErrors(cudaGraphicsUnregisterResource(cuda_vbo_resource));
+            glDeleteBuffers(1, &pbo);
+        }
+
+        if (texid) {
+            glDeleteTextures(1, &texid);
+        }
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/recursiveGaussian/recursiveGaussian.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/recursiveGaussian/recursiveGaussian.cpp:300-319
+```cpp
+{
+    unsigned int size = width * height * sizeof(unsigned int);
+
+    // allocate device memory
+    // JP: この anchor では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
+    checkCudaErrors(cudaMalloc((void **)&d_img, size));
+    checkCudaErrors(cudaMalloc((void **)&d_temp, size));
+
+    // JP: `cudaMemcpy`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpy(d_img, h_img, size, cudaMemcpyHostToDevice));
+
+    sdkCreateTimer(&timer);
+}
+
+void initGLBuffers()
+{
+    // create pixel buffer object to store final image
+    glGenBuffers(1, &pbo);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, pbo);
+    glBufferData(GL_PIXEL_UNPACK_BUFFER_ARB, width * height * sizeof(GLubyte) * 4, h_img, GL_STREAM_DRAW_ARB);
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/recursiveGaussian/recursiveGaussian.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `recursiveGaussian_cuda.cu`
+
+Source: cpp/5_Domain_Specific/recursiveGaussian/recursiveGaussian_cuda.cu:30-48
+```cuda
+  Recursive Gaussian filter
+  sgreen 8/1/08
+
+  This code sample implements a Gaussian blur using Deriche's recursive method:
+  http://citeseer.ist.psu.edu/deriche93recursively.html
+
+  This is similar to the box filter sample in the SDK, but it uses the previous
+  outputs of the filter as well as the previous inputs. This is also known as an
+  IIR (infinite impulse response) filter, since its response to an input impulse
+  can last forever.
+
+  The main advantage of this method is that the execution time is independent of
+  the filter width.
+
+  The GPU processes columns of the image in parallel. To avoid uncoalesced reads
+  for the row pass we transpose the image and then transpose it back again
+  afterwards.
+
+  The implementation is based on code from the CImg library:
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/recursiveGaussian/recursiveGaussian_cuda.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/recursiveGaussian/recursiveGaussian_cuda.cu:70-89
+```cuda
+extern "C" void transpose(uint *d_src, uint *d_dest, uint width, int height)
+{
+    dim3 grid(iDivUp(width, BLOCK_DIM), iDivUp(height, BLOCK_DIM), 1);
+    dim3 threads(BLOCK_DIM, BLOCK_DIM, 1);
+    // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+    d_transpose<<<grid, threads>>>(d_dest, d_src, width, height);
+    getLastCudaError("Kernel execution failed");
+}
+
+/*
+  Perform Gaussian filter on a 2D image using CUDA
+
+  Parameters:
+  d_src  - pointer to input image in device memory
+  d_dest - pointer to destination image in device memory
+  d_temp - pointer to temporary storage in device memory
+  width  - image width
+  height - image height
+  sigma  - sigma of Gaussian
+  order  - filter order (0, 1 or 2)
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/recursiveGaussian/recursiveGaussian_cuda.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `recursiveGaussian_kernel.cuh`
+
+Source: cpp/5_Domain_Specific/recursiveGaussian/recursiveGaussian_kernel.cuh:30-70
+```cuda
+  Recursive Gaussian filter
+*/
+
+#ifndef _RECURSIVEGAUSSIAN_KERNEL_CU_
+#define _RECURSIVEGAUSSIAN_KERNEL_CU_
+
+#include <cooperative_groups.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+namespace cg = cooperative_groups;
+
+#include <helper_cuda.h>
+#include <helper_math.h>
+
+#define BLOCK_DIM     16
+#define CLAMP_TO_EDGE 1
+
+// Transpose kernel (see transpose CUDA Sample for details)
+__global__ void d_transpose(uint *odata, uint *idata, int width, int height)
+{
+    // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    cg::thread_block cta = cg::this_thread_block();
+
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    __shared__ uint block[BLOCK_DIM][BLOCK_DIM + 1];
+
+    // read the matrix tile into shared memory
+    unsigned int xIndex = blockIdx.x * BLOCK_DIM + threadIdx.x;
+    unsigned int yIndex = blockIdx.y * BLOCK_DIM + threadIdx.y;
+
+    if ((xIndex < width) && (yIndex < height)) {
+        unsigned int index_in           = yIndex * width + xIndex;
+        block[threadIdx.y][threadIdx.x] = idata[index_in];
+    }
+
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    cg::sync(cta);
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/recursiveGaussian/recursiveGaussian_kernel.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
 | - | - |
 | `threadIdx` | thread/block index から担当 data を決める記号です。境界チェックと一緒に読みます。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
 | `cudaDeviceSynchronize` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
@@ -107,7 +351,6 @@ English anchor: read `recursiveGaussian` as a focused example of the CUDA concep
 | `cudaGraphicsGLRegisterBuffer` | CUDA Graph の node、capture、instantiate、launch、update の境界を表します。 |
 | `cudaGetDevice` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaGetDeviceProperties` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
-| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。

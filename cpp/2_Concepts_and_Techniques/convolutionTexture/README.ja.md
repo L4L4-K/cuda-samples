@@ -86,6 +86,353 @@ English anchor: read `convolutionTexture` as a focused example of the CUDA conce
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/2_Concepts_and_Techniques/convolutionTexture/CMakeLists.txt:1-41
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(convolutionTexture LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for convolutionTexture
+add_executable(convolutionTexture convolutionTexture.cu convolutionTexture_gold.cpp main.cpp)
+
+target_compile_options(convolutionTexture PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(convolutionTexture PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(convolutionTexture PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_include_directories(convolutionTexture PUBLIC
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/convolutionTexture/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `convolutionTexture.cu`
+
+Source: cpp/2_Concepts_and_Techniques/convolutionTexture/convolutionTexture.cu:29-47
+```cuda
+#include <helper_cuda.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "convolutionTexture_common.h"
+
+////////////////////////////////////////////////////////////////////////////////
+// GPU-specific defines
+////////////////////////////////////////////////////////////////////////////////
+// Maps to a single instruction on G8x / G9x / G10x
+#define IMAD(a, b, c) (__mul24((a), (b)) + (c))
+
+// Use unrolled innermost convolution loop
+#define UNROLL_INNER 1
+
+// Round a / b to nearest higher integer value
+inline int iDivUp(int a, int b) { return (a % b != 0) ? (a / b + 1) : (a / b); }
+
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/convolutionTexture/convolutionTexture.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/convolutionTexture/convolutionTexture.cu:53-72
+```cuda
+////////////////////////////////////////////////////////////////////////////////
+__constant__ float c_Kernel[KERNEL_LENGTH];
+
+extern "C" void setConvolutionKernel(float *h_Kernel)
+{
+    cudaMemcpyToSymbol(c_Kernel, h_Kernel, KERNEL_LENGTH * sizeof(float));
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Loop unrolling templates, needed for best performance
+////////////////////////////////////////////////////////////////////////////////
+template <int i> __device__ float convolutionRow(float x, float y, cudaTextureObject_t texSrc)
+{
+    return tex2D<float>(texSrc, x + (float)(KERNEL_RADIUS - i), y) * c_Kernel[i] + convolutionRow<i - 1>(x, y, texSrc);
+}
+
+template <> __device__ float convolutionRow<-1>(float x, float y, cudaTextureObject_t texSrc) { return 0; }
+
+template <int i> __device__ float convolutionColumn(float x, float y, cudaTextureObject_t texSrc)
+{
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/convolutionTexture/convolutionTexture.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/convolutionTexture/convolutionTexture.cu:79-98
+```cuda
+////////////////////////////////////////////////////////////////////////////////
+// Row convolution filter
+////////////////////////////////////////////////////////////////////////////////
+__global__ void convolutionRowsKernel(float *d_Dst, int imageW, int imageH, cudaTextureObject_t texSrc)
+{
+    // JP: `blockDim`, `blockIdx`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    const int   ix = IMAD(blockDim.x, blockIdx.x, threadIdx.x);
+    const int   iy = IMAD(blockDim.y, blockIdx.y, threadIdx.y);
+    const float x  = (float)ix + 0.5f;
+    const float y  = (float)iy + 0.5f;
+
+    if (ix >= imageW || iy >= imageH) {
+        return;
+    }
+
+    float sum = 0;
+
+#if (UNROLL_INNER)
+    sum = convolutionRow<2 * KERNEL_RADIUS>(x, y, texSrc);
+#else
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/convolutionTexture/convolutionTexture.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `convolutionTexture_common.h`
+
+Source: cpp/2_Concepts_and_Techniques/convolutionTexture/convolutionTexture_common.h:29-57
+```cpp
+#ifndef CONVOLUTIONTEXTURE_COMMON_H
+#define CONVOLUTIONTEXTURE_COMMON_H
+
+#include <cuda_runtime.h>
+
+////////////////////////////////////////////////////////////////////////////////
+// Convolution kernel size (the only parameter inlined in the code)
+////////////////////////////////////////////////////////////////////////////////
+#define KERNEL_RADIUS 8
+#define KERNEL_LENGTH (2 * KERNEL_RADIUS + 1)
+
+////////////////////////////////////////////////////////////////////////////////
+// Reference CPU convolution
+////////////////////////////////////////////////////////////////////////////////
+extern "C" void convolutionRowsCPU(float *h_Dst, float *h_Src, float *h_Kernel, int imageW, int imageH, int kernelR);
+
+extern "C" void convolutionColumnsCPU(float *h_Dst, float *h_Src, float *h_Kernel, int imageW, int imageH, int kernelR);
+
+////////////////////////////////////////////////////////////////////////////////
+// GPU texture-based convolution
+////////////////////////////////////////////////////////////////////////////////
+extern "C" void setConvolutionKernel(float *h_Kernel);
+
+extern "C" void convolutionRowsGPU(float *d_Dst, cudaArray *a_Src, int imageW, int imageH, cudaTextureObject_t texSrc);
+
+extern "C" void
+convolutionColumnsGPU(float *d_Dst, cudaArray *a_Src, int imageW, int imageH, cudaTextureObject_t texSrc);
+
+#endif
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/convolutionTexture/convolutionTexture_common.h` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `convolutionTexture_gold.cpp`
+
+Source: cpp/2_Concepts_and_Techniques/convolutionTexture/convolutionTexture_gold.cpp:29-79
+```cpp
+#include "convolutionTexture_common.h"
+
+////////////////////////////////////////////////////////////////////////////////
+// Reference row convolution filter
+////////////////////////////////////////////////////////////////////////////////
+extern "C" void convolutionRowsCPU(float *h_Dst, float *h_Src, float *h_Kernel, int imageW, int imageH, int kernelR)
+{
+    for (int y = 0; y < imageH; y++)
+        for (int x = 0; x < imageW; x++) {
+            float sum = 0;
+
+            for (int k = -kernelR; k <= kernelR; k++) {
+                int d = x + k;
+
+                if (d < 0)
+                    d = 0;
+
+                if (d >= imageW)
+                    d = imageW - 1;
+
+                sum += h_Src[y * imageW + d] * h_Kernel[kernelR - k];
+            }
+
+            h_Dst[y * imageW + x] = sum;
+        }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Reference column convolution filter
+////////////////////////////////////////////////////////////////////////////////
+extern "C" void convolutionColumnsCPU(float *h_Dst, float *h_Src, float *h_Kernel, int imageW, int imageH, int kernelR)
+{
+    for (int y = 0; y < imageH; y++)
+        for (int x = 0; x < imageW; x++) {
+            float sum = 0;
+
+            for (int k = -kernelR; k <= kernelR; k++) {
+                int d = y + k;
+
+                if (d < 0)
+                    d = 0;
+
+                if (d >= imageH)
+                    d = imageH - 1;
+
+                sum += h_Src[d * imageW + x] * h_Kernel[kernelR - k];
+            }
+
+            h_Dst[y * imageW + x] = sum;
+        }
+}
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/convolutionTexture/convolutionTexture_gold.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `main.cpp`
+
+Source: cpp/2_Concepts_and_Techniques/convolutionTexture/main.cpp:37-64
+```cpp
+#include <cuda_runtime.h>
+#include <helper_cuda.h>
+#include <helper_functions.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "convolutionTexture_common.h"
+
+////////////////////////////////////////////////////////////////////////////////
+// Main program
+////////////////////////////////////////////////////////////////////////////////
+int main(int argc, char **argv)
+{
+    float *h_Kernel, *h_Input, *h_Buffer, *h_OutputCPU, *h_OutputGPU;
+
+    cudaArray            *a_Src;
+    cudaTextureObject_t   texSrc;
+    cudaChannelFormatDesc floatTex = cudaCreateChannelDesc<float>();
+
+    float *d_Output;
+
+    float gpuTime;
+
+    StopWatchInterface *hTimer = NULL;
+
+    const int          imageW     = 3072;
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/convolutionTexture/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/convolutionTexture/main.cpp:72-91
+```cpp
+    findCudaDevice(argc, (const char **)argv);
+
+    sdkCreateTimer(&hTimer);
+
+    printf("Initializing data...\n");
+    h_Kernel    = (float *)malloc(KERNEL_LENGTH * sizeof(float));
+    h_Input     = (float *)malloc(imageW * imageH * sizeof(float));
+    h_Buffer    = (float *)malloc(imageW * imageH * sizeof(float));
+    h_OutputCPU = (float *)malloc(imageW * imageH * sizeof(float));
+    h_OutputGPU = (float *)malloc(imageW * imageH * sizeof(float));
+    // JP: `cudaMallocArray`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMallocArray(&a_Src, &floatTex, imageW, imageH));
+    checkCudaErrors(cudaMalloc((void **)&d_Output, imageW * imageH * sizeof(float)));
+
+    cudaResourceDesc texRes;
+    memset(&texRes, 0, sizeof(cudaResourceDesc));
+
+    texRes.resType         = cudaResourceTypeArray;
+    texRes.res.array.array = a_Src;
+
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/convolutionTexture/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/convolutionTexture/main.cpp:109-132
+```cpp
+    for (unsigned int i = 0; i < imageW * imageH; i++) {
+        h_Input[i] = (float)(rand() % 16);
+    }
+
+    setConvolutionKernel(h_Kernel);
+    // JP: `cudaMemcpyToArray`, `cudaMemcpyHostToDevice`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+    checkCudaErrors(cudaMemcpyToArray(a_Src, 0, 0, h_Input, imageW * imageH * sizeof(float), cudaMemcpyHostToDevice));
+
+    printf("Running GPU rows convolution (%u identical iterations)...\n", iterations);
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    checkCudaErrors(cudaDeviceSynchronize());
+    sdkResetTimer(&hTimer);
+    sdkStartTimer(&hTimer);
+
+    for (unsigned int i = 0; i < iterations; i++) {
+        convolutionRowsGPU(d_Output, a_Src, imageW, imageH, texSrc);
+    }
+
+    checkCudaErrors(cudaDeviceSynchronize());
+    sdkStopTimer(&hTimer);
+    gpuTime = sdkGetTimerValue(&hTimer) / (float)iterations;
+    printf("Average convolutionRowsGPU() time: %f msecs; //%f Mpix/s\n",
+           gpuTime,
+           imageW * imageH * 1e-6 / (0.001 * gpuTime));
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/convolutionTexture/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/2_Concepts_and_Techniques/convolutionTexture/main.cpp:182-201
+```cpp
+
+    double L2norm = sqrt(delta / sum);
+    printf("Relative L2 norm: %E\n", L2norm);
+    printf("Shutting down...\n");
+
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    checkCudaErrors(cudaFree(d_Output));
+    checkCudaErrors(cudaFreeArray(a_Src));
+    free(h_OutputGPU);
+    free(h_Buffer);
+    free(h_Input);
+    free(h_Kernel);
+
+    sdkDeleteTimer(&hTimer);
+
+    if (L2norm > 1e-6) {
+        printf("Test failed!\n");
+        exit(EXIT_FAILURE);
+    }
+
+```
+
+> JP: この抜粋は `cpp/2_Concepts_and_Techniques/convolutionTexture/main.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
@@ -99,11 +446,11 @@ English anchor: read `convolutionTexture` as a focused example of the CUDA conce
 | `cudaArray` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaMallocArray` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
 | `cudaFree` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
+| `launch` | Python object から CUDA resource や device work を扱う境界です。hidden sync に注意します。 |
 | `cudaMemcpyToSymbol` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
 | `cudaMalloc` | device 側 storage を確保する API です。対応する cleanup と byte size を確認します。 |
 | `cudaCreateTextureObject` | この sample の中心 API/概念です。入力、所有権、同期、検証との関係を確認します。 |
 | `cudaMemcpy` | host/device 間の転送、初期化、または visibility を作る API です。方向と Async の順序を確認します。 |
-| `cudaFreeArray` | resource lifetime を閉じる API です。未完了 work が残っていないかを確認します。 |
 
 > **日本語**
 > API 名は英語のまま、何を所有するか、何を開始するか、何を待つか、何を検証するかで分類します。

@@ -81,6 +81,187 @@ English anchor: read `p2pBandwidthLatencyTest` as a focused example of the CUDA 
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/5_Domain_Specific/p2pBandwidthLatencyTest/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(p2pBandwidthLatencyTest LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for p2pBandwidthLatencyTest
+add_executable(p2pBandwidthLatencyTest p2pBandwidthLatencyTest.cu)
+
+target_compile_options(p2pBandwidthLatencyTest PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(p2pBandwidthLatencyTest PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(p2pBandwidthLatencyTest PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/p2pBandwidthLatencyTest/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `p2pBandwidthLatencyTest.cu`
+
+Source: cpp/5_Domain_Specific/p2pBandwidthLatencyTest/p2pBandwidthLatencyTest.cu:29-47
+```cuda
+#include <cstdio>
+#include <helper_cuda.h>
+#include <helper_timer.h>
+#include <vector>
+
+using namespace std;
+
+const char *sSampleName = "P2P (Peer-to-Peer) GPU Bandwidth Latency Test";
+
+typedef enum {
+    P2P_WRITE = 0,
+    P2P_READ  = 1,
+} P2PDataTransfer;
+
+typedef enum {
+    CE = 0,
+    SM = 1,
+} P2PEngine;
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/p2pBandwidthLatencyTest/p2pBandwidthLatencyTest.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/p2pBandwidthLatencyTest/p2pBandwidthLatencyTest.cu:74-93
+```cuda
+
+// This kernel is for demonstration purposes only, not a performant kernel for
+// p2p transfers.
+__global__ void copyp2p(int4 *__restrict__ dest, int4 const *__restrict__ src, size_t num_elems)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    size_t globalId = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t gridSize = blockDim.x * gridDim.x;
+
+#pragma unroll(5)
+    for (size_t i = globalId; i < num_elems; i += gridSize) {
+        dest[i] = src[i];
+    }
+}
+
+///////////////////////////////////////////////////////////////////////////
+// Print help screen
+///////////////////////////////////////////////////////////////////////////
+void printHelp(void)
+{
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/p2pBandwidthLatencyTest/p2pBandwidthLatencyTest.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/p2pBandwidthLatencyTest/p2pBandwidthLatencyTest.cu:102-145
+```cuda
+    printf("--sm_copy                      Use SM intiated p2p transfers instead of Copy Engine\n");
+    printf("--numElems=<NUM_OF_INT_ELEMS>  Number of integer elements to be used in p2p copy.\n");
+}
+
+///////////////////////////////////////////////////////////////////////////
+// Detect if cudaMemcpyPeerAsync will automatically fall back to
+// host-staged copies when P2P is disabled.
+//
+// We probe a single representative pair (device 0 -> device 1).
+// On a given system, confidential-computing (CC) and security
+// policies are uniform across GPUs, so if this pair is blocked
+// with cudaErrorNotSupported in P2P-off mode, it is reasonable
+// to assume all cross-GPU pairs behave the same.
+//
+// For a production application that must handle heterogeneous
+// environments, users may want to probe all device pairs.
+///////////////////////////////////////////////////////////////////////////
+bool detectFallback(int numGPUs)
+{
+    if (numGPUs <= 1)
+        return false;
+
+    cudaSetDevice(0);
+    int         *tmp0 = nullptr, *tmp1 = nullptr;
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+    cudaStream_t s;
+    cudaStreamCreateWithFlags(&s, cudaStreamNonBlocking);
+
+    size_t testElems = 1;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    cudaMalloc(&tmp0, testElems * sizeof(int));
+    cudaSetDevice(1);
+    cudaMalloc(&tmp1, testElems * sizeof(int));
+    cudaCheckError();
+
+    // Explicitly ensure P2P is disabled for this test
+    // (Clear any pre-existing P2P access if it happens to be enabled)
+    cudaSetDevice(0);
+    cudaDeviceDisablePeerAccess(1);
+    cudaGetLastError(); // Clear error if peer access was not enabled
+
+    cudaSetDevice(1);
+    cudaDeviceDisablePeerAccess(0);
+    cudaGetLastError(); // Clear error if peer access was not enabled
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/p2pBandwidthLatencyTest/p2pBandwidthLatencyTest.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/p2pBandwidthLatencyTest/p2pBandwidthLatencyTest.cu:152-173
+```cuda
+        printf("Note: cudaMemcpyPeerAsync reported '%s' - will use host-mediated copy when P2P is disabled\n",
+               cudaGetErrorString(testErr));
+        cudaGetLastError();
+    }
+
+    // JP: `cudaStreamSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    cudaStreamSynchronize(s);
+    // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+    cudaFree(tmp0);
+    cudaFree(tmp1);
+    cudaStreamDestroy(s);
+    cudaCheckError();
+
+    return needsFallback;
+}
+
+void checkP2Paccess(int numGPUs)
+{
+    for (int i = 0; i < numGPUs; i++) {
+        cudaSetDevice(i);
+        cudaCheckError();
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/p2pBandwidthLatencyTest/p2pBandwidthLatencyTest.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

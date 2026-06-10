@@ -86,6 +86,253 @@ English anchor: read `BlackScholes_nvrtc` as a focused example of the CUDA conce
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `BlackScholes.cpp`
+
+Source: cpp/5_Domain_Specific/BlackScholes_nvrtc/BlackScholes.cpp:35-53
+```cpp
+#include <cuda_runtime.h>
+#include <helper_functions.h> // helper functions for string parsing
+#include <nvrtc_helper.h>
+
+////////////////////////////////////////////////////////////////////////////////
+// Process an array of optN options on CPU
+////////////////////////////////////////////////////////////////////////////////
+
+extern "C" void BlackScholesCPU(float *h_CallResult,
+                                float *h_PutResult,
+                                float *h_StockPrice,
+                                float *h_OptionStrike,
+                                float *h_OptionYears,
+                                float  Riskfree,
+                                float  Volatility,
+                                int    optN);
+
+////////////////////////////////////////////////////////////////////////////////
+// Process an array of OptN options on GPU
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/BlackScholes_nvrtc/BlackScholes.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/BlackScholes_nvrtc/BlackScholes.cpp:78-97
+```cpp
+
+////////////////////////////////////////////////////////////////////////////////
+// Main program
+////////////////////////////////////////////////////////////////////////////////
+
+int main(int argc, char **argv)
+{
+    // Start logs
+    printf("[%s] - Starting...\n", argv[0]);
+
+    //'h_' prefix - CPU (host) memory space
+    float
+        // Results calculated by CPU for reference
+        *h_CallResultCPU,
+        *h_PutResultCPU,
+        // CPU copy of GPU results
+        *h_CallResultGPU, *h_PutResultGPU,
+        // CPU instance of input data
+        *h_StockPrice, *h_OptionStrike, *h_OptionYears;
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/BlackScholes_nvrtc/BlackScholes.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/BlackScholes_nvrtc/BlackScholes.cpp:112-131
+```cpp
+    sdkCreateTimer(&hTimer);
+
+    printf("Initializing data...\n");
+    printf("...allocating CPU memory for options.\n");
+
+    h_CallResultCPU = (float *)malloc(OPT_SZ);
+    h_PutResultCPU  = (float *)malloc(OPT_SZ);
+    h_CallResultGPU = (float *)malloc(OPT_SZ);
+    h_PutResultGPU  = (float *)malloc(OPT_SZ);
+    h_StockPrice    = (float *)malloc(OPT_SZ);
+    h_OptionStrike  = (float *)malloc(OPT_SZ);
+    h_OptionYears   = (float *)malloc(OPT_SZ);
+
+    char  *cubin, *kernel_file;
+    size_t cubinSize;
+    kernel_file = sdkFindFilePath("BlackScholes_kernel.cuh", argv[0]);
+
+    // Compile the kernel BlackScholes_kernel.
+    compileFileToCUBIN(kernel_file, argc, argv, &cubin, &cubinSize, 0);
+    // JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/BlackScholes_nvrtc/BlackScholes.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/BlackScholes_nvrtc/BlackScholes.cpp:182-201
+```cpp
+                   (void *)&risk,
+                   (void *)&volatility,
+                   (void *)&optval};
+
+    for (i = 0; i < NUM_ITERATIONS; i++) {
+        // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+        checkCudaErrors(cuLaunchKernel(kernel_addr,
+                                       cudaGridSize.x,
+                                       cudaGridSize.y,
+                                       cudaGridSize.z, /* grid dim */
+                                       cudaBlockSize.x,
+                                       cudaBlockSize.y,
+                                       cudaBlockSize.z, /* block dim */
+                                       0,
+                                       0,       /* shared mem, stream */
+                                       &arr[0], /* arguments */
+                                       0));
+    }
+
+    checkCudaErrors(cuCtxSynchronize());
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/BlackScholes_nvrtc/BlackScholes.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `BlackScholes_gold.cpp`
+
+Source: cpp/5_Domain_Specific/BlackScholes_nvrtc/BlackScholes_gold.cpp:29-47
+```cpp
+#include <math.h>
+
+///////////////////////////////////////////////////////////////////////////////
+// Polynomial approximation of cumulative normal distribution function
+///////////////////////////////////////////////////////////////////////////////
+
+static double CND(double d)
+{
+    const double A1       = 0.31938153;
+    const double A2       = -0.356563782;
+    const double A3       = 1.781477937;
+    const double A4       = -1.821255978;
+    const double A5       = 1.330274429;
+    const double RSQRT2PI = 0.39894228040143267793994605993438;
+
+    double K = 1.0 / (1.0 + 0.2316419 * fabs(d));
+
+    double cnd = RSQRT2PI * exp(-0.5 * d * d) * (K * (A1 + K * (A2 + K * (A3 + K * (A4 + K * A5)))));
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/BlackScholes_nvrtc/BlackScholes_gold.cpp` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `BlackScholes_kernel.cuh`
+
+Source: cpp/5_Domain_Specific/BlackScholes_nvrtc/BlackScholes_kernel.cuh:33-51
+```cuda
+__device__ inline float cndGPU(float d)
+{
+    const float A1       = 0.31938153f;
+    const float A2       = -0.356563782f;
+    const float A3       = 1.781477937f;
+    const float A4       = -1.821255978f;
+    const float A5       = 1.330274429f;
+    const float RSQRT2PI = 0.39894228040143267793994605993438f;
+
+    float K = __fdividef(1.0f, (1.0f + 0.2316419f * fabsf(d)));
+
+    float cnd = RSQRT2PI * __expf(-0.5f * d * d) * (K * (A1 + K * (A2 + K * (A3 + K * (A4 + K * A5)))));
+
+    if (d > 0)
+        cnd = 1.0f - cnd;
+
+    return cnd;
+}
+
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/BlackScholes_nvrtc/BlackScholes_kernel.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/5_Domain_Specific/BlackScholes_nvrtc/BlackScholes_kernel.cuh:88-107
+```cuda
+                                                                  float Riskfree,
+                                                                  float Volatility,
+                                                                  int   optN)
+{
+    ////Thread index
+    // JP: `blockDim`, `blockIdx`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    const int opt = blockDim.x * blockIdx.x + threadIdx.x;
+
+    // Calculating 2 options per thread to increase ILP (instruction level
+    // parallelism)
+    if (opt < (optN / 2)) {
+        float callResult1, callResult2;
+        float putResult1, putResult2;
+        BlackScholesBodyGPU(callResult1,
+                            putResult1,
+                            d_StockPrice[opt].x,
+                            d_OptionStrike[opt].x,
+                            d_OptionYears[opt].x,
+                            Riskfree,
+                            Volatility);
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/BlackScholes_nvrtc/BlackScholes_kernel.cuh` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `CMakeLists.txt`
+
+Source: cpp/5_Domain_Specific/BlackScholes_nvrtc/CMakeLists.txt:1-49
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(BlackScholes_nvrtc LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for BlackScholes_nvrtc
+add_executable(BlackScholes_nvrtc BlackScholes.cpp BlackScholes_gold.cpp)
+
+target_compile_options(BlackScholes_nvrtc PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(BlackScholes_nvrtc PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(BlackScholes_nvrtc PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_link_libraries(BlackScholes_nvrtc PRIVATE
+    # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
+    CUDA::nvrtc
+    CUDA::cuda_driver
+)
+
+# Copy kernel to the output directory
+add_custom_command(TARGET BlackScholes_nvrtc POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_CURRENT_SOURCE_DIR}/BlackScholes_kernel.cuh ${CMAKE_CURRENT_BINARY_DIR}
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/5_Domain_Specific/BlackScholes_nvrtc/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

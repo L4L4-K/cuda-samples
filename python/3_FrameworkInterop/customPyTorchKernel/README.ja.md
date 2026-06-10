@@ -81,6 +81,116 @@ English anchor: read `customPyTorchKernel` as a focused example of the CUDA conc
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `customPyTorchKernel.py`
+
+Source: python/3_FrameworkInterop/customPyTorchKernel/customPyTorchKernel.py:2-20
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    distribution and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `python/3_FrameworkInterop/customPyTorchKernel/customPyTorchKernel.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/3_FrameworkInterop/customPyTorchKernel/customPyTorchKernel.py:58-77
+```python
+
+SQUARE_KERNEL = """
+extern "C" __global__
+void square_kernel(const float* x, float* y, int n)
+{
+    const unsigned int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    for (int i = tid; i < n; i += gridDim.x * blockDim.x) {
+        y[i] = x[i] * x[i];
+    }
+}
+"""
+
+
+# ============================================================================
+# PyTorch Stream Wrapper
+# ============================================================================
+# cuda.core requires objects with __cuda_stream__ protocol
+class PyTorchStreamWrapper:
+    def __init__(self, pt_stream):
+        self.pt_stream = pt_stream
+```
+
+> JP: この抜粋は `python/3_FrameworkInterop/customPyTorchKernel/customPyTorchKernel.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/3_FrameworkInterop/customPyTorchKernel/customPyTorchKernel.py:110-129
+```python
+
+    if key not in _kernel_cache:
+        # Compile the kernel with appropriate architecture
+        opts = ProgramOptions(std="c++17", arch=f"sm_{device.arch}")
+        # JP: nvrtc: NVRTC/JIT は実行時に device code を compile/link します。生成した module と kernel 名が launch と対応します。
+        prog = Program(SQUARE_KERNEL, code_type="c++", options=opts)
+        mod = prog.compile("cubin")
+        _kernel_cache[key] = mod.get_kernel("square_kernel")
+
+    return _kernel_cache[key]
+
+
+# ============================================================================
+# Step 3: PyTorch Autograd Function
+# ============================================================================
+# This integrates the CUDA kernel with PyTorch's automatic differentiation
+
+
+# JP: この anchor では Python object と CUDA resource/context/stream の境界です。hidden sync と lifetime を確認します。
+class SquareOp(torch.autograd.Function):
+```
+
+> JP: この抜粋は `python/3_FrameworkInterop/customPyTorchKernel/customPyTorchKernel.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/3_FrameworkInterop/customPyTorchKernel/customPyTorchKernel.py:248-267
+```python
+
+    Examples
+    --------
+    >>> x = torch.randn(100, device='cuda')
+    >>> y = square(x)
+    >>> assert torch.allclose(y, x ** 2)
+    """
+    return SquareOp.apply(x)
+
+
+# ============================================================================
+# Step 5: Testing and Verification
+# ============================================================================
+
+
+def main():
+    """Test the custom square operation."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+```
+
+> JP: この抜粋は `python/3_FrameworkInterop/customPyTorchKernel/customPyTorchKernel.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

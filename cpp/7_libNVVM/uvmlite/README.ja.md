@@ -79,6 +79,246 @@ English anchor: read `uvmlite` as a focused example of the CUDA concepts used in
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/7_libNVVM/uvmlite/CMakeLists.txt:2-20
+```cmake
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/uvmlite/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/7_libNVVM/uvmlite/CMakeLists.txt:29-48
+```cmake
+set(CMAKE_INSTALL_RPATH ${LIBNVVM_HOME})
+set(CMAKE_INCLUDE_CURRENT_DIR YES)
+set_property(SOURCE uvmlite.c
+             PROPERTY COMPILE_DEFINITIONS LIBCUDADEVRT="${CUDADEVRT_LIB}")
+
+# JP: `add_executable`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+add_executable(uvmlite uvmlite.c)
+
+add_test(NAME uvmlite COMMAND uvmlite WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+
+target_link_libraries(uvmlite ${NVVM_LIB} ${CUDA_LIB})
+
+if (WIN32)
+  set (LIB_ARCH_SUFFIX "/x64")
+  set_target_properties(uvmlite PROPERTIES COMPILE_FLAGS "/wd4996")
+else (WIN32)
+  set (LIB_ARCH_SUFFIX "64")
+  set_target_properties(uvmlite PROPERTIES
+                        LINK_FLAGS "-Wl,-rpath,${LIBNVVM_RPATH}")
+endif ()
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/uvmlite/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `uvmlite.c`
+
+Source: cpp/7_libNVVM/uvmlite/uvmlite.c:24-47
+```c
+// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+// OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+#include <assert.h>
+#include <builtin_types.h>
+#include <cuda.h>
+#include <math.h>
+#include <nvvm.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+
+#define ERROR_IF(expr)                                                  \
+    if (expr) {                                                         \
+        fprintf(stderr, "Failed check at %s:%d\n", __FILE__, __LINE__); \
+        exit(EXIT_FAILURE);                                             \
+    }
+
+// If 'err' is non-zero, emit an error message and exit.
+#define checkCudaErrors(err) __checkCudaErrors(err, __FILE__, __LINE__)
+// JP: driver_api: Driver API は CU* handle を明示的に扱います。context/module/function の所有と error check を追います。
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/uvmlite/uvmlite.c` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/7_libNVVM/uvmlite/uvmlite.c:93-116
+```c
+    if (result != NVVM_SUCCESS) {
+        char  *Msg = NULL;
+        size_t LogSize;
+        fprintf(stderr, "nvvmCompileProgram: Failed\n");
+        nvvmGetProgramLogSize(program, &LogSize);
+        Msg = (char *)malloc(LogSize);
+        nvvmGetProgramLog(program, Msg);
+        fprintf(stderr, "%s\n", Msg);
+        // JP: cleanup: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        free(Msg);
+        exit(EXIT_FAILURE);
+    }
+
+    size_t ptxSize = 0;
+    result         = nvvmGetCompiledResultSize(program, &ptxSize);
+    if (result != NVVM_SUCCESS) {
+        fprintf(stderr, "nvvmGetCompiledResultSize: Failed\n");
+        exit(EXIT_FAILURE);
+    }
+
+    char *ptx = malloc(ptxSize);
+    assert(ptx);
+    result = nvvmGetCompiledResult(program, ptx);
+    if (result != NVVM_SUCCESS) {
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/uvmlite/uvmlite.c` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/7_libNVVM/uvmlite/uvmlite.c:156-175
+```c
+// JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
+static CUdevice cudaDeviceInit(int *major, int *minor)
+{
+    assert(major && minor);
+    // Count the number of CUDA compute capable devices..
+    CUresult err         = cuInit(0);
+    int      deviceCount = 0;
+    if (CUDA_SUCCESS == err)
+        checkCudaErrors(cuDeviceGetCount(&deviceCount));
+    if (deviceCount == 0) {
+        fprintf(stderr, "cudaDeviceInit error: no devices supporting CUDA\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Get the first device discovered (device 0) and print its name.
+    // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
+    CUdevice cuDevice = 0;
+    checkCudaErrors(cuDeviceGet(&cuDevice, 0));
+    char name[128] = {0};
+    checkCudaErrors(cuDeviceGetName(name, sizeof(name), cuDevice));
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/uvmlite/uvmlite.c` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/7_libNVVM/uvmlite/uvmlite.c:310-329
+```c
+    printf("The host added 1 and 11 to xxx and yyy.\n");
+
+    // Launch the kernel with the following parameters.
+    {
+        void *params[] = {(void *)&devp_xxx};
+        // JP: `cuLaunchKernel`: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+        checkCudaErrors(cuLaunchKernel(hKernel, nBlocks, 1, 1, nThreads, 1, 1, 0, NULL, params, NULL));
+    }
+    checkCudaErrors(cuCtxSynchronize());
+
+    printf("kernel added 20 and 30 to xxx and yyy, respectively.\n");
+    printf("The final value checked in the host: xxx = %d, yyy = %d\n", *p_xxx, *p_yyy);
+
+    if (hModule) {
+        // JP: この連続する anchor 群では Driver API の CU* handle と cu* call です。context/module/function/device memory の所有と error boundary を確認します。
+        checkCudaErrors(cuModuleUnload(hModule));
+        hModule = 0;
+    }
+    if (hContext) {
+        checkCudaErrors(cuCtxDestroy(hContext));
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/uvmlite/uvmlite.c` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `uvmlite64.ll`
+
+Source: cpp/7_libNVVM/uvmlite/uvmlite64.ll:2-61
+```llvm
+;
+; Redistribution and use in source and binary forms, with or without
+; modification, are permitted provided that the following conditions
+; are met:
+;  * Redistributions of source code must retain the above copyright
+;    notice, this list of conditions and the following disclaimer.
+;  * Redistributions in binary form must reproduce the above copyright
+;    notice, this list of conditions and the following disclaimer in the
+;    documentation and/or other materials provided with the distribution.
+;  * Neither the name of NVIDIA CORPORATION nor the names of its
+;    contributors may be used to endorse or promote products derived
+;    from this software without specific prior written permission.
+;
+; THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+; EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+; IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+; PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+; CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+; EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+; PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+; PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+; OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+; (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+; OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-i128:128:128-f32:32:32-f64:64:64-v16:16:16-v32:32:32-v64:64:64-v128:128:128-n16:32:64"
+target triple = "nvptx64-nvidia-cuda"
+
+; the initial value of xxx is 10
+@xxx = internal addrspace(1) global i32 10, align 4
+
+; the initial value of yyy is 100
+@yyy = internal addrspace(1) global i32 100, align 4
+
+@llvm.used = appending global [3 x i8*] [i8* bitcast (i8* addrspacecast (i32 addrspace(1)* @xxx to i8*) to i8*), i8* bitcast (i8* addrspacecast (i32 addrspace(1)* @yyy to i8*) to i8*), i8* bitcast (void (i32*)* @test_kernel to i8*)], section "llvm.metadata"
+
+; %ptr can be in the managed space, and its address can be directly used in the host and device.
+; See the uvmlite.c, which passes the device pointer of xxx as the kernel parameter.
+; This kernel also directly accesses @yyy, which is also managed.
+define void @test_kernel(i32* nocapture %ptr) nounwind alwaysinline {
+  ; *%ptr = *%ptr + 20
+  %gen2other = addrspacecast i32* %ptr to i32 addrspace(1)*
+  %tmp1 = load i32, i32 addrspace(1)* %gen2other, align 4
+  %add = add nsw i32 %tmp1, 20
+  store i32 %add, i32 addrspace(1)* %gen2other, align 4
+
+  ; @yyy = @yyy + 30
+  %tmp2 = load i32, i32 addrspace(1)* @yyy, align 4
+  %add3 = add nsw i32 %tmp2, 30
+  store i32 %add3, i32 addrspace(1)* @yyy, align 4
+  ret void
+}
+
+!nvvm.annotations = !{!7, !8, !9}
+!nvvmir.version = !{!6}
+
+!6 = !{i32 2, i32 0}
+!7 = !{i32 addrspace(1)* @xxx, !"managed", i32 1}
+!8 = !{i32 addrspace(1)* @yyy, !"managed", i32 1}
+!9 = !{void (i32*)* @test_kernel, !"kernel", i32 1}
+```
+
+> JP: この抜粋は `cpp/7_libNVVM/uvmlite/uvmlite64.ll` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

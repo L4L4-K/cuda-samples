@@ -82,6 +82,161 @@ English anchor: read `simpleHyperQ` as a focused example of the CUDA concepts us
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/simpleHyperQ/CMakeLists.txt:1-37
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(simpleHyperQ LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for simpleHyperQ
+add_executable(simpleHyperQ simpleHyperQ.cu)
+
+target_compile_options(simpleHyperQ PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(simpleHyperQ PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(simpleHyperQ PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleHyperQ/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `simpleHyperQ.cu`
+
+Source: cpp/0_Introduction/simpleHyperQ/simpleHyperQ.cu:37-55
+```cuda
+#include <cooperative_groups.h>
+#include <stdio.h>
+
+namespace cg = cooperative_groups;
+#include <helper_cuda.h>
+#include <helper_functions.h>
+
+const char *sSDKsample = "hyperQ";
+
+// This subroutine does no real work but runs for at least the specified number
+// of clock ticks.
+__device__ void clock_block(clock_t *d_o, clock_t clock_count)
+{
+    unsigned int start_clock = (unsigned int)clock();
+
+    clock_t clock_offset = 0;
+
+    while (clock_offset < clock_count) {
+        unsigned int end_clock = (unsigned int)clock();
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleHyperQ/simpleHyperQ.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleHyperQ/simpleHyperQ.cu:80-99
+```cuda
+__global__ void sum(clock_t *d_clocks, int N)
+{
+    // Handle to thread block group
+    // JP: indexing: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    cg::thread_block   cta = cg::this_thread_block();
+    // JP: `__shared__`: shared memory は block 内 scratchpad です。別 thread が書いた値を読む前に同期が必要です。
+    __shared__ clock_t s_clocks[32];
+
+    clock_t my_sum = 0;
+
+    for (int i = threadIdx.x; i < N; i += blockDim.x) {
+        my_sum += d_clocks[i];
+    }
+
+    s_clocks[threadIdx.x] = my_sum;
+    // JP: sync: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    cg::sync(cta);
+
+    for (int i = warpSize / 2; i > 0; i /= 2) {
+        if (threadIdx.x < i) {
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleHyperQ/simpleHyperQ.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleHyperQ/simpleHyperQ.cu:108-127
+```cuda
+    if (threadIdx.x == 0) {
+        d_clocks[0] = s_clocks[0];
+    }
+}
+
+int main(int argc, char **argv)
+{
+    int   nstreams    = 32; // One stream for each pair of kernels
+    float kernel_time = 10; // Time each kernel should run in ms
+    float elapsed_time;
+    int   cuda_device = 0;
+
+    printf("starting %s...\n", sSDKsample);
+
+    // Get number of streams (if overridden on the command line)
+    if (checkCmdLineFlag(argc, (const char **)argv, "nstreams")) {
+        nstreams = getCmdLineArgumentInt(argc, (const char **)argv, "nstreams");
+    }
+
+    // Use command-line specified CUDA device, otherwise use device with
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleHyperQ/simpleHyperQ.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/simpleHyperQ/simpleHyperQ.cu:155-174
+```cuda
+           deviceProp.minor,
+           deviceProp.multiProcessorCount);
+
+    // Allocate host memory for the output (reduced to a single value)
+    clock_t *a = 0;
+    // JP: `cudaMallocHost`: page-locked host memory は DMA/async copy を安定させます。通常の free ではなく対応する CUDA API で解放します。
+    checkCudaErrors(cudaMallocHost((void **)&a, sizeof(clock_t)));
+
+    // Allocate device memory for the output (one value for each kernel)
+    clock_t *d_a = 0;
+    // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+    checkCudaErrors(cudaMalloc((void **)&d_a, 2 * nstreams * sizeof(clock_t)));
+
+    // Allocate and initialize an array of stream handles
+    // JP: `cudaStream_t`: stream/event は非同期 work の順序、overlap、計測範囲を表します。同じ stream 内では投入順が保たれます。
+    cudaStream_t *streams = (cudaStream_t *)malloc(nstreams * sizeof(cudaStream_t));
+
+    for (int i = 0; i < nstreams; i++) {
+        checkCudaErrors(cudaStreamCreate(&(streams[i])));
+    }
+```
+
+> JP: この抜粋は `cpp/0_Introduction/simpleHyperQ/simpleHyperQ.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

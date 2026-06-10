@@ -79,6 +79,164 @@ English anchor: read `cubDeviceSegmentedScan` as a focused example of the CUDA c
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/4_CUDA_Libraries/cubDeviceSegmentedScan/CMakeLists.txt:1-66
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(cubDeviceSegmentedScan LANGUAGES C CXX CUDA)
+
+# Disable response file for libraries on QNX as qcc does not support lib paths with double quotes
+if(CMAKE_SYSTEM_NAME STREQUAL "QNX")
+    set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_LIBRARIES OFF)
+endif()
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Fetch CCCL via CPM.
+# Override with -DCCCL_SOURCE_DIR=/path/to/cccl to use a local checkout
+# instead of fetching from GitHub.
+set(CCCL_SAMPLES_CCCL_TAG "v3.3.3" CACHE STRING
+    "Tag/branch of NVIDIA/cccl to fetch for the CCCL samples")
+
+if(NOT TARGET CCCL::CCCL)
+    include("${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/CPM.cmake")
+    if(DEFINED CCCL_SOURCE_DIR AND NOT CCCL_SOURCE_DIR STREQUAL "")
+        CPMAddPackage(NAME CCCL SOURCE_DIR "${CCCL_SOURCE_DIR}")
+    else()
+        CPMAddPackage(
+            NAME CCCL
+            GIT_REPOSITORY "https://github.com/NVIDIA/cccl"
+            GIT_TAG "${CCCL_SAMPLES_CCCL_TAG}"
+        )
+    endif()
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+# Source file
+# Add target for cubDeviceSegmentedScan
+add_executable(cubDeviceSegmentedScan cubDeviceSegmentedScan.cu)
+
+target_compile_options(cubDeviceSegmentedScan PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(cubDeviceSegmentedScan PRIVATE cxx_std_17 cuda_std_17)
+
+set_target_properties(cubDeviceSegmentedScan PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_link_libraries(cubDeviceSegmentedScan PRIVATE
+    CUDA::cudart
+    CCCL::CCCL
+)
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cubDeviceSegmentedScan/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `cubDeviceSegmentedScan.cu`
+
+Source: cpp/4_CUDA_Libraries/cubDeviceSegmentedScan/cubDeviceSegmentedScan.cu:37-55
+```cuda
+#include <algorithm>
+#include <limits>
+#include <stdio.h>
+#include <stdlib.h>
+#include <vector>
+
+/* Includes, cuda */
+#include <cuda_runtime.h>
+#include <helper_cuda.h>
+
+/* Includes, cccl */
+#include <cub/device/device_segmented_scan.cuh>
+#include <cuda/functional>
+#include <thrust/device_vector.h>
+#include <thrust/host_vector.h>
+
+template <typename T>
+static void print_vec(const char *label, const std::vector<T> &v)
+{
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cubDeviceSegmentedScan/cubDeviceSegmentedScan.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/cubDeviceSegmentedScan/cubDeviceSegmentedScan.cu:105-124
+```cuda
+                                                                    d_in.begin(),
+                                                                    d_out.begin(),
+                                                                    begin_offsets,
+                                                                    end_offsets,
+                                                                    num_segments));
+    // JP: `cudaDeviceSynchronize`: ここが同期境界です。これ以降の host 処理や検証は、ここまでの GPU work が完了した前提になります。
+    checkCudaErrors(cudaDeviceSynchronize());
+
+    std::vector<int>    h_in(d_in.begin(), d_in.end());
+    std::vector<size_t> h_off(d_offsets.begin(), d_offsets.end());
+    std::vector<int>    got(d_out.begin(), d_out.end());
+    std::vector<int>    expected = host_exclusive_segmented_sum(h_in, h_off);
+
+    printf("cub::DeviceSegmentedScan::ExclusiveSegmentedSum\n");
+    print_vec("input:", h_in);
+    printf("  %-24s{", "offsets:");
+    for (auto o : h_off)
+        printf(" %zu", o);
+    printf(" }\n");
+    print_vec("got:", got);
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cubDeviceSegmentedScan/cubDeviceSegmentedScan.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/4_CUDA_Libraries/cubDeviceSegmentedScan/cubDeviceSegmentedScan.cu:173-192
+```cuda
+    const bool ok = got == expected;
+    printf("  %s\n", ok ? "OK" : "FAIL");
+    return ok;
+}
+
+int main(int argc, char **argv)
+{
+    int devID = findCudaDevice(argc, (const char **)argv);
+    cudaDeviceProp props;
+    checkCudaErrors(cudaGetDeviceProperties(&props, devID));
+    printf("Device: %s (Compute Capability %d.%d)\n\n", props.name, props.major, props.minor);
+
+    bool ok = true;
+    ok &= run_exclusive_segmented_sum();
+    printf("\n");
+    ok &= run_inclusive_segmented_max();
+
+    printf("\n%s\n", ok ? "Done" : "FAILED");
+    return ok ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+```
+
+> JP: この抜粋は `cpp/4_CUDA_Libraries/cubDeviceSegmentedScan/cubDeviceSegmentedScan.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

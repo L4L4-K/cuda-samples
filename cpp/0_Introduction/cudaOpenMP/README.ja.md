@@ -79,6 +79,171 @@ English anchor: read `cudaOpenMP` as a focused example of the CUDA concepts used
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `CMakeLists.txt`
+
+Source: cpp/0_Introduction/cudaOpenMP/CMakeLists.txt:1-46
+```cmake
+# JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。
+
+cmake_minimum_required(VERSION 3.20)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/Modules")
+
+project(cudaOpenMP LANGUAGES C CXX CUDA)
+
+# JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。
+find_package(CUDAToolkit REQUIRED)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-deprecated-gpu-targets")
+if(ENABLE_CUDA_DEBUG)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+else()
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+endif()
+
+# Include directories and libraries
+include_directories(../../../Common)
+
+find_package(OpenMP)
+
+# Source file
+if(OpenMP_CXX_FOUND)
+# Add target for asyncAPI
+    add_executable(cudaOpenMP cudaOpenMP.cu)
+
+target_compile_options(cudaOpenMP PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+
+target_compile_features(cudaOpenMP PRIVATE cxx_std_17 cuda_std_17)
+
+    set_target_properties(cudaOpenMP PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+    target_link_libraries(cudaOpenMP PUBLIC
+        OpenMP::OpenMP_CXX
+    )
+else()
+    message(STATUS "OpenMP not found - will not build sample 'cudaOpenMP'")
+endif()
+
+# Include installation configuration
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/InstallSamples.cmake)
+setup_samples_install()
+```
+
+> JP: この抜粋は `cpp/0_Introduction/cudaOpenMP/CMakeLists.txt` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+### `cudaOpenMP.cu`
+
+Source: cpp/0_Introduction/cudaOpenMP/cudaOpenMP.cu:34-72
+```cuda
+#include <helper_cuda.h>
+#include <omp.h>
+#include <stdio.h> // stdio functions are used since C++ streams aren't necessarily thread safe
+
+using namespace std;
+
+// a simple kernel that simply increments each array element by b
+__global__ void kernelAddConstant(int *g_a, const int b)
+{
+    // JP: `blockIdx`, `blockDim`, `threadIdx`: block/thread index から担当要素を計算します。境界チェックは problem size と同じ単位で合わせます。
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    g_a[idx] += b;
+}
+
+// a predicate that checks whether each array element is set to its index plus b
+int correctResult(int *data, const int n, const int b)
+{
+    for (int i = 0; i < n; i++)
+        if (data[i] != i + b)
+            return 0;
+
+    return 1;
+}
+
+int main(int argc, char *argv[])
+{
+    int num_gpus = 0; // number of CUDA GPUs
+
+    printf("%s Starting...\n\n", argv[0]);
+
+    /////////////////////////////////////////////////////////////////
+    // determine the number of CUDA capable GPUs
+    //
+    cudaGetDeviceCount(&num_gpus);
+
+    if (num_gpus < 1) {
+        printf("no CUDA capable devices were detected\n");
+        return 1;
+    }
+```
+
+> JP: この抜粋は `cpp/0_Introduction/cudaOpenMP/cudaOpenMP.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/cudaOpenMP/cudaOpenMP.cu:90-109
+```cuda
+    //
+    unsigned int n      = num_gpus * 8192;
+    unsigned int nbytes = n * sizeof(int);
+    int         *a      = 0; // pointer to data on the CPU
+    int          b      = 3; // value by which the array is incremented
+    a                   = (int *)malloc(nbytes);
+
+    if (0 == a) {
+        printf("couldn't allocate CPU memory\n");
+        return 1;
+    }
+
+    for (unsigned int i = 0; i < n; i++)
+        a[i] = i;
+
+    ////////////////////////////////////////////////////////////////
+    // run as many CPU threads as there are CUDA devices
+    //   each CPU thread controls a different device, processing its
+    //   portion of the data.  It's possible to use more CPU threads
+    //   than there are CUDA devices, in which case several CPU
+```
+
+> JP: この抜粋は `cpp/0_Introduction/cudaOpenMP/cudaOpenMP.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: cpp/0_Introduction/cudaOpenMP/cudaOpenMP.cu:133-159
+```cuda
+        dim3         gpu_threads(128); // 128 threads per block
+        dim3         gpu_blocks(n / (gpu_threads.x * num_cpu_threads));
+
+        // JP: `cudaMalloc`: device 側 storage の所有をここで作ります。確保した pointer は後段の cleanup で対応する API により解放します。
+        checkCudaErrors(cudaMalloc((void **)&d_a, nbytes_per_kernel));
+        // JP: `cudaMemset`: host/device 間の転送方向と async ordering を確認します。Async 版は同じ stream 内の順序と後続同期に依存します。
+        checkCudaErrors(cudaMemset(d_a, 0, nbytes_per_kernel));
+        checkCudaErrors(cudaMemcpy(d_a, sub_a, nbytes_per_kernel, cudaMemcpyHostToDevice));
+        // JP: kernel_launch: launch shape は grid/block/shared-memory/stream をここで決めます。kernel は非同期に開始し、後続の同期や検証で完了を確認します。
+        kernelAddConstant<<<gpu_blocks, gpu_threads>>>(d_a, b);
+
+        checkCudaErrors(cudaMemcpy(sub_a, d_a, nbytes_per_kernel, cudaMemcpyDeviceToHost));
+        // JP: `cudaFree`: ここで resource lifetime を閉じます。async work が残っていないことを確認してから、確保時と対応する API で解放します。
+        checkCudaErrors(cudaFree(d_a));
+    }
+    printf("---------------------------\n");
+
+    if (cudaSuccess != cudaGetLastError())
+        printf("%s\n", cudaGetErrorString(cudaGetLastError()));
+
+    ////////////////////////////////////////////////////////////////
+    // check the result
+    //
+    bool bResult = correctResult(a, n, b);
+
+    if (a)
+        free(a); // free CPU memory
+```
+
+> JP: この抜粋は `cpp/0_Introduction/cudaOpenMP/cudaOpenMP.cu` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |

@@ -78,6 +78,64 @@ English anchor: read `copyImageArraytoGPU` as a focused example of the CUDA conc
 > **学習メモ**
 > まず entry point で resource lifetime を追い、次に kernel/device helper で indexing、shared memory、atomic、library boundary を確認します。
 
+## Code Walkthrough
+
+この節のコードは現在のリポジトリから直接抜き出しています。`Source: path:start-end` は検証スクリプトが照合する契約です。
+
+### `copyImageArraytoGPU.py`
+
+Source: python/1_GettingStarted/copyImageArraytoGPU/copyImageArraytoGPU.py:2-20
+```python
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#  * Neither the name of NVIDIA CORPORATION nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+```
+
+> JP: この抜粋は `python/1_GettingStarted/copyImageArraytoGPU/copyImageArraytoGPU.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+Source: python/1_GettingStarted/copyImageArraytoGPU/copyImageArraytoGPU.py:118-137
+```python
+    np.copyto(pinned_view, host_np)
+
+    # Step 5: Copy from pinned CPU memory to GPU memory
+    # This is the actual CPU-to-GPU transfer, done asynchronously
+    # JP: この連続する anchor 群では device memory ownership です。確保 size、pointer lifetime、対応する cleanup を確認します。
+    pinned_buffer.copy_to(device_buffer, stream=stream)
+
+    return device_buffer, pinned_buffer
+
+
+def copy_image_from_gpu_cuda_core(
+    device_buffer: Buffer, shape: tuple, dtype: type, dev: Device, stream: Stream
+) -> np.ndarray:
+    """
+    Copy image from GPU memory back to CPU memory.
+
+    This function reverses the GPU-to-CPU transfer process:
+    1. Allocate pinned CPU memory for fast transfer
+    2. Copy from GPU to pinned CPU memory
+    3. Create NumPy view and copy to regular CPU memory
+```
+
+> JP: この抜粋は `python/1_GettingStarted/copyImageArraytoGPU/copyImageArraytoGPU.py` の実コードです。setup、allocation、transfer、GPU work、sync、validation、cleanup のどの境界を示すかを、行番号と一緒に確認します。
+
+
 ## Key APIs And Concepts
 
 | API or concept | Why it matters |
