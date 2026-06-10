@@ -1,57 +1,158 @@
 # CMakeLists.txt Japanese Companion
 
-Original English/build file: [`CMakeLists.txt`](../../CMakeLists.txt)
+Original English document: [`CMakeLists.txt`](../../CMakeLists.txt)
 
 ## English Reference
 
-The root `CMakeLists.txt` configures the CUDA Samples project, sets global build behavior, discovers packages, and includes subdirectories that contain sample targets.
+This companion keeps every parsed English source paragraph and places Japanese study notes directly below it. Commands, paths, APIs, target names, output strings, LICENSE text, headers, and attribution remain in English.
 
 > **日本語**
-> root `CMakeLists.txt` は repository 全体の build entry point です。ここで project configuration、optional package discovery、global compile behavior、sample category subdirectories の読み込みが決まります。
->
+> この companion は、原文の各 paragraph を英語のまま残し、その直下に日本語の理解メモを追加します。実行名、API 名、path、target、出力文字列は翻訳しません。
 > **学習メモ**
-> CMake は runtime CUDA logic ではありませんが、どの source が compile され、どの library と link され、どの platform 条件で sample が含まれるかを決めます。
+> 迷った場合は英語の原文を authoritative source とし、日本語は CUDA の前提、build/run の流れ、memory/sync/performance の読みどころを補う secondary material として使います。
 
-## Project And Language Setup
+## Paragraph Notes
 
-English anchor: project settings establish C++/CUDA build mode and repository-wide assumptions.
+## Source Paragraph 001
+
+Context: `JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。`
+
+English paragraph 1:
+> cmake_minimum_required(VERSION 3.20)
 
 > **日本語**
-> project/language 設定は、CUDA compiler と host compiler の組み合わせ、C++ standard、CUDA language handling を決めます。sample code を読む前に、CMake が CUDA を language として扱うのか、toolkit package として扱うのかを確認します。
->
+> この行は repository を configure するための最低 CMake version を固定します。古い CMake では CUDA language support や target property が期待どおり動かない可能性があります。
 > **学習メモ**
-> CMake configure の失敗は source の syntax error ではなく、compiler discovery、toolkit path、generator、architecture option の問題であることがあります。
+> CMake の target 名、package 名、flag 名は API と同じく翻訳しません。変更すると build graph の意味が変わるため、注釈は隣に置くだけにします。
 
-## Subdirectories And Targets
+## Source Paragraph 002
 
-English anchor: `add_subdirectory` connects repository directories to build targets.
+Context: `JP: この build file では CMake target、CUDA architecture、library dependency を確認します。target 名や link 設定は英語のまま保持します。`
+
+English paragraph 2:
+> project(cuda-samples LANGUAGES C CXX CUDA)
 
 > **日本語**
-> root file は category directory を build graph に追加します。個別 target の source list、libraries、compile options は各 sample directory の `CMakeLists.txt` にあります。
->
+> この行は project 名と有効な言語を宣言します。`C`、`CXX`、`CUDA` を有効にすることで以降の target が CUDA source を build できます。
 > **学習メモ**
-> sample が build されない場合、root で directory が含まれているか、category CMake で除外されていないか、sample CMake で platform guard がないかを順に確認します。
+> CMake の target 名、package 名、flag 名は API と同じく翻訳しません。変更すると build graph の意味が変わるため、注釈は隣に置くだけにします。
 
-## Dependencies And Optional Libraries
+## Source Paragraph 003
 
-English anchor: CUDA samples may depend on CUDA Toolkit libraries, graphics stacks, platform SDKs, Python packages, or downloaded dependencies.
+Context: `JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。`
+
+English paragraph 3:
+> find_package(CUDAToolkit REQUIRED)
 
 > **日本語**
-> CMake の `find_package`、`target_link_libraries`、option guard は library sample の実行条件を示します。cuBLAS/cuFFT/cuSolver/NPP/nvJPEG/CUB/graphics interop などは source だけでなく link 設定も読まないと理解できません。
->
+> この行は installed CUDA Toolkit を CMake package として見つけます。`CUDA::` targets や include/library path の前提になります。
 > **学習メモ**
-> library handle や descriptor を source で見つけたら、CMake でどの library target と link しているかも確認します。
+> CMake の target 名、package 名、flag 名は API と同じく翻訳しません。変更すると build graph の意味が変わるため、注釈は隣に置くだけにします。
 
-## Build Configuration Reading Checklist
+## Source Paragraph 004
 
-- Identify which subdirectory brings the sample into the build.
-- Check target name, source files, include directories, linked libraries, and compile definitions.
-- Check CUDA architecture settings and platform-specific guards.
-- Distinguish configure-time dependency discovery from compile/link-time errors.
-- Compare root settings with per-sample `CMakeLists.txt` and `README.ja.md`.
+Context: `JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。`
+
+English paragraph 4:
+> set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 > **日本語**
-> CMake file を読むときは「target が存在するか」「source が入っているか」「link が足りているか」「platform guard で除外されていないか」を分けます。
->
+> この設定は生成 object を position independent にします。library や shared object と組み合わせる sample で link 条件をそろえるための global setting です。
 > **学習メモ**
-> CUDA code の error と build system の error を混ぜないことが重要です。compiler が呼ばれる前に止まっているなら CMake/configuration の問題です。
+> CMake の target 名、package 名、flag 名は API と同じく翻訳しません。変更すると build graph の意味が変わるため、注釈は隣に置くだけにします。
+
+## Source Paragraph 005
+
+Context: `JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。`
+
+English paragraph 5:
+> set(CMAKE_CXX_STANDARD 17) set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+> **日本語**
+> この設定は host C++ の標準を C++17 にそろえます。CUDA host code と helper code の compile contract です。
+> **学習メモ**
+> CMake の target 名、package 名、flag 名は API と同じく翻訳しません。変更すると build graph の意味が変わるため、注釈は隣に置くだけにします。
+
+## Source Paragraph 006
+
+Context: `JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。`
+
+English paragraph 6:
+> set(CMAKE_CUDA_STANDARD 17) set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+
+> **日本語**
+> この設定は CUDA device/host compilation の言語標準を C++17 にそろえます。kernel source と template-heavy sample の前提になります。
+> **学習メモ**
+> CMake の target 名、package 名、flag 名は API と同じく翻訳しません。変更すると build graph の意味が変わるため、注釈は隣に置くだけにします。
+
+## Source Paragraph 007
+
+Context: `JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。`
+
+English paragraph 7:
+> set(CMAKE_CUDA_ARCHITECTURES 75 80 86 87 89 90 100 110 120) set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS}
+> -Wno-deprecated-gpu-targets") if(ENABLE_CUDA_DEBUG) set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable
+> cuda-gdb (may significantly affect performance on some targets) else() set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS}
+> -lineinfo") # add line information to all builds for debug tools (exclusive to -G option) endif()
+
+> **日本語**
+> この block は target GPU architecture、deprecated target warning、debug/profiling 用 flag を設定します。`-G` と `-lineinfo` は性能と debug 情報に影響します。
+> **学習メモ**
+> debug 用 flag は correctness 調査には便利ですが、performance sample の timing には使わないようにします。
+
+## Source Paragraph 008
+
+Context: `JP: `find_package`: この CMake 行で CUDA target、architecture、library dependency を配線します。target 名と link 設定は挙動に直結します。`
+
+English paragraph 8:
+> set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --extended-lambda")
+
+> **日本語**
+> この flag は CUDA extended lambda を有効にします。Thrust、CCCL、device callable lambda を使う sample の compile 条件です。
+> **学習メモ**
+> CMake の target 名、package 名、flag 名は API と同じく翻訳しません。変更すると build graph の意味が変わるため、注釈は隣に置くだけにします。
+
+## Source Paragraph 009
+
+Context: `Add MSVC-specific flags for standard-conforming preprocessor (required for CCCL)`
+
+English paragraph 9:
+> if(MSVC) add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/Zc:preprocessor>) endif()
+
+> **日本語**
+> この block は MSVC の CUDA compile option を追加します。Windows toolchain で standard-conforming preprocessor を使うための platform-specific guard です。
+> **学習メモ**
+> CMake の target 名、package 名、flag 名は API と同じく翻訳しません。変更すると build graph の意味が変わるため、注釈は隣に置くだけにします。
+
+## Source Paragraph 010
+
+Context: `Include installation configuration before processing samples`
+
+English paragraph 10:
+> include(cmake/InstallSamples.cmake)
+
+> **日本語**
+> この行は sample install 設定を先に読み込みます。各 sample directory を処理する前に共通 install rule を用意します。
+> **学習メモ**
+> CMake の target 名、package 名、flag 名は API と同じく翻訳しません。変更すると build graph の意味が変わるため、注釈は隣に置くだけにします。
+
+## Source Paragraph 011
+
+Context: `Include installation configuration before processing samples`
+
+English paragraph 11:
+> add_subdirectory(cpp)
+
+> **日本語**
+> この行は C++/CUDA sample tree を build graph に追加します。root CMakeLists から各 sample target へ処理が進む入口です。
+> **学習メモ**
+> CMake の target 名、package 名、flag 名は API と同じく翻訳しません。変更すると build graph の意味が変わるため、注釈は隣に置くだけにします。
+
+## Cross References
+
+English anchor: related Japanese study material for this repository.
+
+> **日本語**
+> 関連する sample ごとの `README.ja.md`、`docs_ja/themes/`、`docs_ja/glossary/`、source 内の `JP:` コメントを合わせて読むと、本文の build/run 手順と CUDA concept を接続できます。
+> **学習メモ**
+> この file は文書の伴走資料です。behavior、build graph、test output を変える目的の変更ではありません。

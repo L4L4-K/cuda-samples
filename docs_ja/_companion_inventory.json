@@ -2,62 +2,50 @@
   {
     "source": "README.md",
     "path": "docs_ja/translated/README.md.ja.md",
-    "status": "PARTIAL",
-    "line_count": 78,
+    "status": "DONE",
+    "line_count": 613,
     "source_paragraph_count": 48,
-    "english_reference_blocks": 7,
-    "jp_blocks": 7,
-    "memo_blocks": 7,
-    "section_count": 7,
-    "reasons": [
-      "not enough English paragraph/reference blocks for source paragraphs",
-      "not enough Japanese blocks for source paragraphs"
-    ]
+    "english_reference_blocks": 50,
+    "jp_blocks": 50,
+    "memo_blocks": 50,
+    "section_count": 51,
+    "reasons": []
   },
   {
     "source": "CHANGELOG.md",
     "path": "docs_ja/translated/CHANGELOG.md.ja.md",
-    "status": "PARTIAL",
-    "line_count": 53,
+    "status": "DONE",
+    "line_count": 1953,
     "source_paragraph_count": 156,
-    "english_reference_blocks": 5,
-    "jp_blocks": 5,
-    "memo_blocks": 5,
-    "section_count": 5,
-    "reasons": [
-      "not enough English paragraph/reference blocks for source paragraphs",
-      "not enough Japanese blocks for source paragraphs"
-    ]
+    "english_reference_blocks": 158,
+    "jp_blocks": 158,
+    "memo_blocks": 158,
+    "section_count": 159,
+    "reasons": []
   },
   {
     "source": "CONTRIBUTING.md",
     "path": "docs_ja/translated/CONTRIBUTING.md.ja.md",
-    "status": "PARTIAL",
-    "line_count": 53,
+    "status": "DONE",
+    "line_count": 339,
     "source_paragraph_count": 25,
-    "english_reference_blocks": 5,
-    "jp_blocks": 5,
-    "memo_blocks": 5,
-    "section_count": 5,
-    "reasons": [
-      "not enough English paragraph/reference blocks for source paragraphs",
-      "not enough Japanese blocks for source paragraphs"
-    ]
+    "english_reference_blocks": 27,
+    "jp_blocks": 27,
+    "memo_blocks": 27,
+    "section_count": 28,
+    "reasons": []
   },
   {
     "source": "CMakeLists.txt",
     "path": "docs_ja/translated/CMakeLists.txt.ja.md",
-    "status": "PARTIAL",
-    "line_count": 57,
+    "status": "DONE",
+    "line_count": 158,
     "source_paragraph_count": 11,
-    "english_reference_blocks": 4,
-    "jp_blocks": 5,
-    "memo_blocks": 5,
-    "section_count": 5,
-    "reasons": [
-      "not enough English paragraph/reference blocks for source paragraphs",
-      "not enough Japanese blocks for source paragraphs"
-    ]
+    "english_reference_blocks": 13,
+    "jp_blocks": 13,
+    "memo_blocks": 13,
+    "section_count": 14,
+    "reasons": []
   },
   {
     "source": "docs_ja/README.md",

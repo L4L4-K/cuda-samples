@@ -8,11 +8,11 @@ English inventory for the local Japanese learning overlay.
 > **学習メモ**
 > `DONE` は対象ファイルがそろい、重要な CUDA/API アンカーの近くに具体的な `JP:` 注釈がある状態です。`PARTIAL` は、トップだけの一般コメントやアンカー不足が残っている状態です。
 
-- Status: PARTIAL
-- Updated: 2026-06-10 05:39:28 UTC
+- Status: DONE
+- Updated: 2026-06-10 05:55:54 UTC
 - Branch: `ja-study/local-annotations`
 - Base commit: `b7c5481c556c3fe98db060207ecaa41a4b9a9abc`
-- Current commit: `ce9a590f0a28a9ddf1057d13f3b523db2ee09d0b`
+- Current commit: `04516ab2c416a1d7158761e899b9dbc3ff178cf1`
 - Detailed annotation record: `docs_ja/_annotation_inventory.json`
 - Detailed sample README record: `docs_ja/_sample_readme_inventory.json`
 - Detailed theme guide record: `docs_ja/_theme_inventory.json`
@@ -23,11 +23,11 @@ English inventory for the local Japanese learning overlay.
 
 - source_docs: 557
 - doc_companions_done: 557
-- major_companions_done: 1
-- major_companions_partial: 4
+- major_companions_done: 5
+- major_companions_partial: 0
 - major_companion_source_paragraphs: 240
-- major_companion_english_blocks: 24
-- major_companion_jp_blocks: 28
+- major_companion_english_blocks: 251
+- major_companion_jp_blocks: 254
 - sample_dirs: 255
 - sample_readme_ja_done: 255
 - sample_readme_ja_partial: 0
@@ -54,10 +54,7 @@ English inventory for the local Japanese learning overlay.
 - None
 
 ### major_companions
-- `docs_ja/translated/README.md.ja.md`
-- `docs_ja/translated/CHANGELOG.md.ja.md`
-- `docs_ja/translated/CONTRIBUTING.md.ja.md`
-- `docs_ja/translated/CMakeLists.txt.ja.md`
+- None
 
 ### sample_readme_ja
 - None
@@ -96,15 +93,8 @@ English inventory for the local Japanese learning overlay.
 
 ## Major Companion Quality
 
-- DONE companions: 1
-- PARTIAL companions: 4
-
-### PARTIAL Major Companion Records
-
-- `docs_ja/translated/README.md.ja.md`: lines=78, sections=7, source_paragraphs=48, english_blocks=7, jp_blocks=7, reason=not enough English paragraph/reference blocks for source paragraphs; not enough Japanese blocks for source paragraphs
-- `docs_ja/translated/CHANGELOG.md.ja.md`: lines=53, sections=5, source_paragraphs=156, english_blocks=5, jp_blocks=5, reason=not enough English paragraph/reference blocks for source paragraphs; not enough Japanese blocks for source paragraphs
-- `docs_ja/translated/CONTRIBUTING.md.ja.md`: lines=53, sections=5, source_paragraphs=25, english_blocks=5, jp_blocks=5, reason=not enough English paragraph/reference blocks for source paragraphs; not enough Japanese blocks for source paragraphs
-- `docs_ja/translated/CMakeLists.txt.ja.md`: lines=57, sections=5, source_paragraphs=11, english_blocks=4, jp_blocks=5, reason=not enough English paragraph/reference blocks for source paragraphs; not enough Japanese blocks for source paragraphs
+- DONE companions: 5
+- PARTIAL companions: 0
 
 ## Glossary Quality
 
