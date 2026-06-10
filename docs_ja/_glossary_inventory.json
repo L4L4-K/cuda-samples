@@ -1,0 +1,47 @@
+[
+  {
+    "path": "docs_ja/glossary/README.md",
+    "status": "DONE",
+    "line_count": 29,
+    "section_count": 2,
+    "table_pipes": 0,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "docs_ja/glossary/terms.md",
+    "status": "DONE",
+    "line_count": 40,
+    "section_count": 3,
+    "table_pipes": 34,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "docs_ja/glossary/api.md",
+    "status": "DONE",
+    "line_count": 46,
+    "section_count": 3,
+    "table_pipes": 36,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "docs_ja/glossary/memory_transfer.md",
+    "status": "DONE",
+    "line_count": 42,
+    "section_count": 3,
+    "table_pipes": 24,
+    "missing_sections": [],
+    "reasons": []
+  },
+  {
+    "path": "docs_ja/glossary/build_run.md",
+    "status": "DONE",
+    "line_count": 42,
+    "section_count": 3,
+    "table_pipes": 24,
+    "missing_sections": [],
+    "reasons": []
+  }
+]

@@ -21,6 +21,7 @@ ANNOTATION_JSON = DOCS_JA / "_annotation_inventory.json"
 SAMPLE_README_JSON = DOCS_JA / "_sample_readme_inventory.json"
 THEME_GUIDE_JSON = DOCS_JA / "_theme_inventory.json"
 COMPANION_JSON = DOCS_JA / "_companion_inventory.json"
+GLOSSARY_JSON = DOCS_JA / "_glossary_inventory.json"
 
 DOC_EXTS = {".md", ".txt", ".pdf", ".doc", ".docx"}
 CODE_EXTS = {
@@ -88,6 +89,27 @@ MAJOR_COMPANION_TARGETS = (
     ROOT / "CMakeLists.txt",
     DOCS_JA / "README.md",
 )
+GLOSSARY_TARGETS = (
+    DOCS_JA / "glossary" / "README.md",
+    DOCS_JA / "glossary" / "terms.md",
+    DOCS_JA / "glossary" / "api.md",
+    DOCS_JA / "glossary" / "memory_transfer.md",
+    DOCS_JA / "glossary" / "build_run.md",
+)
+REQUIRED_GLOSSARY_SECTIONS = {
+    "README.md": ("## Files", "## How To Use"),
+    "terms.md": ("## Reading Notes", "## Common Confusions", "## Exercises"),
+    "api.md": ("## API Reading Pattern", "## Common Mistakes", "## Exercises"),
+    "memory_transfer.md": ("## Direction Checklist", "## Common Mistakes", "## Exercises"),
+    "build_run.md": ("## Build Reading Pattern", "## Common Mistakes", "## Exercises"),
+}
+GLOSSARY_MIN_LINES = {
+    "README.md": 25,
+    "terms.md": 35,
+    "api.md": 40,
+    "memory_transfer.md": 38,
+    "build_run.md": 38,
+}
 
 
 @dataclass(frozen=True)
@@ -580,6 +602,41 @@ def analyze_major_companion(path: Path) -> dict[str, object]:
     }
 
 
+def analyze_glossary_file(path: Path) -> dict[str, object]:
+    text = path.read_text(encoding="utf-8", errors="ignore") if path.exists() else ""
+    reasons: list[str] = []
+    required_sections = REQUIRED_GLOSSARY_SECTIONS.get(path.name, ())
+    missing_sections = [section for section in required_sections if section not in text]
+    line_count = len(text.splitlines())
+
+    if not path.exists():
+        reasons.append("missing glossary file")
+    if missing_sections:
+        reasons.append("missing required glossary sections")
+    if line_count < GLOSSARY_MIN_LINES.get(path.name, 30):
+        reasons.append("glossary entry is too short for quick-reference coverage")
+    if not line_has_japanese(text):
+        reasons.append("missing Japanese learning text")
+    if path.name != "README.md":
+        header_line = text.splitlines()[2] if line_count > 2 else ""
+        if "English" not in header_line or "日本語" not in header_line:
+            reasons.append("missing English/Japanese comparison table header")
+        if "| ---" not in text and "--- | --- | ---" not in text:
+            reasons.append("missing markdown table divider")
+        if text.count("|") < 12:
+            reasons.append("table has too few reference rows")
+
+    return {
+        "path": rel(path),
+        "status": "DONE" if not reasons else "PARTIAL",
+        "line_count": line_count,
+        "section_count": text.count("## "),
+        "table_pipes": text.count("|"),
+        "missing_sections": missing_sections,
+        "reasons": reasons,
+    }
+
+
 def theme_guides() -> list[Path]:
     theme_dir = DOCS_JA / "themes"
     if not theme_dir.exists():
@@ -608,9 +665,18 @@ def summarize() -> dict[str, object]:
     partial_theme_guides = [record for record in theme_records if record["status"] != "DONE"]
     companion_records = [analyze_major_companion(path) for path in MAJOR_COMPANION_TARGETS]
     partial_companions = [record for record in companion_records if record["status"] != "DONE"]
+    glossary_records = [analyze_glossary_file(path) for path in GLOSSARY_TARGETS]
+    partial_glossary = [record for record in glossary_records if record["status"] != "DONE"]
     missing_companions = [p for p in docs if not companion_for(p).exists()]
     status = "DONE"
-    if missing_companions or partial_companions or partial_sample_readmes or partial_annotations or partial_theme_guides:
+    if (
+        missing_companions
+        or partial_companions
+        or partial_sample_readmes
+        or partial_annotations
+        or partial_theme_guides
+        or partial_glossary
+    ):
         status = "PARTIAL"
 
     return {
@@ -631,6 +697,9 @@ def summarize() -> dict[str, object]:
             "theme_guides": len(theme_records),
             "theme_guides_done": len(theme_records) - len(partial_theme_guides),
             "theme_guides_partial": len(partial_theme_guides),
+            "glossary_files": len(glossary_records),
+            "glossary_files_done": len(glossary_records) - len(partial_glossary),
+            "glossary_files_partial": len(partial_glossary),
             "annotation_files": len(code),
             "annotation_files_done": len(code) - len(partial_annotations),
             "annotation_files_partial": len(partial_annotations),
@@ -643,6 +712,7 @@ def summarize() -> dict[str, object]:
             "major_companions": [str(record["path"]) for record in partial_companions[:200]],
             "sample_readme_ja": [str(record["path"]) for record in partial_sample_readmes[:200]],
             "theme_guides": [str(record["path"]) for record in partial_theme_guides[:200]],
+            "glossary": [str(record["path"]) for record in partial_glossary[:200]],
             "annotations": [str(record["path"]) for record in partial_annotations[:200]],
         },
         "overflow": {
@@ -650,12 +720,14 @@ def summarize() -> dict[str, object]:
             "major_companions": max(0, len(partial_companions) - 200),
             "sample_readme_ja": max(0, len(partial_sample_readmes) - 200),
             "theme_guides": max(0, len(partial_theme_guides) - 200),
+            "glossary": max(0, len(partial_glossary) - 200),
             "annotations": max(0, len(partial_annotations) - 200),
         },
         "annotation_records": annotation_records,
         "sample_readme_records": sample_readme_records,
         "theme_records": theme_records,
         "companion_records": companion_records,
+        "glossary_records": glossary_records,
     }
 
 
@@ -683,6 +755,8 @@ def render_markdown(summary: dict[str, object]) -> str:
     partial_theme_records = [record for record in theme_records if record["status"] != "DONE"]
     companion_records = list(summary["companion_records"])
     partial_companion_records = [record for record in companion_records if record["status"] != "DONE"]
+    glossary_records = list(summary["glossary_records"])
+    partial_glossary_records = [record for record in glossary_records if record["status"] != "DONE"]
     lines = [
         "# Japanese Translation Status",
         "",
@@ -703,6 +777,7 @@ def render_markdown(summary: dict[str, object]) -> str:
         f"- Detailed sample README record: `{rel(SAMPLE_README_JSON)}`",
         f"- Detailed theme guide record: `{rel(THEME_GUIDE_JSON)}`",
         f"- Detailed companion record: `{rel(COMPANION_JSON)}`",
+        f"- Detailed glossary record: `{rel(GLOSSARY_JSON)}`",
         "",
         "## Counts",
         "",
@@ -807,6 +882,26 @@ def render_markdown(summary: dict[str, object]) -> str:
 
     lines.extend(
         [
+            "## Glossary Quality",
+            "",
+            f"- DONE glossary files: {len(glossary_records) - len(partial_glossary_records)}",
+            f"- PARTIAL glossary files: {len(partial_glossary_records)}",
+            "- Required files: " + ", ".join(f"`{rel(path)}`" for path in GLOSSARY_TARGETS),
+            "",
+        ]
+    )
+    if partial_glossary_records:
+        lines.extend(["### PARTIAL Glossary Records", ""])
+        for record in partial_glossary_records:
+            reason_text = "; ".join(str(reason) for reason in record.get("reasons", [])) or "needs review"
+            lines.append(
+                f"- `{record['path']}`: lines={record['line_count']}, "
+                f"sections={record['section_count']}, table_pipes={record['table_pipes']}, reason={reason_text}"
+            )
+        lines.append("")
+
+    lines.extend(
+        [
             "## Policy Notes",
             "",
             "- English source text, file names, commands, APIs, expected output, license text, and attribution are preserved.",
@@ -845,6 +940,11 @@ def main() -> int:
         )
         COMPANION_JSON.write_text(
             json.dumps(summary["companion_records"], ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        GLOSSARY_JSON.write_text(
+            json.dumps(summary["glossary_records"], ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
             newline="\n",
         )

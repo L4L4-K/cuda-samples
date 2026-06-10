@@ -9,14 +9,15 @@ English inventory for the local Japanese learning overlay.
 > `DONE` は対象ファイルがそろい、重要な CUDA/API アンカーの近くに具体的な `JP:` 注釈がある状態です。`PARTIAL` は、トップだけの一般コメントやアンカー不足が残っている状態です。
 
 - Status: DONE
-- Updated: 2026-06-10 03:20:49 UTC
+- Updated: 2026-06-10 03:27:31 UTC
 - Branch: `ja-study/local-annotations`
 - Base commit: `b7c5481c556c3fe98db060207ecaa41a4b9a9abc`
-- Current commit: `f9535091b79cb2e97d329674e0560033900b60b0`
+- Current commit: `211dac939562ec57d9a3055fc1182817801afc76`
 - Detailed annotation record: `docs_ja/_annotation_inventory.json`
 - Detailed sample README record: `docs_ja/_sample_readme_inventory.json`
 - Detailed theme guide record: `docs_ja/_theme_inventory.json`
 - Detailed companion record: `docs_ja/_companion_inventory.json`
+- Detailed glossary record: `docs_ja/_glossary_inventory.json`
 
 ## Counts
 
@@ -30,6 +31,9 @@ English inventory for the local Japanese learning overlay.
 - theme_guides: 16
 - theme_guides_done: 16
 - theme_guides_partial: 0
+- glossary_files: 5
+- glossary_files_done: 5
+- glossary_files_partial: 0
 - annotation_files: 924
 - annotation_files_done: 924
 - annotation_files_partial: 0
@@ -49,6 +53,9 @@ English inventory for the local Japanese learning overlay.
 - None
 
 ### theme_guides
+- None
+
+### glossary
 - None
 
 ### annotations
@@ -76,6 +83,12 @@ English inventory for the local Japanese learning overlay.
 
 - DONE companions: 5
 - PARTIAL companions: 0
+
+## Glossary Quality
+
+- DONE glossary files: 5
+- PARTIAL glossary files: 0
+- Required files: `docs_ja/glossary/README.md`, `docs_ja/glossary/terms.md`, `docs_ja/glossary/api.md`, `docs_ja/glossary/memory_transfer.md`, `docs_ja/glossary/build_run.md`
 
 ## Policy Notes
 
